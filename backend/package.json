@@ -1,0 +1,30 @@
+{
+  "name": "godigital-attendance-api",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test attendance/service.test.js attendance/app.test.js",
+    "test:employees": "node --test test/employeeCreationService.test.js",
+    "test:flexible-payroll": "node --test test/flexiblePayrollCycle.test.js",
+    "test:clock-out-reminder": "node --test test/clockOutReminder.test.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "moment": "^2.30.1",
+    "multer": "^2.3.0",
+    "mysql2": "^3.22.6",
+    "node-cron": "^4.6.0",
+    "nodemailer": "^9.0.3",
+    "sequelize": "^6.37.8",
+    "socket.io": "^4.8.3"
+  }
+}

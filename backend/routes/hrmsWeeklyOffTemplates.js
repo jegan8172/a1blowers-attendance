@@ -1,0 +1,11 @@
+'use strict';
+const express = require('express');
+const { authenticateToken } = require('./auth');
+const controller = require('../controllers/hrmsWeeklyOffTemplatesController');
+const router = express.Router();
+router.use(authenticateToken, controller.requireAdmin);
+router.get('/', controller.list);
+router.post('/', controller.create);
+router.put('/:id', controller.update);
+router.post('/assignments', controller.assign);
+module.exports = router;
