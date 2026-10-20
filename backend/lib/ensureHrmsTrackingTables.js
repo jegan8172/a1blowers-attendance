@@ -7,6 +7,7 @@ async function ensureHrmsTrackingTables(db) {
       office_latitude DECIMAL(10,7) NOT NULL,
       office_longitude DECIMAL(10,7) NOT NULL,
       office_radius_meters INT NOT NULL DEFAULT 100,
+      outside_radius_grace_minutes INT NOT NULL DEFAULT 2,
       field_ping_interval_minutes INT NOT NULL DEFAULT 15,
       field_waiting_minutes INT NOT NULL DEFAULT 60,
       popup_alert_repeat_seconds INT NOT NULL DEFAULT 5,
@@ -59,6 +60,7 @@ async function ensureHrmsTrackingTables(db) {
     await db.query('ALTER TABLE hrms_tracking_settings ADD COLUMN popup_alert_repeat_seconds INT NOT NULL DEFAULT 5');
   }
   for (const [name, definition] of [
+    ['outside_radius_grace_minutes', 'INT NOT NULL DEFAULT 2'],
     ['auto_clock_out_enabled', 'TINYINT(1) NOT NULL DEFAULT 0'],
     ['auto_clock_out_confirmation_minutes', 'INT NOT NULL DEFAULT 3'],
     ['auto_clock_out_warning_seconds', 'INT NOT NULL DEFAULT 60'],
@@ -91,10 +93,16 @@ async function ensureHrmsTrackingTables(db) {
   await db.query(`
     CREATE TABLE IF NOT EXISTS hrms_employee_location_status (
       employee_user_id INT PRIMARY KEY,
-      status ENUM('office','home','field') NOT NULL DEFAULT 'office',
+      status ENUM('office','home','field','hybrid') NOT NULL DEFAULT 'office',
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )
   `);
+
+  // Existing installations predate Hybrid work mode. CREATE TABLE IF NOT
+  // EXISTS cannot change an existing ENUM, so upgrade it explicitly.
+  await db.query(
+    "ALTER TABLE hrms_employee_location_status MODIFY COLUMN status ENUM('office','home','field','hybrid') NOT NULL DEFAULT 'office'"
+  );
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS hrms_location_pings (
@@ -154,6 +162,22 @@ async function ensureHrmsTrackingTables(db) {
       INDEX idx_waiting_employee (employee_user_id, review_status),
       INDEX idx_waiting_session (field_session_id)
     )
+  `);
+
+  // Notes added by Field and Hybrid employees during live tracking. Keep this
+  // here, rather than in a controller, so fresh and existing databases receive
+  // the table whenever the API starts.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS hrms_employee_tracking_comments (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      employee_user_id INT NOT NULL,
+      comment_text TEXT NOT NULL,
+      latitude DECIMAL(10,7) NULL,
+      longitude DECIMAL(10,7) NULL,
+      address VARCHAR(500) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_tracking_comments_employee_created (employee_user_id, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
   await db.query(`

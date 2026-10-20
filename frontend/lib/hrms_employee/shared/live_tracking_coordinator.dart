@@ -125,7 +125,11 @@ class LiveTrackingCoordinator extends ChangeNotifier with WidgetsBindingObserver
     if (requireBackground && !kIsWeb && permission != LocationPermission.always) {
       throw Exception('Allow location access all the time in Android settings before starting live tracking.');
     }
-    return Geolocator.getCurrentPosition(locationSettings: const LocationSettings(accuracy: LocationAccuracy.high));
+    // Do not reuse an old provider reading for Start/Stop.  In particular, a
+    // stale reading at Stop made the final map point appear far from the
+    // employee's actual location. AttendanceLocation rejects readings older
+    // than two minutes and has a GPS timeout/error message the user can act on.
+    return AttendanceLocation.currentPosition();
   }
 
   void _armTimer() {

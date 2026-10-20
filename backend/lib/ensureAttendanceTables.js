@@ -55,6 +55,23 @@ async function ensureAttendanceTables(db) {
     }
   }
 
+  const [breakColumns] = await db.query(
+    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance_breaks'`
+  );
+  const breakExisting = new Set(breakColumns.map(function (column) {
+    return column.COLUMN_NAME;
+  }));
+  const breakRequired = {
+    exceeded_comment: 'TEXT NULL',
+    exceeded_comment_at: 'DATETIME NULL'
+  };
+  for (const [name, definition] of Object.entries(breakRequired)) {
+    if (!breakExisting.has(name)) {
+      await db.query(`ALTER TABLE attendance_breaks ADD COLUMN \`${name}\` ${definition}`);
+    }
+  }
+
   const [permissionColumns] = await db.query(
     `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance_permission_requests'`

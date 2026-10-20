@@ -1591,6 +1591,13 @@ async function stopFieldTracking(req, res) {
 
     const sessionId = activeSessions[0].id;
 
+    // Validate the final point before closing the session.  This prevents a
+    // rejected stale/mock/inaccurate reading from closing tracking while the
+    // map is left with an old or incorrect final location.
+    if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+      await validateTrackingLocation(employeeUserId, latitude, longitude, accuracy, isMocked);
+    }
+
     await db.query(
       `UPDATE hrms_field_tracking_sessions
        SET is_active = 0,
@@ -1620,13 +1627,24 @@ async function stopFieldTracking(req, res) {
     );
 
     if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
-      await validateTrackingLocation(employeeUserId, latitude, longitude, accuracy, isMocked);
-      await db.query(
+      const [finalPing] = await db.query(
         `INSERT INTO hrms_location_pings
           (employee_user_id, latitude, longitude, accuracy_meters)
          VALUES (?, ?, ?, ?)`,
         [employeeUserId, latitude, longitude, accuracy]
       );
+
+      // The map route uses location pings. Save and reverse-geocode the exact
+      // final Stop point so the route ends where the employee actually stopped.
+      reverseGeocode(latitude, longitude).then(function (address) {
+        if (!address) return;
+        db.query(
+          'UPDATE hrms_location_pings SET address = ? WHERE id = ?',
+          [address, finalPing.insertId]
+        ).catch(function (geocodeError) {
+          console.error('Stop location address backfill failed', geocodeError.message);
+        });
+      });
     }
 
     return ok(

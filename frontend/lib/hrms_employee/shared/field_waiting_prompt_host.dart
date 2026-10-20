@@ -31,6 +31,11 @@ class FieldWaitingPromptHost extends StatefulWidget {
 }
 
 class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with WidgetsBindingObserver {
+  // A manual page refresh used to make this prompt appear because it calls
+  // _check immediately, while the background check ran only once a minute.
+  // Poll the server more frequently so a newly due waiting alert is displayed
+  // automatically. This does not obtain GPS or create a location ping.
+  static const _alertCheckInterval = Duration(seconds: 10);
   Timer? _timer;
   Timer? _soundTimer;
   Timer? _feedbackSessionTimer;
@@ -51,7 +56,7 @@ class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with Wi
     WidgetsBinding.instance.addObserver(this);
     widget.routeRevision.addListener(_onRouteChanged);
     _auth = context.read<AuthService>()..addListener(_onAuthChanged);
-    _timer = Timer.periodic(const Duration(minutes: 1), (_) => _check());
+    _timer = Timer.periodic(_alertCheckInterval, (_) => _check());
   }
 
   @override

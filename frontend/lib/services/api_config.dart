@@ -3,10 +3,10 @@ import 'package:flutter/foundation.dart';
 
 class ApiConfig {
   static const String _productionBaseUrl =
-      'https://attendance.godigitalindia.co/api';
+      'https://attendance-api-717641504580.asia-south1.run.app/api';
 
   static const String _productionSocketUrl =
-      'https://attendance.godigitalindia.co';
+      'https://attendance-api-717641504580.asia-south1.run.app';
 
   static String get baseUrl {
     if (kIsWeb) {

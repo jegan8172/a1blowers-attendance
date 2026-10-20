@@ -978,10 +978,22 @@ async function checkIn(req, res) {
     const date = policy.todayIstDate();
     const at = policy.nowIstDateTime();
     const method = normalizeMethod((req.body && (req.body.method || req.body.check_in_method)));
-    const [[profile]] = await db.query(
-      'SELECT gender FROM hrms_employee_profiles WHERE employee_user_id = ? LIMIT 1',
-      [employeeId]
-    );
+    // Gender is used only to select the late-arrival schedule. Older live
+    // databases created before this optional profile field must still allow
+    // employees to check in while the normal startup migration catches up.
+    let profile;
+    try {
+      [[profile]] = await db.query(
+        'SELECT gender FROM hrms_employee_profiles WHERE employee_user_id = ? LIMIT 1',
+        [employeeId]
+      );
+    } catch (profileError) {
+      if (profileError.code !== 'ER_BAD_FIELD_ERROR') throw profileError;
+      [[profile]] = await db.query(
+        'SELECT employee_user_id FROM hrms_employee_profiles WHERE employee_user_id = ? LIMIT 1',
+        [employeeId]
+      );
+    }
     const gender = profile && profile.gender ? profile.gender : 'Male';
     const timeSettings = await policy.getTimeSettings(db);
     const shift = String(gender).toLowerCase() === 'female' ? timeSettings.female : timeSettings.male;
@@ -991,11 +1003,13 @@ async function checkIn(req, res) {
     connection = await db.getConnection();
     await connection.beginTransaction();
     const rules = await locationPolicy.getCheckInPolicy(connection, employeeId, true);
+    let hasActiveFieldTracking = false;
     if (rules.workMode === 'Hybrid' || rules.workMode === 'Field') {
       const [tracking] = await connection.query(
         'SELECT id FROM hrms_field_tracking_sessions WHERE employee_user_id = ? AND is_active = 1 ORDER BY id DESC LIMIT 1',
         [employeeId]
       );
+      hasActiveFieldTracking = tracking.length > 0;
       if (!tracking.length) {
         throw new locationPolicy.LocationPolicyError(403, 'Start live tracking before clocking in as a Field or Hybrid employee.');
       }
@@ -1072,11 +1086,17 @@ async function checkIn(req, res) {
     }
 
     if (rules.requiresLocation) {
+      // A Hybrid employee keeps the assigned Hybrid work mode in their
+      // profile, but their current live location must remain Field while a
+      // field-tracking session is active.  Previously Clock In overwrote that
+      // temporary status with "hybrid", which removed the employee from the
+      // admin Field section despite tracking still being active.
+      const currentLocationStatus = hasActiveFieldTracking ? 'field' : rules.workMode.toLowerCase();
       await connection.query(
         `INSERT INTO hrms_employee_location_status (employee_user_id, status)
          VALUES (?, ?)
          ON DUPLICATE KEY UPDATE status = VALUES(status), updated_at = CURRENT_TIMESTAMP`,
-        [employeeId, rules.workMode.toLowerCase()]
+        [employeeId, currentLocationStatus]
       );
     }
     const record = await getRecord(employeeId, date, connection);

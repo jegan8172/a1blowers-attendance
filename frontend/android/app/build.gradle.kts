@@ -14,7 +14,7 @@ plugins {
 }
 
 android {
-    namespace = "com.godigital.attendance"
+    namespace = "com.a1blowers.attendance"
     // flutter_plugin_android_lifecycle requires Android API 36.
     // This does not change targetSdk or the app's minimum Android version.
     compileSdk = 36
@@ -26,7 +26,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.godigital.attendance"
+        applicationId = "com.a1blowers.attendance"
         manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.

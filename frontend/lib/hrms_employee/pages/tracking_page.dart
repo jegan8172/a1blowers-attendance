@@ -40,7 +40,8 @@ class _TrackingView extends StatefulWidget {
   State<_TrackingView> createState() => _TrackingViewState();
 }
 
-class _TrackingViewState extends State<_TrackingView> {
+class _TrackingViewState extends State<_TrackingView>
+    with WidgetsBindingObserver {
   _WorkMode mode = _WorkMode.office;
   String updated = 'Not tracking yet';
   bool trackingActive = false;
@@ -55,6 +56,11 @@ class _TrackingViewState extends State<_TrackingView> {
   bool _fieldTrackingEnabled = false;
   bool _homeLocationEnabled = true;
   String? _homeError;
+  Timer? _timelineRefreshTimer;
+  bool _timelineRequestInFlight = false;
+  bool _fallbackPingInFlight = false;
+  int _gpsUpdateIntervalMinutes = 15;
+  DateTime? _lastSavedPingAt;
 
   String distance = '—';
   String duration = '—';
@@ -71,6 +77,7 @@ class _TrackingViewState extends State<_TrackingView> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     employeeRouteSignal.revision.addListener(_reloadSavedSession);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -83,8 +90,37 @@ class _TrackingViewState extends State<_TrackingView> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     employeeRouteSignal.revision.removeListener(_reloadSavedSession);
+    _stopTimelineRefresh();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Android's foreground service continues to save pings while the app is
+    // backgrounded. Reload immediately when this page becomes visible again.
+    if (state == AppLifecycleState.resumed && trackingActive) {
+      _loadTripSummary();
+    }
+  }
+
+  void _startTimelineRefresh() {
+    if (_timelineRefreshTimer != null) return;
+    // The Android foreground service sends GPS at the admin-configured
+    // interval. Polling keeps the visible activity current. If Android delays
+    // that service while this page is open, a guarded fallback sends only the
+    // overdue ping; it does not create a second regular 10-second GPS stream.
+    _timelineRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
+      if (!mounted || !trackingActive) return;
+      await _loadTripSummary();
+      await _sendFallbackPingIfDue();
+    });
+  }
+
+  void _stopTimelineRefresh() {
+    _timelineRefreshTimer?.cancel();
+    _timelineRefreshTimer = null;
   }
 
   void _reloadSavedSession() {
@@ -121,6 +157,13 @@ class _TrackingViewState extends State<_TrackingView> {
       if (!mounted) return;
       setState(() {
         _officeSettings = settings;
+        final configuredInterval =
+            settings['field_ping_interval_minutes'] ??
+            settings['fieldPingIntervalMinutes'];
+        final parsedInterval = configuredInterval is num
+            ? configuredInterval.toInt()
+            : int.tryParse('$configuredInterval');
+        _gpsUpdateIntervalMinutes = (parsedInterval ?? 15).clamp(1, 1440).toInt();
         _officeLoading = false;
       });
 
@@ -176,17 +219,32 @@ class _TrackingViewState extends State<_TrackingView> {
         }
         _applyTimeline(timeline);
       });
+      if (trackingActive) {
+        _startTimelineRefresh();
+      } else {
+        _stopTimelineRefresh();
+      }
     } catch (_) {
       // Office and Home employees may not have a Field tracking session.
     }
   }
 
   Future<void> _loadTripSummary() async {
+    if (_timelineRequestInFlight) return;
+    _timelineRequestInFlight = true;
     try {
       final summary = await HrmsTrackingApi.fieldSessionTimeline();
       if (!mounted || summary['hasSession'] != true) return;
-      setState(() => _applyTimeline(summary));
-    } catch (_) {}
+      setState(() {
+        trackingActive = summary['isActive'] == true;
+        _applyTimeline(summary);
+      });
+      if (!trackingActive) _stopTimelineRefresh();
+    } catch (_) {
+      // A later poll will retry after a temporary network failure.
+    } finally {
+      _timelineRequestInFlight = false;
+    }
   }
 
   void _applyTimeline(Map<String, dynamic> summary) {
@@ -208,11 +266,44 @@ class _TrackingViewState extends State<_TrackingView> {
         return lat == null || lng == null ? null : LatLng(lat, lng);
       }).whereType<LatLng>().toList();
       _routePoints = savedPoints;
-      final items = (summary['events'] as List? ?? []).whereType<Map>().map((event) => {
+      final rawEvents = (summary['events'] as List? ?? []).whereType<Map>().toList();
+      final items = rawEvents.map((event) => {
         'activity_time': _eventTime(event['recordedAt']),
         'activity_text': '${event['text'] ?? 'Live location updated'}${event['address'] == null || '${event['address']}'.trim().isEmpty ? '' : ' — ${event['address']}'}${event['latitude'] == null ? '' : '\nGPS: ${event['latitude']}, ${event['longitude']}'}',
       }).toList().reversed.toList();
       activities = items.isEmpty ? [{'activity_time': '--:--', 'activity_text': 'No live tracking activity yet'}] : items;
+      if (rawEvents.isNotEmpty) {
+        updated = 'Updated ${_eventTime(rawEvents.last['recordedAt'])}';
+        final recordedAt = DateTime.tryParse('${rawEvents.last['recordedAt'] ?? ''}');
+        if (recordedAt != null) _lastSavedPingAt = recordedAt.toLocal();
+      }
+  }
+
+  Future<void> _sendFallbackPingIfDue() async {
+    if (!trackingActive ||
+        _fallbackPingInFlight ||
+        _lastSavedPingAt == null) {
+      return;
+    }
+
+    // Give Android's foreground service 20 seconds after the configured due
+    // time. If it still has not saved a point, the open Tracking page captures
+    // the missed point itself. This is why a visible page no longer needs the
+    // manual refresh button to make location activity and the waiting popup
+    // appear.
+    final dueAfter = Duration(
+      minutes: _gpsUpdateIntervalMinutes,
+      seconds: 20,
+    );
+    if (DateTime.now().difference(_lastSavedPingAt!) < dueAfter) return;
+
+    _fallbackPingInFlight = true;
+    try {
+      await context.read<LiveTrackingCoordinator>().sendPing();
+      if (mounted) await _loadTripSummary();
+    } finally {
+      _fallbackPingInFlight = false;
+    }
   }
 
   String _eventTime(dynamic raw) {
@@ -307,6 +398,7 @@ class _TrackingViewState extends State<_TrackingView> {
           mode = _WorkMode.field;
           updated = 'Updated just now';
         });
+        _startTimelineRefresh();
         await _loadTripSummary();
 
         ScaffoldMessenger.of(
@@ -323,6 +415,7 @@ class _TrackingViewState extends State<_TrackingView> {
           trackingActive = false;
           updated = 'Live tracking stopped';
         });
+        _stopTimelineRefresh();
 
         await _loadTripSummary();
 

@@ -24,3 +24,14 @@ CREATE TABLE IF NOT EXISTS hrms_employee_home_locations (
   rejection_reason VARCHAR(500) NULL,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS hrms_employee_tracking_comments (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  employee_user_id INT NOT NULL,
+  comment_text TEXT NOT NULL,
+  latitude DECIMAL(10,7) NULL,
+  longitude DECIMAL(10,7) NULL,
+  address VARCHAR(500) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_tracking_comments_employee_created (employee_user_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

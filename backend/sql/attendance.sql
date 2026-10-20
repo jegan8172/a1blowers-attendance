@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS attendance_breaks (
   ended_at DATETIME NULL,
   duration_minutes INT UNSIGNED NOT NULL DEFAULT 0,
   status ENUM('active','completed','auto_closed') NOT NULL DEFAULT 'active',
+  exceeded_comment TEXT NULL,
+  exceeded_comment_at DATETIME NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   KEY idx_break_attendance (attendance_id)

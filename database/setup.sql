@@ -1,8 +1,7 @@
--- GoDigital Attendance standalone database (MySQL 8+).
--- This schema name is intentionally separate from any existing godigital_attendance database.
-CREATE DATABASE IF NOT EXISTS godigital_attendance_standalone
+-- GoDigital Attendance database (MySQL 8+).
+CREATE DATABASE IF NOT EXISTS a1
   CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE godigital_attendance_standalone;
+USE a1;
 
 CREATE TABLE IF NOT EXISTS employee_users (
   id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -69,6 +68,7 @@ CREATE TABLE IF NOT EXISTS attendance_breaks (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, attendance_id BIGINT UNSIGNED NOT NULL,
   started_at DATETIME NOT NULL, ended_at DATETIME NULL, duration_minutes INT UNSIGNED NOT NULL DEFAULT 0,
   status ENUM('active','completed','auto_closed') NOT NULL DEFAULT 'active',
+  exceeded_comment TEXT NULL, exceeded_comment_at DATETIME NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   KEY idx_break_attendance (attendance_id)
@@ -133,13 +133,14 @@ CREATE TABLE IF NOT EXISTS hrms_attendance_time_settings (
 CREATE TABLE IF NOT EXISTS hrms_tracking_settings (
   id TINYINT PRIMARY KEY, office_name VARCHAR(120) NOT NULL, office_address VARCHAR(500) NOT NULL,
   office_latitude DECIMAL(10,7) NOT NULL, office_longitude DECIMAL(10,7) NOT NULL,
-  office_radius_meters INT NOT NULL DEFAULT 100, field_ping_interval_minutes INT NOT NULL DEFAULT 15,
+  office_radius_meters INT NOT NULL DEFAULT 100, outside_radius_grace_minutes INT NOT NULL DEFAULT 2,
+  field_ping_interval_minutes INT NOT NULL DEFAULT 15,
   field_waiting_minutes INT NOT NULL DEFAULT 60, stationary_radius_meters INT NOT NULL DEFAULT 50,
   updated_by INT NULL, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS hrms_employee_location_status (
-  employee_user_id INT PRIMARY KEY, status ENUM('office','home','field') NOT NULL DEFAULT 'office',
+  employee_user_id INT PRIMARY KEY, status ENUM('office','home','field','hybrid') NOT NULL DEFAULT 'office',
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -182,6 +183,17 @@ CREATE TABLE IF NOT EXISTS hrms_field_waiting_reasons (
   UNIQUE KEY uq_field_waiting_event (event_key),
   KEY idx_waiting_employee (employee_user_id, review_status),
   KEY idx_waiting_session (field_session_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS hrms_employee_tracking_comments (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  employee_user_id INT NOT NULL,
+  comment_text TEXT NOT NULL,
+  latitude DECIMAL(10,7) NULL,
+  longitude DECIMAL(10,7) NULL,
+  address VARCHAR(500) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_tracking_comments_employee_created (employee_user_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS hrms_employee_home_locations (

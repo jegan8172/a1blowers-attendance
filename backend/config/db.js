@@ -46,10 +46,13 @@ require('dotenv').config();
 
 const pool = mysql.createPool({
   host: process.env.DB_HOST || 'localhost',
-  port: 3306,
+  port: Number(process.env.DB_PORT || 3306),
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'godigital_attendance',
+  database: process.env.DB_NAME || 'a1',
+  // Cloud Run mounts an attached Cloud SQL instance at this Unix socket.
+  // Local development continues to use DB_HOST and DB_PORT.
+  socketPath: process.env.INSTANCE_UNIX_SOCKET || undefined,
 
   waitForConnections: true,
   connectionLimit: 10,
