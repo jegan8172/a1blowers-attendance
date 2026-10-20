@@ -1,0 +1,17 @@
+name: hrms_design_system
+description: Shared theme, cards, badges, tables and dialogs for both portals.
+version: 0.1.0
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+  flutter: '>=3.19.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  google_fonts: ^6.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
