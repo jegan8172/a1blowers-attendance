@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:godigital_portal/services/auth_service.dart';
 import 'package:godigital_portal/screens/login_screen.dart';
@@ -42,6 +43,10 @@ class AttendanceApp extends StatelessWidget {
       navigatorObservers: [employeeRouteSignal],
       debugShowCheckedModeBanner: false,
       title: 'GoDigital Attendance',
+      theme: ThemeData(
+        useMaterial3: true,
+        fontFamily: GoogleFonts.manrope().fontFamily,
+      ),
       builder: (context, child) => AuthSessionGuard(
         child: FieldWaitingPromptHost(
           child: child ?? const SizedBox.shrink(),

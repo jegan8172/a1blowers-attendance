@@ -248,8 +248,8 @@ async function monthView(req, res) {
            FROM employee_leaves l
            LEFT JOIN hrms_leave_approval_links link ON link.leave_id = l.id
            LEFT JOIN attendance_permission_requests approval ON approval.id = link.approval_request_id
-           WHERE l.status = 'APPROVED'
-             AND l.from_date <= ? AND l.to_date >= ?
+           WHERE UPPER(l.status) = 'APPROVED'
+             AND DATE(l.from_date) <= DATE(?) AND DATE(l.to_date) >= DATE(?)
              AND l.employee_id IN (?)`,
           [end, start, userIds]
         )
@@ -349,12 +349,7 @@ async function monthView(req, res) {
           accruedPaidDays += 1;
         } else if (regularization === 'unpaid') {
           days.push('AR');
-        } else if (record && String(record.attendance_status).toLowerCase() === 'absent') {
-          days.push('A');
-          absent += 1;
-          absentDays += 1;
-          if (payrollRules.deductAbsence) unexcused += 1;
-        } else if (record && record.check_in_at) {
+        } else if (record && record.check_in_at && String(record.attendance_status).toLowerCase() !== 'absent') {
           if (String(record.attendance_status) === 'half_leave') {
             days.push('HL');
             halfLeave += 1;
@@ -380,6 +375,11 @@ async function monthView(req, res) {
             accruedPaidDays += leaveType === 'HL' ? 0.5 : 1;
           }
           if (date <= today && payrollRules.deductLeave) unexcused += leaveType === 'HL' ? 0.5 : 1;
+        } else if (record && String(record.attendance_status).toLowerCase() === 'absent') {
+          days.push('A');
+          absent += 1;
+          absentDays += 1;
+          if (payrollRules.deductAbsence) unexcused += 1;
         } else {
           // A missing clock-in for today is still pending. It becomes an
           // absence only after the calendar date has finished (tomorrow).

@@ -610,7 +610,18 @@ class _LoginScreenState extends State<LoginScreen> {
         _rememberDevice,
         deviceChangeReason: reason,
       );
-      if (!mounted || !loginSucceeded) return;
+      if (!mounted || !loginSucceeded) {
+        if (mounted && authService.errorCode == 'DEVICE_CHANGE_PENDING') {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                authService.error ?? 'Device request sent to admin.',
+              ),
+            ),
+          );
+        }
+        return;
+      }
     }
 
     // Do not route based on an old in-memory session. The destination must be

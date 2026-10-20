@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:hrms_design_system/hrms_design_system.dart';
 import 'package:provider/provider.dart';
 
@@ -59,7 +60,10 @@ class _AdminPortalAppState extends State<AdminPortalApp> {
     final base = HrmsTheme.light();
     return base.copyWith(
       colorScheme: scheme,
-      textTheme: base.textTheme.apply(bodyColor: appearance.text, displayColor: appearance.text),
+      textTheme: GoogleFonts.manropeTextTheme(base.textTheme).apply(
+        bodyColor: appearance.text,
+        displayColor: appearance.text,
+      ),
       scaffoldBackgroundColor: Colors.transparent,
       appBarTheme: base.appBarTheme.copyWith(
         backgroundColor: appearance.card,

@@ -430,6 +430,9 @@ async function reviewDeviceRequest(req, res) {
         VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ON DUPLICATE KEY UPDATE device_hash = VALUES(device_hash), device_label = VALUES(device_label), registered_at = CURRENT_TIMESTAMP, last_seen_at = CURRENT_TIMESTAMP`,
         [request.employee_user_id, request.proposed_device_hash, request.proposed_device_label]);
+      // A successful device transfer invalidates the previous device session.
+      // The employee must sign in again on the newly approved device.
+      await db.query('DELETE FROM hrms_active_sessions WHERE employee_user_id = ?', [request.employee_user_id]);
     }
     await db.query("UPDATE hrms_device_change_requests SET status = ?, reviewed_at = CURRENT_TIMESTAMP, reviewed_by = ?, review_note = ? WHERE id = ?",
       [approved ? 'approved' : 'rejected', req.user.id, note || null, id]);

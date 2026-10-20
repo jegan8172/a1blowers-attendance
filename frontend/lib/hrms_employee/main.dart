@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 
 import '../services/auth_service.dart';
@@ -28,7 +29,6 @@ class EmployeePortal extends StatelessWidget {
     title: 'Go Digital Employee Portal',
     theme: ThemeData(
       useMaterial3: true,
-      fontFamily: 'Arial',
       scaffoldBackgroundColor: const Color(0xFFF5F8FD),
       colorScheme: ColorScheme.fromSeed(
         seedColor: const Color(0xFF1769E0),
@@ -61,16 +61,18 @@ class EmployeePortal extends StatelessWidget {
           borderRadius: BorderRadius.circular(12),
         ),
       ),
-      textTheme: const TextTheme(
-        headlineLarge: TextStyle(
-          color: Color(0xFF07143F),
-          fontWeight: FontWeight.w800,
+      textTheme: GoogleFonts.manropeTextTheme(
+        const TextTheme(
+          headlineLarge: TextStyle(
+            color: Color(0xFF07143F),
+            fontWeight: FontWeight.w800,
+          ),
+          titleLarge: TextStyle(
+            color: Color(0xFF07143F),
+            fontWeight: FontWeight.w700,
+          ),
+          bodyMedium: TextStyle(color: Color(0xFF263451)),
         ),
-        titleLarge: TextStyle(
-          color: Color(0xFF07143F),
-          fontWeight: FontWeight.w700,
-        ),
-        bodyMedium: TextStyle(color: Color(0xFF263451)),
       ),
     ),
     // EmployeePortal is opened by the parent app only after the user has

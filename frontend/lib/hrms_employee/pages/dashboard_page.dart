@@ -48,10 +48,10 @@ class _EmployeeDashboardPageState extends State<EmployeeDashboardPage> {
             child: Stack(children: [
       Column(children: [
         if (mobile)
-          _Header(
-              mobile: true,
-              open: menuOpen,
-              onMenu: () => setState(() => menuOpen = !menuOpen))
+          const EmployeeTopNavigation(
+            route: '/employee/dashboard',
+            mobile: true,
+          )
         else
           const EmployeeTopNavigation(route: '/employee/dashboard'),
         Expanded(

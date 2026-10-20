@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../shared/theme/admin_surface_palette.dart';
 
 import '../../../services/hrms_approvals_api.dart';
+import '../../../services/hrms_employees_api.dart';
 import '../../shared/widgets/admin_top_nav.dart';
 
 abstract final class _C {
@@ -29,6 +30,7 @@ class _ApprovalsPageState extends State<ApprovalsPage> {
   int? _selectedId;
   List<_Request> _leave = const [];
   List<_Request> _other = const [];
+  List<_Request> _devices = const [];
   List<String> _employees = const ['All Employees'];
   int _pending = 0;
   bool _loading = true;
@@ -46,17 +48,21 @@ class _ApprovalsPageState extends State<ApprovalsPage> {
       final results = await Future.wait([
         HrmsApprovalsApi.list(leaveTab: true, employee: _employee, status: _status),
         HrmsApprovalsApi.list(leaveTab: false, employee: _employee, status: _status),
+        HrmsEmployeesApi.deviceRequests(),
       ]);
       final leave = results[0];
       final other = results[1];
+      final devices = results[2];
       final names = <String>{'All Employees'};
       names.addAll((leave['employees'] as List? ?? const []).map((e) => '$e'));
       names.addAll((other['employees'] as List? ?? const []).map((e) => '$e'));
+      names.addAll(_parseDevices(devices['items']).map((e) => e.name));
       final kpis = Map<String, dynamic>.from(leave['kpis'] as Map? ?? const {});
       if (!mounted) return;
       setState(() {
         _leave = _parse(leave['items']);
-        _other = _parse(other['items']);
+        _other = _parse(other['items']).where((r) => r.requestType != 'device').toList();
+        _devices = _parseDevices(devices['items']);
         _employees = names.toList()..sort();
         if (!_employees.contains(_employee)) _employee = 'All Employees';
         _pending = _int(kpis['pending']);
@@ -73,8 +79,27 @@ class _ApprovalsPageState extends State<ApprovalsPage> {
       ? data.whereType<Map>().map((v) => _Request.fromApi(Map<String, dynamic>.from(v))).toList()
       : const [];
 
+  List<_Request> _parseDevices(dynamic data) => data is List
+      ? data.whereType<Map>().map((raw) {
+          final json = Map<String, dynamic>.from(raw);
+          return _Request(
+            requestId: _int(json['id']),
+            name: '${json['full_name'] ?? ''}',
+            id: '${json['employee_code'] ?? json['username'] ?? ''}',
+            type: 'Device Change',
+            requestType: 'device',
+            leaveType: '',
+            dates: '${json['requested_at'] ?? ''}',
+            dayRange: 'New device: ${json['proposed_device_label'] ?? 'Browser'}',
+            duration: '—',
+            reason: '${json['reason'] ?? ''}',
+            status: '${json['status'] ?? 'Pending'}'.replaceFirst('pending', 'Pending'),
+          );
+        }).toList()
+      : const [];
+
   List<_Request> get _visible {
-    final source = _category == 'leave' ? _leave : _other;
+    final source = _category == 'leave' ? _leave : _category == 'device' ? _devices : _other;
     final query = _search.trim().toLowerCase();
     return source.where((r) {
       final kind = '${r.type} ${r.requestType}'.toLowerCase();
@@ -98,7 +123,7 @@ class _ApprovalsPageState extends State<ApprovalsPage> {
   }
 
   int _count(String category) {
-    final source = category == 'leave' ? _leave : _other;
+    final source = category == 'leave' ? _leave : category == 'device' ? _devices : _other;
     return source.where((r) {
       if (category == 'leave') return true;
       final kind = '${r.type} ${r.requestType}'.toLowerCase();
@@ -108,6 +133,13 @@ class _ApprovalsPageState extends State<ApprovalsPage> {
 
   Future<void> _review(_Request request, String status) async {
     try {
+      if (request.requestType == 'device') {
+        await HrmsEmployeesApi.reviewDeviceRequest(request.requestId, status == 'Approved');
+        await _load();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${request.name}\'s device request was ${status.toLowerCase()}.')));
+        return;
+      }
       String? salaryMode;
       final needsLeaveSalaryChoice = status == 'Approved' &&
           request.leaveType.isNotEmpty && request.leaveType != 'Earned Leave';

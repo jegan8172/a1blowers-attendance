@@ -115,6 +115,19 @@ class _AttendanceGridState extends State<AttendanceGrid> {
   ];
   int _windowStart = 0;
 
+  @override
+  void initState() {
+    super.initState();
+    // Open the current seven-day window when the dashboard is first shown.
+    // For another month, fall back to its first week because today's day
+    // number is not part of that month view.
+    final today = DateTime.now().day;
+    final todayIndex = widget.days.indexOf(today);
+    if (todayIndex >= 0) {
+      _windowStart = (todayIndex ~/ _daysPerWindow) * _daysPerWindow;
+    }
+  }
+
   int get _windowEnd => widget.showSummary
       ? (_windowStart + _daysPerWindow).clamp(0, widget.days.length)
       : widget.days.length;

@@ -817,6 +817,19 @@ async function employeeDashboard(req, res) {
         const isHoliday = monthlyOverrides.get(workDate) === 'Holiday';
         const status = isHoliday ? 'holiday' : 'weekly_off';
         calendarData[workDate] = { work_date: workDate, status, attendance_status: status, is_late: false, clock_in_at: null, check_in_at: null };
+      } else if (!calendarData[workDate] && workDate < date) {
+        // A completed working day without a clock record is an absence. Keep
+        // it in the employee calendar so the mobile view matches admin.
+        const item = {
+          work_date: workDate,
+          status: 'absent',
+          attendance_status: 'absent',
+          is_late: false,
+          clock_in_at: null,
+          check_in_at: null,
+        };
+        calendarData[workDate] = item;
+        monthRecords.push(item);
       }
     }
     // The Flutter calendar reads month_records before calendarData.  Mark a

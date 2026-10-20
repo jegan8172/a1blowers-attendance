@@ -42,9 +42,16 @@ class EmployeeScaffold extends StatelessWidget {
       return Scaffold(
         bottomNavigationBar: EmployeeMobileBottomNav(route: route),
         body: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(18, 18, 18, 110),
-            child: mobile,
+          child: Column(
+            children: [
+              EmployeeTopNavigation(route: route, mobile: true),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(18, 18, 18, 110),
+                  child: mobile,
+                ),
+              ),
+            ],
           ),
         ),
       );
@@ -108,15 +115,15 @@ class EmployeeMobileBottomNav extends StatelessWidget {
       'Attendance',
       Icons.calendar_month_outlined,
     ),
-    _NavItem('/employee/tracking', 'Tracking', Icons.my_location_rounded),
   ];
 
   static const _moreItems = <_NavItem>[
+    _NavItem('/employee/clock-log', 'Clock In / Out', Icons.schedule_rounded),
     _NavItem('/employee/leave', 'Leave', Icons.description_outlined),
     _NavItem('/employee/permission', 'Permission', Icons.verified_user_outlined),
     _NavItem('/employee/extra-hours', 'Extra Hours', Icons.more_time_rounded),
     _NavItem('/employee/salary', 'Salary', Icons.currency_rupee_rounded),
-    _NavItem('/employee/clock-log', 'Clock In / Out', Icons.schedule_rounded),
+    _NavItem('/employee/tracking', 'Tracking', Icons.location_on_rounded),
   ];
 
   bool get _moreActive => _moreItems.any((item) => item.route == route);
@@ -185,62 +192,46 @@ class EmployeeMobileBottomNav extends StatelessWidget {
           ),
         ],
       ),
-      child: Row(
-        children: [
-          ..._primaryItems.map((item) {
-          final active = item.route == route;
-          return Expanded(
-            child: Tooltip(
-              message: item.label,
-              child: InkWell(
-                onTap: active
-                    ? null
-                    : () => Navigator.of(
-                        context,
-                      ).pushReplacementNamed(item.route),
-                borderRadius: BorderRadius.circular(25),
-                child: Center(
-                  child: Container(
-                    width: 50,
-                    height: 50,
-                    decoration: BoxDecoration(
-                      color: active
-                          ? employeeBlue
-                          : Colors.transparent,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(item.icon, color: Colors.white, size: 22),
-                  ),
-                ),
-              ),
-            ),
-          );
-          }),
-          Expanded(
-            child: Tooltip(
-              message: 'More',
-              child: InkWell(
-                onTap: () => _showMore(context),
-                borderRadius: BorderRadius.circular(25),
-                child: Center(
-                  child: Container(
-                    width: 50,
-                    height: 50,
-                    decoration: BoxDecoration(
-                      color: _moreActive ? employeeBlue : Colors.transparent,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.more_horiz_rounded,
-                        color: Colors.white, size: 25),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [..._primaryItems, ..._moreItems]
+              .map((item) => _mobileItem(context, item))
+              .toList(),
+        ),
       ),
     ),
   );
+
+  Widget _mobileItem(BuildContext context, _NavItem item) {
+    final active = item.route == route;
+    return SizedBox(
+      width: 72,
+      height: 62,
+      child: Tooltip(
+        message: item.label,
+        child: InkWell(
+          onTap: active
+              ? null
+              : () => Navigator.of(context).pushReplacementNamed(item.route),
+          borderRadius: BorderRadius.circular(25),
+          child: Center(
+            child: Container(
+              width: 50,
+              height: 50,
+              decoration: BoxDecoration(
+                color: active ? employeeBlue : Colors.transparent,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(item.icon, color: Colors.white, size: 22),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class EmployeeSidebar extends StatelessWidget {
@@ -268,7 +259,7 @@ class EmployeeSidebar extends StatelessWidget {
     ),
     _NavItem('/employee/extra-hours', 'Extra Hours', Icons.more_time_rounded),
     _NavItem('/employee/salary', 'Salary', Icons.currency_rupee_rounded),
-    _NavItem('/employee/tracking', 'Tracking', Icons.my_location_rounded),
+    _NavItem('/employee/tracking', 'Tracking', Icons.location_on_rounded),
   ];
 
   @override
@@ -441,8 +432,9 @@ class _NavItem {
 }
 
 class EmployeeTopNavigation extends StatefulWidget {
-  const EmployeeTopNavigation({super.key, required this.route});
+  const EmployeeTopNavigation({super.key, required this.route, this.mobile = false});
   final String route;
+  final bool mobile;
 
   @override
   State<EmployeeTopNavigation> createState() => _EmployeeTopNavigationState();
@@ -608,7 +600,48 @@ class _EmployeeTopNavigationState extends State<EmployeeTopNavigation> {
   }
 
   @override
-  Widget build(BuildContext context) => LayoutBuilder(
+  Widget build(BuildContext context) {
+    if (widget.mobile) {
+      return Container(
+        height: 78,
+        padding: const EdgeInsets.symmetric(horizontal: 18),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          border: Border(bottom: BorderSide(color: employeeLine)),
+          boxShadow: [
+            BoxShadow(
+              color: Color(0x0A07143F),
+              blurRadius: 16,
+              offset: Offset(0, 5),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Image.asset(
+              'assets/images/godigital_logo.png',
+              height: 45,
+              width: 136,
+              fit: BoxFit.contain,
+            ),
+            const Spacer(),
+            EmployeeNotificationButton(
+              unreadCount: _unreadNotifications,
+              notifications: _notifications,
+              onOpened: () => setState(() => _unreadNotifications = 0),
+            ),
+            const SizedBox(width: 12),
+            EmployeeProfileMenu(
+              radius: 25,
+              initials: _staffInitials,
+              fullName: _fullName,
+              staffId: _staffId,
+            ),
+          ],
+        ),
+      );
+    }
+    return LayoutBuilder(
     builder: (context, constraints) {
       final compact = constraints.maxWidth < 1120;
       return Container(
@@ -710,7 +743,8 @@ class _EmployeeTopNavigationState extends State<EmployeeTopNavigation> {
         ),
       );
     },
-  );
+    );
+  }
 }
 
 class _TopNavigationItem extends StatelessWidget {
