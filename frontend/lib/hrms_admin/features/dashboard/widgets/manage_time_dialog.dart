@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../services/hrms_attendance_time_api.dart';
 
-const _blue = Color(0xFFE3162A);
+const _blue = Color(0xFF1769E0);
 const _navy = Color(0xFF081B3C);
 const _line = Color(0xFFD9E2F1);
 const _softBlue = Color(0xFFF1F6FF);

@@ -21,12 +21,13 @@ class AdminSurfacePalette {
   final Color border;
 
   factory AdminSurfacePalette.of(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return AdminSurfacePalette._(
-      surface: Colors.white,
-      subtleSurface: const Color(0xFFF9FBFE),
-      text: const Color(0xFF102653),
-      mutedText: const Color(0xFF647493),
-      border: const Color(0xFFE1E7F0),
+      surface: scheme.surface,
+      subtleSurface: scheme.surfaceContainerHighest,
+      text: scheme.onSurface,
+      mutedText: scheme.onSurfaceVariant,
+      border: scheme.outline,
     );
   }
 }

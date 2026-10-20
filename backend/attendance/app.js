@@ -316,32 +316,42 @@ function createApp({ pool, jwtSecret, timeZone = 'Asia/Kolkata', clock = () => n
         );
 
         const consumed = { 'Casual Leave': 0, 'Sick Leave': 0, 'Earned Leave': 0, 'Optional Holiday': 0 };
+        const monthlyConsumed = { 'Casual Leave': 0, 'Sick Leave': 0, 'Earned Leave': 0, 'Optional Holiday': 0 };
+        const year = new Date().getFullYear();
+        const monthStart = new Date(year, new Date().getMonth(), 1);
         for (const row of leaves) {
           // A request changes the available balance only after an admin has
           // approved it. Pending and rejected requests keep the balance.
           if (row.status === 'APPROVED') {
             const count = parseFloat(row.days_count) || 1.0;
-            if (consumed[row.leave_type] !== undefined) {
+            const from = new Date(row.from_date + 'T00:00:00');
+            if (consumed[row.leave_type] !== undefined && from.getFullYear() === year) {
               consumed[row.leave_type] += count;
+              if (from >= monthStart) monthlyConsumed[row.leave_type] += count;
             }
           }
         }
 
-        await pool.execute(`CREATE TABLE IF NOT EXISTS hrms_leave_type_policies (
-          leave_type VARCHAR(64) NOT NULL PRIMARY KEY,
-          yearly_limit DECIMAL(5,2) NOT NULL DEFAULT 0
-        )`);
+        await pool.execute(`CREATE TABLE IF NOT EXISTS hrms_leave_policies (
+          id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, leave_type VARCHAR(80) NOT NULL,
+          annual_allowance DECIMAL(8,2) NOT NULL DEFAULT 0,
+          monthly_allowance DECIMAL(8,2) NOT NULL DEFAULT 0,
+          carry_forward TINYINT(1) NOT NULL DEFAULT 0, effective_year INT NOT NULL,
+          active TINYINT(1) NOT NULL DEFAULT 1,
+          UNIQUE KEY uniq_leave_policy_year (leave_type, effective_year))`);
+        try { await pool.execute('ALTER TABLE hrms_leave_policies ADD COLUMN monthly_allowance DECIMAL(8,2) NOT NULL DEFAULT 0 AFTER annual_allowance'); } catch (_) {}
         const defaultLimits = [['Casual Leave', 12], ['Sick Leave', 8], ['Earned Leave', 12], ['Optional Holiday', 3]];
         for (const [type, limit] of defaultLimits) {
-          await pool.execute('INSERT IGNORE INTO hrms_leave_type_policies (leave_type, yearly_limit) VALUES (?, ?)', [type, limit]);
+          await pool.execute('INSERT IGNORE INTO hrms_leave_policies (leave_type, annual_allowance, monthly_allowance, effective_year, active) VALUES (?, ?, 0, ?, 1)', [type, limit, year]);
         }
-        const [policyRows] = await pool.execute('SELECT leave_type, yearly_limit FROM hrms_leave_type_policies');
-        const quotas = Object.fromEntries(policyRows.map((row) => [row.leave_type, Number(row.yearly_limit)]));
-        const balances = Object.keys(quotas).map((type) => ({
-          type,
-          used: consumed[type],
-          total: quotas[type],
-          isPaidLeave: type === 'Earned Leave',
+        const [policyRows] = await pool.execute('SELECT leave_type, annual_allowance, monthly_allowance FROM hrms_leave_policies WHERE effective_year = ? AND active = 1 AND annual_allowance > 0', [year]);
+        const balances = policyRows.map((row) => ({
+          type: row.leave_type,
+          used: consumed[row.leave_type] || 0,
+          total: Number(row.annual_allowance),
+          monthlyUsed: monthlyConsumed[row.leave_type] || 0,
+          monthlyTotal: Number(row.monthly_allowance || 0),
+          isPaidLeave: row.leave_type === 'Earned Leave',
         }));
 
         res.json({
@@ -363,11 +373,35 @@ function createApp({ pool, jwtSecret, timeZone = 'Asia/Kolkata', clock = () => n
         if (!leave_type || !from_date || !to_date) {
           return res.status(400).json({ success: false, message: 'All fields are required.' });
         }
+        const requestYear = Number(String(from_date).slice(0, 4));
+        const [policyRows] = await pool.execute(
+          'SELECT annual_allowance, monthly_allowance FROM hrms_leave_policies WHERE leave_type = ? AND effective_year = ? AND active = 1',
+          [leave_type, requestYear]
+        );
+        const leavePolicy = policyRows[0];
+        if (!leavePolicy || Number(leavePolicy.annual_allowance) <= 0) {
+          return res.status(409).json({ success: false, message: 'This leave type is not available.' });
+        }
         const d1 = new Date(from_date);
         const d2 = new Date(to_date);
         let days = (d2 - d1) / (1000 * 60 * 60 * 24) + 1;
         if (days < 0) days = 1;
         if (duration_type === 'Half Day') days = 0.5;
+        const [usageRows] = await pool.execute(
+          `SELECT COALESCE(SUM(days_count), 0) AS yearly_used,
+                  COALESCE(SUM(CASE WHEN DATE_FORMAT(from_date, '%Y-%m') = DATE_FORMAT(?, '%Y-%m') THEN days_count ELSE 0 END), 0) AS monthly_used
+           FROM employee_leaves
+           WHERE employee_id = ? AND leave_type = ? AND status IN ('PENDING', 'APPROVED')
+             AND YEAR(from_date) = ?`,
+          [from_date, empId, leave_type, requestYear]
+        );
+        const usage = usageRows[0] || {};
+        if (Number(usage.yearly_used || 0) + days > Number(leavePolicy.annual_allowance)) {
+          return res.status(409).json({ success: false, message: 'Yearly leave limit has been reached.' });
+        }
+        if (Number(leavePolicy.monthly_allowance || 0) > 0 && Number(usage.monthly_used || 0) + days > Number(leavePolicy.monthly_allowance)) {
+          return res.status(409).json({ success: false, message: 'Monthly leave limit has been reached.' });
+        }
         // Earned Leave is the company's paid-leave type. All Salary Master
         // allowance and eligibility rules apply only to this leave type.
         if (leave_type === 'Earned Leave') {

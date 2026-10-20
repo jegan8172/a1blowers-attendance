@@ -29,8 +29,38 @@ class EmployeePortal extends StatelessWidget {
     theme: ThemeData(
       useMaterial3: true,
       fontFamily: 'Arial',
-      scaffoldBackgroundColor: const Color(0xFFF8FBFF),
-      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0668F5)),
+      scaffoldBackgroundColor: const Color(0xFFF5F8FD),
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: const Color(0xFF1769E0),
+        primary: const Color(0xFF1769E0),
+        surface: Colors.white,
+      ),
+      appBarTheme: const AppBarTheme(
+        backgroundColor: Colors.white,
+        foregroundColor: Color(0xFF07143F),
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: const Color(0xFF1769E0),
+          foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: Colors.white,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+        enabledBorder: OutlineInputBorder(
+          borderSide: const BorderSide(color: Color(0xFFD9E4F4)),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderSide: const BorderSide(color: Color(0xFF1769E0), width: 1.5),
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ),
       textTheme: const TextTheme(
         headlineLarge: TextStyle(
           color: Color(0xFF07143F),

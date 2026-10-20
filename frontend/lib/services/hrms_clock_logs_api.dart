@@ -6,6 +6,35 @@ import 'api_config.dart';
 import 'auth_storage.dart';
 
 abstract final class HrmsClockLogsApi {
+  static Future<List<Map<String, dynamic>>> remarks(String id) async {
+    final token = await AuthStorage.getString('auth_token');
+    final response = await http.get(
+      Uri.parse('${ApiConfig.baseUrl}/attendance/clock-logs/$id/remarks'),
+      headers: {if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token'},
+    );
+    final result = jsonDecode(response.body) as Map;
+    if (response.statusCode >= 400 || result['success'] == false) {
+      throw Exception(result['message'] ?? 'Could not load remarks');
+    }
+    return (result['data'] as List? ?? []).whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item)).toList();
+  }
+
+  static Future<void> addRemark(String id, String remark) async {
+    final token = await AuthStorage.getString('auth_token');
+    final response = await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/attendance/clock-logs/$id/remarks'),
+      headers: {
+        'Content-Type': 'application/json',
+        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({'remark': remark}),
+    );
+    final result = jsonDecode(response.body) as Map;
+    if (response.statusCode >= 400 || result['success'] == false) {
+      throw Exception(result['message'] ?? 'Could not save remark');
+    }
+  }
   static Future<Map<String, dynamic>> list({
     required DateTime date,
     required bool monthly,

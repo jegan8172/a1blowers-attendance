@@ -298,6 +298,16 @@ function capitalize(value) {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
+function clockLocation(body) {
+  if (body?.latitude == null || body?.longitude == null ||
+      body.latitude === '' || body.longitude === '') return [null, null];
+  const latitude = Number(body.latitude);
+  const longitude = Number(body.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude) ||
+      Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return [null, null];
+  return [latitude, longitude];
+}
+
 function serializeRecord(row, person) {
   const worked = Number(row.working_minutes || 0);
   return {
@@ -311,6 +321,12 @@ function serializeRecord(row, person) {
     checkOut: policy.formatDisplayTime(sqlDateTime(row.check_out_at)),
     checkInAt: sqlDateTime(row.check_in_at),
     checkOutAt: sqlDateTime(row.check_out_at),
+    checkInLatitude: row.check_in_latitude,
+    checkInLongitude: row.check_in_longitude,
+    checkOutLatitude: row.check_out_latitude,
+    checkOutLongitude: row.check_out_longitude,
+    scheduledShiftStart: row.scheduled_shift_start || null,
+    scheduledShiftEnd: row.scheduled_shift_end || null,
     clockOutReason: row.clock_out_reason || null,
     trackingStopReason: row.tracking_stop_reason || null,
     method: row.check_in_method,
@@ -490,6 +506,38 @@ async function dashboard(req, res) {
   } catch (error) {
     console.error('GET /attendance/dashboard', error);
     return fail(res, 500, error.message);
+  }
+}
+
+async function clockLogRemarks(req, res) {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) return fail(res, 400, 'Invalid attendance record');
+  try {
+    const [records] = await db.query('SELECT id FROM attendance_records WHERE id = ?', [id]);
+    if (!records.length) return fail(res, 404, 'Attendance record not found');
+    const [rows] = await db.query(
+      'SELECT id, admin_user_id AS adminUserId, remark, created_at AS createdAt FROM attendance_admin_remarks WHERE attendance_id = ? ORDER BY created_at DESC, id DESC', [id]
+    );
+    return ok(res, rows);
+  } catch (error) {
+    console.error('GET clock log remarks', error);
+    return fail(res, 500, 'Unable to load remarks');
+  }
+}
+
+async function addClockLogRemark(req, res) {
+  const id = Number(req.params.id);
+  const remark = String(req.body?.remark || '').trim();
+  if (!Number.isSafeInteger(id) || id <= 0) return fail(res, 400, 'Invalid attendance record');
+  if (remark.length < 3 || remark.length > 1000) return fail(res, 400, 'Remark must contain 3 to 1000 characters');
+  try {
+    const [records] = await db.query('SELECT id FROM attendance_records WHERE id = ?', [id]);
+    if (!records.length) return fail(res, 404, 'Attendance record not found');
+    await db.query('INSERT INTO attendance_admin_remarks (attendance_id, admin_user_id, remark) VALUES (?, ?, ?)', [id, req.user.id, remark]);
+    return ok(res, null, 'Remark added');
+  } catch (error) {
+    console.error('POST clock log remark', error);
+    return fail(res, 500, 'Unable to save remark');
   }
 }
 
@@ -780,7 +828,55 @@ async function employeeDashboard(req, res) {
         item.is_late = false;
       }
     });
-    presentDays = monthRecords.filter((item) => Boolean(item.clock_in_at) && item.attendance_status !== 'weekly_off' && item.attendance_status !== 'holiday' && item.attendance_status !== 'absent').length;
+    const [approvedOneDayLeaves] = await db.query(
+      `SELECT DATE_FORMAT(l.from_date, '%Y-%m-%d') AS work_date, l.leave_type
+       FROM employee_leaves l
+       LEFT JOIN hrms_leave_approval_links link ON link.leave_id = l.id
+       LEFT JOIN attendance_permission_requests approval ON approval.id = link.approval_request_id
+       WHERE l.employee_id = ? AND l.status = 'APPROVED'
+         AND from_date = to_date AND LOWER(duration_type) = 'full day'
+         AND l.from_date >= ? AND l.from_date <= LAST_DAY(?)`,
+      [employeeId, month + '-01', month + '-01']
+    );
+    approvedOneDayLeaves.forEach(function (leave) {
+      const workDate = leave.work_date;
+      // Weekly offs and holidays never become a leave attendance day.
+      if (!employeeWorkingDay(workDate, weeklyResolver, monthlyOverrides)) return;
+      let item = calendarData[workDate];
+      if (!item) {
+        item = { work_date: workDate, clock_in_at: null, clock_out_at: null, is_late: false };
+        calendarData[workDate] = item;
+        monthRecords.push(item);
+      }
+      // This is a response-only leave status. It does not create or
+      // alter an attendance_records row, so any real clock details remain safe.
+      item.attendance_status = ({
+        'Earned Leave': 'earned_leave', 'Casual Leave': 'casual_leave',
+        'Sick Leave': 'sick_leave', 'Optional Holiday': 'optional_holiday',
+      }[leave.leave_type] || 'on_leave');
+      item.is_late = false;
+    });
+    const [regularizations] = await db.query(
+      `SELECT DATE_FORMAT(request_date, '%Y-%m-%d') AS work_date, salary_mode
+       FROM attendance_permission_requests
+       WHERE employee_id = ? AND request_type = 'attendance_regularization'
+         AND status = 'approved' AND request_date >= ? AND request_date <= LAST_DAY(?)`,
+      [employeeId, month + '-01', month + '-01']
+    );
+    regularizations.forEach(function (request) {
+      if (!employeeWorkingDay(request.work_date, weeklyResolver, monthlyOverrides)) return;
+      let item = calendarData[request.work_date];
+      if (!item) {
+        item = { work_date: request.work_date, clock_in_at: null, clock_out_at: null, is_late: false };
+        calendarData[request.work_date] = item;
+        monthRecords.push(item);
+      }
+      item.attendance_status = String(request.salary_mode).toLowerCase() === 'paid' ? 'present' : 'attendance_regularization';
+      item.regularization = true;
+      item.approved_regularization = String(request.salary_mode).toLowerCase() === 'paid';
+      item.is_late = false;
+    });
+    presentDays = monthRecords.filter((item) => (Boolean(item.clock_in_at) || item.approved_regularization) && item.attendance_status !== 'weekly_off' && item.attendance_status !== 'holiday' && item.attendance_status !== 'absent').length;
     lateDays = monthRecords.filter((item) => Boolean(item.is_late) && item.attendance_status !== 'weekly_off' && item.attendance_status !== 'holiday' && item.attendance_status !== 'absent').length;
     absentDays = monthRecords.filter((item) => item.attendance_status === 'absent').length;
 
@@ -887,6 +983,8 @@ async function checkIn(req, res) {
       [employeeId]
     );
     const gender = profile && profile.gender ? profile.gender : 'Male';
+    const timeSettings = await policy.getTimeSettings(db);
+    const shift = String(gender).toLowerCase() === 'female' ? timeSettings.female : timeSettings.male;
     let late = policy.isLateCheckIn(at, gender);
     let absent = policy.isAbsentCheckIn(at, gender);
     await ensureReclockRequestColumns();
@@ -941,7 +1039,7 @@ async function checkIn(req, res) {
       // workday and the duration is calculated from that original timestamp.
       await connection.query(
         `UPDATE attendance_records
-         SET check_out_at = NULL, working_minutes = 0, session_status = 'active'
+         SET check_out_at = NULL, check_out_latitude = NULL, check_out_longitude = NULL, working_minutes = 0, session_status = 'active'
          WHERE id = ?`,
         [existing.id]
       );
@@ -962,6 +1060,14 @@ async function checkIn(req, res) {
       await connection.query(
         "INSERT INTO attendance_records (employee_id, attendance_date, check_in_at, check_in_method, is_late, attendance_status, session_status) VALUES (?, ?, ?, ?, ?, ?, 'active')",
         [employeeId, date, at, method, late ? 1 : 0, status]
+      );
+    }
+
+    if (!approvedReclock) {
+      const [latitude, longitude] = clockLocation(req.body);
+      await connection.query(
+        'UPDATE attendance_records SET check_in_latitude = ?, check_in_longitude = ?, scheduled_shift_start = ?, scheduled_shift_end = ? WHERE employee_id = ? AND attendance_date = ?',
+        [latitude, longitude, shift.shiftStart, shift.shiftEnd, employeeId, date]
       );
     }
 
@@ -1019,9 +1125,10 @@ async function checkOut(req, res) {
       attendance_status: record.attendance_status
     });
 
+    const [latitude, longitude] = clockLocation(req.body);
     await db.query(
-      "UPDATE attendance_records SET check_out_at = ?, working_minutes = ?, attendance_status = ?, session_status = 'completed', clock_out_reason = ?, tracking_stop_reason = ? WHERE id = ?",
-      [at, workingMinutes, status, reason, reason, record.id]
+      "UPDATE attendance_records SET check_out_at = ?, working_minutes = ?, attendance_status = ?, session_status = 'completed', clock_out_reason = ?, tracking_stop_reason = ?, check_out_latitude = ?, check_out_longitude = ? WHERE id = ?",
+      [at, workingMinutes, status, reason, reason, latitude, longitude, record.id]
     );
     await recordAutomaticOvertime(employeeId, record.id, sqlDate(record.attendance_date), workingMinutes);
 
@@ -1271,15 +1378,35 @@ async function ensurePermissionTimeColumns() {
 async function createPermission(req, res) {
   try {
     const type = String((req.body && (req.body.type || req.body.request_type)) || '').toLowerCase().replace(/\s+/g, '_');
-    const allowed = { leave: 1, late_entry: 1, early_exit: 1, risk_leave: 1, permission: 1 };
-    if (!allowed[type]) return fail(res, 400, 'type must be leave, late_entry, early_exit, risk_leave, or permission');
+    const allowed = { leave: 1, late_entry: 1, early_exit: 1, risk_leave: 1, permission: 1, attendance_regularization: 1 };
+    if (!allowed[type]) return fail(res, 400, 'Invalid request type');
     const date = parseDateParam(req.body && (req.body.date || req.body.request_date));
     if (!date) return fail(res, 400, 'date must be YYYY-MM-DD');
+    if (type === 'attendance_regularization' && date >= policy.todayIstDate()) {
+      return fail(res, 400, 'Attendance regularization is available only for a past working day');
+    }
+    if (type === 'attendance_regularization') {
+      const overrides = await calendar.overridesForPeriod(date, date);
+      if (!calendar.isWorkingDay(date, new Set([0]), overrides)) {
+        return fail(res, 400, 'Attendance regularization cannot be requested for a holiday or weekly off');
+      }
+    }
     const reason = String((req.body && req.body.reason) || '').trim();
     const startTime = String((req.body && req.body.start_time) || '').trim();
     const endTime = String((req.body && req.body.end_time) || '').trim();
     if (type === 'permission' && (!/^\d{2}:\d{2}$/.test(startTime) || !/^\d{2}:\d{2}$/.test(endTime) || startTime >= endTime)) {
       return fail(res, 400, 'Permission start and end times are required, and the end time must be later');
+    }
+    if (type === 'attendance_regularization' && (reason.length < 3 || reason.length > 350)) {
+      return fail(res, 400, 'Enter a reason between 3 and 350 characters');
+    }
+    if (type === 'attendance_regularization') {
+      const [existing] = await db.query(
+        `SELECT id FROM attendance_permission_requests
+         WHERE employee_id = ? AND request_date = ? AND request_type = ? AND status = 'pending'`,
+        [req.user.id, date, type]
+      );
+      if (existing.length) return fail(res, 409, 'An attendance regularization request is already pending for this date');
     }
 
     await ensurePermissionTimeColumns();
@@ -1464,6 +1591,8 @@ module.exports = {
   requireAdmin: requireAdmin,
   dashboard: dashboard,
   clockLogs: clockLogs,
+  clockLogRemarks: clockLogRemarks,
+  addClockLogRemark: addClockLogRemark,
   myOvertime: myOvertime,
   overtimeHistory: overtimeHistory,
   employeeDashboard: employeeDashboard,

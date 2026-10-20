@@ -67,12 +67,7 @@ class AttendanceRowData {
   });
 }
 
-/// Horizontally scrollable attendance grid with frozen Employee Name and
-/// Designation columns, per HRMS_PROJECT_BLUEPRINT.md, Section 3.
-///
-/// Vertical scrolling moves the frozen and scrollable halves together
-/// (they share one outer scroll); horizontal scrolling only affects the
-/// day/summary columns on the right.
+/// Attendance grid sized to its available width.
 class AttendanceGrid extends StatefulWidget {
   final List<int> days; // e.g. 1..31
   final List<String> dayLabels; // e.g. Fri, Sat, Sun...
@@ -80,6 +75,7 @@ class AttendanceGrid extends StatefulWidget {
   final bool showSummary;
   final bool expanded;
   final VoidCallback? onToggleExpanded;
+  final Widget? toolbarLeading;
 
   const AttendanceGrid({
     super.key,
@@ -89,6 +85,7 @@ class AttendanceGrid extends StatefulWidget {
     this.showSummary = true,
     this.expanded = false,
     this.onToggleExpanded,
+    this.toolbarLeading,
   });
 
   @override
@@ -101,22 +98,21 @@ class _AttendanceGridState extends State<AttendanceGrid> {
   // calibrated for common 125% desktop scaling while retaining readable rows.
   static const double _rowHeight = 34;
   static const double _headerHeight = 48;
-  static const double _dayColWidth = 50;
-  static const double _dayColWidthMax = 82;
+  static const double _dayColWidth = 70;
   // Match the compact three-column lead-in used by the attendance sheet:
   // row number, employee, then designation. The calendar remains the focus.
-  static const double _frozenWidth = 346;
+  static const double _designationWidth = 82;
+  static const double _frozenWidth = 40 + 142 + _designationWidth;
   static const _summaryWidths = [
-    64.0,
-    64.0,
-    64.0,
-    64.0,
-    64.0,
-    64.0,
-    64.0,
-    64.0,
+    44.0,
+    44.0,
+    44.0,
+    48.0,
+    48.0,
+    58.0,
+    60.0,
+    54.0,
   ];
-  final _calendarController = ScrollController();
   int _windowStart = 0;
 
   int get _windowEnd => widget.showSummary
@@ -139,105 +135,52 @@ class _AttendanceGridState extends State<AttendanceGrid> {
   }
 
   @override
-  void dispose() {
-    _calendarController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final summaryWidth = widget.showSummary
             ? _summaryWidths.reduce((a, b) => a + b)
             : 0.0;
-        final availableForCalendar =
-            (constraints.maxWidth - _frozenWidth - summaryWidth).clamp(
-              0.0,
-              double.infinity,
-            );
         final visibleIndexes = _visibleDayIndexes;
-        final baseDayColsWidth = visibleIndexes.length * _dayColWidth;
-
-        final stretchColWidth = visibleIndexes.isEmpty
-            ? _dayColWidth
-            : availableForCalendar / visibleIndexes.length;
-        final canStretchToFit = stretchColWidth >= _dayColWidth;
-        final needsScroll =
-            widget.showSummary &&
-            !canStretchToFit &&
-            baseDayColsWidth > availableForCalendar;
-        // With the payroll summary hidden, every date is intentionally
-        // visible at once. Let the date cells shrink to share the available
-        // table width instead of putting the calendar in a horizontal scroll.
-        final colWidth = widget.showSummary
-            ? (needsScroll
-                  ? _dayColWidth
-                  : (canStretchToFit
-                        ? stretchColWidth.clamp(_dayColWidth, _dayColWidthMax)
-                        : _dayColWidth))
-            : (visibleIndexes.isEmpty
-                  ? _dayColWidth
-                  : availableForCalendar / visibleIndexes.length);
-
-        Widget calendarHeader = _calendarHeaderRow(colWidth);
-        Widget calendarBody = _calendarBodyColumn(colWidth);
-        if (needsScroll) {
-          calendarHeader = SizedBox(
-            width: availableForCalendar,
-            child: SingleChildScrollView(
-              controller: _calendarController,
-              scrollDirection: Axis.horizontal,
-              physics: const NeverScrollableScrollPhysics(),
-              child: calendarHeader,
-            ),
-          );
-          calendarBody = SizedBox(
-            width: availableForCalendar,
-            child: SingleChildScrollView(
-              controller: _calendarController,
-              scrollDirection: Axis.horizontal,
-              physics: const BouncingScrollPhysics(),
-              child: calendarBody,
-            ),
-          );
-        }
+        final minWidth = _frozenWidth + summaryWidth + visibleIndexes.length * _dayColWidth;
+        final tableWidth = constraints.maxWidth;
+        final scale = minWidth > 0 ? tableWidth / minWidth : 1.0;
+        final colWidth = _dayColWidth * scale;
+        final calendarHeader = _calendarHeaderRow(colWidth);
+        final calendarBody = _calendarBodyColumn(colWidth);
 
         final tableBody = IntrinsicHeight(
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _frozenBodyColumn(),
+              _frozenBodyColumn(scale),
               calendarBody,
-              if (widget.showSummary) _summaryBodyColumn(),
+              if (widget.showSummary) _summaryBodyColumn(scale),
             ],
           ),
         );
 
+        final table = SizedBox(
+          width: tableWidth,
+          child: Column(
+            mainAxisSize: widget.expanded ? MainAxisSize.min : MainAxisSize.max,
+            children: [
+              SizedBox(
+                height: _headerHeight,
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  _frozenHeaderRow(scale), calendarHeader,
+                  if (widget.showSummary) _summaryHeaderRow(scale),
+                ]),
+              ),
+              if (widget.expanded) tableBody else Expanded(child: SingleChildScrollView(child: tableBody)),
+            ],
+          ),
+        );
         return Column(
           mainAxisSize: widget.expanded ? MainAxisSize.min : MainAxisSize.max,
           children: [
             _dayWindowNavigator(),
-            SizedBox(
-              height: _headerHeight,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _frozenHeaderRow(),
-                  calendarHeader,
-                  if (widget.showSummary) _summaryHeaderRow(),
-                ],
-              ),
-            ),
-            if (widget.expanded)
-              tableBody
-            else
-              Expanded(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.vertical,
-                  child: tableBody,
-                ),
-              ),
+            if (widget.expanded) table else Expanded(child: table),
           ],
         );
       },
@@ -248,19 +191,17 @@ class _AttendanceGridState extends State<AttendanceGrid> {
     if (!widget.showSummary) {
       return Container(
         height: 44,
-        alignment: Alignment.center,
+        alignment: Alignment.centerLeft,
         decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.surfaceContainerHighest,
           border: const Border(bottom: BorderSide(color: _gridLine)),
         ),
-        child: Text(
-          'All ${widget.days.length} days',
-          style: TextStyle(
-            color: Theme.of(context).colorScheme.onSurface,
-            fontSize: 13,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
+        child: _scrollableToolbar(Row(children: [
+          if (widget.toolbarLeading != null) widget.toolbarLeading!,
+          const Spacer(),
+          Text('All ${widget.days.length} days', style: TextStyle(color: Theme.of(context).colorScheme.onSurface, fontSize: 13, fontWeight: FontWeight.w800)),
+          const Spacer(),
+        ])),
       );
     }
     final hasPrevious = _windowStart > 0;
@@ -274,8 +215,9 @@ class _AttendanceGridState extends State<AttendanceGrid> {
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
         border: const Border(bottom: BorderSide(color: _gridLine)),
       ),
-      child: Row(
+      child: _scrollableToolbar(Row(
         children: [
+          if (widget.toolbarLeading != null) widget.toolbarLeading!,
           const Spacer(),
           Row(
             mainAxisSize: MainAxisSize.min,
@@ -325,7 +267,7 @@ class _AttendanceGridState extends State<AttendanceGrid> {
               ),
               label: Text(widget.expanded ? 'Collapse list' : 'Expand list'),
               style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFFE3162A),
+                foregroundColor: const Color(0xFF1769E0),
                 textStyle: const TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
@@ -333,33 +275,41 @@ class _AttendanceGridState extends State<AttendanceGrid> {
               ),
             ),
         ],
-      ),
+      )),
     );
   }
 
-  Widget _frozenHeaderRow() => const SizedBox(
-    width: _frozenWidth,
+  Widget _scrollableToolbar(Widget child) => LayoutBuilder(
+    builder: (context, constraints) => FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: Alignment.centerLeft,
+      child: SizedBox(width: constraints.maxWidth < 760 && widget.toolbarLeading != null ? 760 : constraints.maxWidth, child: child),
+    ),
+  );
+
+  Widget _frozenHeaderRow(double scale) => SizedBox(
+    width: _frozenWidth * scale,
     child: Row(
       children: [
-        _HeaderCell(text: '#', width: 40),
-        _HeaderCell(text: 'Employee Name', width: 142),
-        _HeaderCell(text: 'Designation', width: 164),
+        _HeaderCell(text: '#', width: 40 * scale),
+        _HeaderCell(text: 'Employee Name', width: 142 * scale),
+        _HeaderCell(text: 'Designation', width: _designationWidth * scale),
       ],
     ),
   );
 
-  Widget _frozenBodyColumn() {
+  Widget _frozenBodyColumn(double scale) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         for (final entry in widget.rows.indexed)
           SizedBox(
             height: _rowHeight,
-            width: _frozenWidth,
+            width: _frozenWidth * scale,
             child: Row(
               children: [
                 _BodyCell(
-                  width: 40,
+                  width: 40 * scale,
                   child: Text(
                     '${entry.$1 + 1}',
                     textAlign: TextAlign.center,
@@ -370,7 +320,7 @@ class _AttendanceGridState extends State<AttendanceGrid> {
                   ),
                 ),
                 _BodyCell(
-                  width: 142,
+                  width: 142 * scale,
                   child: Text(
                     entry.$2.name,
                     maxLines: 1,
@@ -383,7 +333,7 @@ class _AttendanceGridState extends State<AttendanceGrid> {
                   ),
                 ),
                 _BodyCell(
-                  width: 164,
+                  width: _designationWidth * scale,
                   child: Text(
                     entry.$2.designation,
                     maxLines: 1,
@@ -465,46 +415,46 @@ class _AttendanceGridState extends State<AttendanceGrid> {
     HrmsColors.danger,
     Color(0xFF07186F),
   ];
-  static const _summaryPanelWidth = 512.0;
+  static const _summaryPanelWidth = 400.0;
 
-  Widget _summaryHeaderRow() => SizedBox(
-    width: _summaryPanelWidth,
+  Widget _summaryHeaderRow(double scale) => SizedBox(
+    width: _summaryPanelWidth * scale,
     child: Row(
       children: [
         for (var i = 0; i < _summaryLabels.length; i++)
           _HeaderCell(
-            width: _summaryWidths[i],
+            width: _summaryWidths[i] * scale,
             text: _summaryLabels[i],
             dense: true,
-            color: _summaryColors[i],
+            color: i == 5 || i == 7 ? Theme.of(context).colorScheme.onSurface : _summaryColors[i],
           ),
       ],
     ),
   );
 
-  Widget _summaryBodyColumn() {
+  Widget _summaryBodyColumn(double scale) {
     return Column(
       children: [
         for (final row in widget.rows)
           SizedBox(
             height: _rowHeight,
-            width: _summaryPanelWidth,
+            width: _summaryPanelWidth * scale,
             child: Row(
               children: [
                 _BodyCell(
-                  width: _summaryWidths[0],
+                  width: _summaryWidths[0] * scale,
                   child: Center(
                     child: _statText('${row.present}', HrmsColors.success),
                   ),
                 ),
                 _BodyCell(
-                  width: _summaryWidths[1],
+                  width: _summaryWidths[1] * scale,
                   child: Center(
                     child: _statText('${row.late}', HrmsColors.warning),
                   ),
                 ),
                 _BodyCell(
-                  width: _summaryWidths[2],
+                  width: _summaryWidths[2] * scale,
                   child: Center(
                     child: _statText(
                       '${row.approvedLeave}',
@@ -513,7 +463,7 @@ class _AttendanceGridState extends State<AttendanceGrid> {
                   ),
                 ),
                 _BodyCell(
-                  width: _summaryWidths[3],
+                  width: _summaryWidths[3] * scale,
                   child: Center(
                     child: _statText(
                       '${row.halfLeave}',
@@ -522,23 +472,23 @@ class _AttendanceGridState extends State<AttendanceGrid> {
                   ),
                 ),
                 _BodyCell(
-                  width: _summaryWidths[4],
+                  width: _summaryWidths[4] * scale,
                   child: Center(
                     child: _statText('${row.earnedLeave}', HrmsColors.info),
                   ),
                 ),
                 _BodyCell(
-                  width: _summaryWidths[5],
+                  width: _summaryWidths[5] * scale,
                   child: Center(
                     child: Text(
                       row.salaryPerMonth,
                       maxLines: 1,
-                      style: _moneyStyle,
+                      style: _moneyStyle.copyWith(color: Theme.of(context).colorScheme.onSurface),
                     ),
                   ),
                 ),
                 _BodyCell(
-                  width: _summaryWidths[6],
+                  width: _summaryWidths[6] * scale,
                   child: Center(
                     child: Text(
                       '${row.absent} ${row.absentDeduction}',
@@ -548,12 +498,12 @@ class _AttendanceGridState extends State<AttendanceGrid> {
                   ),
                 ),
                 _BodyCell(
-                  width: _summaryWidths[7],
+                  width: _summaryWidths[7] * scale,
                   child: Center(
                     child: Text(
                       row.updatedSalary,
                       maxLines: 1,
-                      style: _moneyStyle,
+                      style: _moneyStyle.copyWith(color: Theme.of(context).colorScheme.onSurface),
                     ),
                   ),
                 ),
@@ -596,13 +546,14 @@ class _HeaderCell extends StatelessWidget {
     return Container(
       width: width,
       alignment: Alignment.center,
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
         border: Border(
-          right: BorderSide(color: _gridLine, width: .7),
-          bottom: BorderSide(color: _gridLine, width: .7),
+          right: BorderSide(color: Theme.of(context).colorScheme.outline, width: .7),
+          bottom: BorderSide(color: Theme.of(context).colorScheme.outline, width: .7),
         ),
       ),
-      child: Text(
+      child: FittedBox(fit: BoxFit.scaleDown, child: Text(
         text,
         textAlign: TextAlign.center,
         style: TextStyle(
@@ -610,7 +561,7 @@ class _HeaderCell extends StatelessWidget {
           fontSize: dense ? 9 : 10,
           color: color ?? Theme.of(context).colorScheme.onSurface,
         ),
-      ),
+      )),
     );
   }
 }
@@ -625,15 +576,17 @@ class _BodyCell extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: width,
-      alignment: Alignment.centerLeft,
+      alignment: Alignment.center,
       padding: const EdgeInsets.symmetric(horizontal: 3),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         border: Border(
-          right: BorderSide(color: _gridLine, width: .7),
-          bottom: BorderSide(color: _gridLine, width: .7),
+          right: BorderSide(color: Theme.of(context).colorScheme.outline, width: .7),
+          bottom: BorderSide(color: Theme.of(context).colorScheme.outline, width: .7),
         ),
       ),
-      child: child,
+      child: child is _MarkChip
+          ? child
+          : FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.center, child: child),
     );
   }
 }

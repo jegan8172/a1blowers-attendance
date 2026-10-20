@@ -330,7 +330,10 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
     String message;
     try {
       final payload = clockOut
-          ? <String, dynamic>{'reason': clockOutReason}
+          ? <String, dynamic>{
+              'reason': clockOutReason,
+              ...await AttendanceLocation.optionalClockLocation(),
+            }
           : await AttendanceLocation.checkInPayload(
               client: _client,
               token: token,

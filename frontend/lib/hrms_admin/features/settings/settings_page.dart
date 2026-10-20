@@ -73,8 +73,6 @@ class SettingsPage extends StatelessWidget {
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               _SettingsHeading(colors: colors),
               const SizedBox(height: 22),
-              _AppearancePanel(colors: colors),
-              const SizedBox(height: 24),
               Text('Workspace settings', style: TextStyle(color: colors.ink, fontSize: 18, fontWeight: FontWeight.w800)),
               const SizedBox(height: 4),
               Text('Choose a section to manage your organisation settings.', style: TextStyle(color: colors.muted, fontSize: 14)),
@@ -105,21 +103,6 @@ class _SettingsHeading extends StatelessWidget {
       Text('Control policies, alerts, tracking, and workspace preferences.', style: TextStyle(color: colors.muted, fontSize: 14)),
     ])),
   ]);
-}
-
-class _AppearancePanel extends StatelessWidget {
-  const _AppearancePanel({required this.colors});
-  final _SettingsPalette colors;
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(20),
-    decoration: BoxDecoration(color: colors.surface, border: Border.all(color: colors.border), borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: colors.ink.withValues(alpha: .05), blurRadius: 18, offset: const Offset(0, 6))]),
-    child: Row(children: [
-        Container(width: 44, height: 44, decoration: BoxDecoration(color: colors.accent.withValues(alpha: .13), borderRadius: BorderRadius.circular(13)), child: Icon(Icons.palette_outlined, color: colors.accent)),
-        const SizedBox(width: 12),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Appearance', style: TextStyle(color: colors.ink, fontSize: 18, fontWeight: FontWeight.w800)), const SizedBox(height: 3), Text('Your workspace uses the standard GoDigital light theme and brand colours.', style: TextStyle(color: colors.muted, fontSize: 13))])),
-      ]),
-  );
 }
 
 class _SettingsGroup {
@@ -184,12 +167,12 @@ class _SettingsPalette {
   static _SettingsPalette of(BuildContext context, AdminAppearanceController appearance) {
     return _SettingsPalette(
       accent: appearance.accent,
-      page: const Color(0xFFF7F9FD),
-      surface: Colors.white,
-      tile: const Color(0xFFF9FBFE),
-      ink: const Color(0xFF102653),
-      muted: const Color(0xFF647493),
-      border: const Color(0xFFE1E7F0),
+      page: Colors.transparent,
+      surface: appearance.card,
+      tile: Theme.of(context).colorScheme.surfaceContainerHighest,
+      ink: appearance.text,
+      muted: appearance.text.withValues(alpha: .72),
+      border: appearance.border,
     );
   }
 }

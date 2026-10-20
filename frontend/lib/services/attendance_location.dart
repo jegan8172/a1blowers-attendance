@@ -19,6 +19,24 @@ class AttendanceLocationError implements Exception {
 class AttendanceLocation {
   AttendanceLocation._();
 
+  /// Best-effort location for clock events; never requests a new permission or
+  /// prevents an otherwise valid clock action when GPS is unavailable.
+  static Future<Map<String, dynamic>> optionalClockLocation() async {
+    try {
+      if (!await Geolocator.isLocationServiceEnabled()) return {};
+      final permission = await Geolocator.checkPermission();
+      if (permission != LocationPermission.always &&
+          permission != LocationPermission.whileInUse) return {};
+      final position = await currentPosition().timeout(const Duration(seconds: 5));
+      return {
+        'latitude': position.latitude,
+        'longitude': position.longitude,
+      };
+    } catch (_) {
+      return {};
+    }
+  }
+
   static Future<Position> currentPosition() async {
     try {
       if (!await Geolocator.isLocationServiceEnabled()) {
@@ -86,7 +104,7 @@ class AttendanceLocation {
       throw const AttendanceLocationError('Clock In rules are unavailable. Contact your admin.');
     }
     if (policy['workMode'] == 'Field' && policy['requiresLocation'] == false) {
-      return <String, dynamic>{};
+      return optionalClockLocation();
     }
     if (policy['requiresLocation'] != true ||
         !['Office', 'Home', 'Hybrid', 'Field'].contains(policy['workMode'])) {

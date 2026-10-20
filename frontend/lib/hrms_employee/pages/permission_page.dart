@@ -43,6 +43,7 @@ class _PermissionContentState extends State<_PermissionContent> {
   DateTime _selectedDate = DateTime.now();
   TimeOfDay _startTime = const TimeOfDay(hour: 14, minute: 0);
   TimeOfDay _endTime = const TimeOfDay(hour: 16, minute: 0);
+  String _requestType = 'permission';
 
   bool _loading = false;
   bool _submitting = false;
@@ -77,13 +78,12 @@ class _PermissionContentState extends State<_PermissionContent> {
       ])),
       const SizedBox(height: 22),
       EmployeeCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        DropdownButtonFormField<String>(value: _requestType, decoration: input('Request type', Icons.assignment_outlined), items: const [DropdownMenuItem(value: 'permission', child: Text('Permission')), DropdownMenuItem(value: 'attendance_regularization', child: Text('Attendance regularization (app crash)'))], onChanged: (value) => setState(() => _requestType = value ?? 'permission')),
+        const SizedBox(height: 22),
         const Text('Permission Date', style: TextStyle(color: employeeNavy, fontSize: 17, fontWeight: FontWeight.w800)),
         const SizedBox(height: 10),
         TextField(controller: _dateCtrl, readOnly: true, onTap: _pickDate, style: const TextStyle(color: employeeNavy, fontSize: 18, fontWeight: FontWeight.w700), decoration: input('Select date', Icons.calendar_today_outlined)),
-        const SizedBox(height: 22),
-        const Text('Time Away', style: TextStyle(color: employeeNavy, fontSize: 17, fontWeight: FontWeight.w800)),
-        const SizedBox(height: 10),
-        TextField(controller: _timeCtrl, readOnly: true, onTap: _pickTimeRange, style: const TextStyle(color: employeeNavy, fontSize: 18, fontWeight: FontWeight.w700), decoration: input('Select time', Icons.schedule_outlined)),
+        if (_requestType == 'permission') ...[const SizedBox(height: 22), const Text('Time Away', style: TextStyle(color: employeeNavy, fontSize: 17, fontWeight: FontWeight.w800)), const SizedBox(height: 10), TextField(controller: _timeCtrl, readOnly: true, onTap: _pickTimeRange, style: const TextStyle(color: employeeNavy, fontSize: 18, fontWeight: FontWeight.w700), decoration: input('Select time', Icons.schedule_outlined))],
         const SizedBox(height: 22),
         const Text('Reason', style: TextStyle(color: employeeNavy, fontSize: 17, fontWeight: FontWeight.w800)),
         const SizedBox(height: 10),
@@ -192,7 +192,7 @@ class _PermissionContentState extends State<_PermissionContent> {
 
     setState(() => _submitting = true);
 
-    if (_startTime.hour == _endTime.hour && _startTime.minute == _endTime.minute) {
+    if (_requestType == 'permission' && _startTime.hour == _endTime.hour && _startTime.minute == _endTime.minute) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Choose an end time later than the start time.')),
       );
@@ -200,10 +200,10 @@ class _PermissionContentState extends State<_PermissionContent> {
     }
 
     final payload = {
-      'type': 'permission',
+      'type': _requestType,
       'date': DateFormat('yyyy-MM-dd').format(_selectedDate),
-      'start_time': '${_startTime.hour.toString().padLeft(2, '0')}:${_startTime.minute.toString().padLeft(2, '0')}',
-      'end_time': '${_endTime.hour.toString().padLeft(2, '0')}:${_endTime.minute.toString().padLeft(2, '0')}',
+      if (_requestType == 'permission') 'start_time': '${_startTime.hour.toString().padLeft(2, '0')}:${_startTime.minute.toString().padLeft(2, '0')}',
+      if (_requestType == 'permission') 'end_time': '${_endTime.hour.toString().padLeft(2, '0')}:${_endTime.minute.toString().padLeft(2, '0')}',
       'reason': _reasonCtrl.text.trim(),
     };
 
@@ -315,6 +315,16 @@ class _PermissionContentState extends State<_PermissionContent> {
                     ),
                   ),
                   const SizedBox(height: 22),
+                  DropdownButtonFormField<String>(
+                    value: _requestType,
+                    decoration: const InputDecoration(labelText: 'Request type', prefixIcon: Icon(Icons.assignment_outlined), border: OutlineInputBorder()),
+                    items: const [
+                      DropdownMenuItem(value: 'permission', child: Text('Permission')),
+                      DropdownMenuItem(value: 'attendance_regularization', child: Text('Attendance regularization (app crash)')),
+                    ],
+                    onChanged: (value) => setState(() => _requestType = value ?? 'permission'),
+                  ),
+                  const SizedBox(height: 14),
                   LayoutBuilder(builder: (context, constraints) {
                     final dateField = InkWell(
                       onTap: _pickDate,
@@ -334,6 +344,7 @@ class _PermissionContentState extends State<_PermissionContent> {
                         ),
                       ),
                     );
+                    if (_requestType == 'attendance_regularization') return dateField;
                     if (constraints.maxWidth < 620) {
                       return Column(children: [dateField, const SizedBox(height: 14), timeField]);
                     }

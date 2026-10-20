@@ -15,6 +15,7 @@ class _LeavePolicyDialogState extends State<LeavePolicyDialog> {
   final form = GlobalKey<FormState>();
   List<Map<String, dynamic>> rows = [];
   final Map<String, TextEditingController> fields = {};
+  final Map<String, TextEditingController> monthlyFields = {};
   @override
   void initState() { super.initState(); load(); }
   Future<Map<String, String>> headers() async {
@@ -36,10 +37,14 @@ class _LeavePolicyDialogState extends State<LeavePolicyDialog> {
       final response = await http.get(Uri.parse('${ApiConfig.baseUrl}/attendance/leave/policies'), headers: await headers()).timeout(const Duration(seconds: 12));
       final data = parse(response) as List;
       if (!mounted) return;
-      for (final c in fields.values) { c.dispose(); }
+      for (final c in [...fields.values, ...monthlyFields.values]) { c.dispose(); }
       fields.clear();
+      monthlyFields.clear();
       rows = data.map((r) => Map<String, dynamic>.from(r)).toList();
-      for (final r in rows) { fields['${r['id']}'] = TextEditingController(text: '${r['annual_allowance']}'); }
+      for (final r in rows) {
+        fields['${r['id']}'] = TextEditingController(text: '${r['annual_allowance']}');
+        monthlyFields['${r['id']}'] = TextEditingController(text: '${r['monthly_allowance'] ?? 0}');
+      }
     } catch (e) { if (mounted) error = e.toString().replaceFirst('Exception: ', ''); }
     if (mounted) setState(() { loading = false; });
   }
@@ -51,6 +56,7 @@ class _LeavePolicyDialogState extends State<LeavePolicyDialog> {
       for (final r in rows) {
         parse(await http.put(Uri.parse('${ApiConfig.baseUrl}/attendance/leave/policies/${r['id']}'), headers: h, body: jsonEncode({
           'annual_allowance': double.parse(fields['${r['id']}']!.text),
+          'monthly_allowance': double.parse(monthlyFields['${r['id']}']!.text),
           'carry_forward': r['carry_forward'] == 1 || r['carry_forward'] == true,
           'active': r['active'] == 1 || r['active'] == true,
         })).timeout(const Duration(seconds: 12)));
@@ -59,7 +65,7 @@ class _LeavePolicyDialogState extends State<LeavePolicyDialog> {
     } catch (e) { if (mounted) setState(() { error = 'Some changes may have saved. ${e.toString().replaceFirst('Exception: ', '')}'; saving = false; }); }
   }
   @override
-  void dispose() { for (final c in fields.values) { c.dispose(); } super.dispose(); }
+  void dispose() { for (final c in [...fields.values, ...monthlyFields.values]) { c.dispose(); } super.dispose(); }
   @override
   Widget build(BuildContext context) => AlertDialog(
     title: Text('Leave Policy · ${DateTime.now().year}'),
@@ -67,12 +73,11 @@ class _LeavePolicyDialogState extends State<LeavePolicyDialog> {
       if (loading) const Padding(padding: EdgeInsets.all(28), child: Center(child: CircularProgressIndicator())),
       if (error != null) Text(error!, style: const TextStyle(color: Colors.red)),
       if (!loading && rows.isEmpty) TextButton(onPressed: load, child: const Text('No policies loaded. Retry')),
-      if (!loading) ...rows.map((r) => Padding(padding: const EdgeInsets.only(top: 16), child: TextFormField(
-        controller: fields['${r['id']}'], enabled: !saving,
-        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        decoration: InputDecoration(labelText: '${r['leave_type']}', suffixText: 'days / year', border: const OutlineInputBorder()),
-        validator: (s) { final n = double.tryParse(s ?? ''); return n == null || !n.isFinite || n < 0 || n > 366 || n * 2 != (n * 2).roundToDouble() ? 'Enter 0–366 days in half-day increments.' : null; },
-      ))),
+      if (!loading) ...rows.map((r) => Padding(padding: const EdgeInsets.only(top: 16), child: Row(children: [
+        Expanded(child: TextFormField(controller: fields['${r['id']}'], enabled: !saving, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: InputDecoration(labelText: '${r['leave_type']} · yearly', suffixText: 'days', border: const OutlineInputBorder()), validator: (s) { final n = double.tryParse(s ?? ''); return n == null || !n.isFinite || n < 0 || n > 366 || n * 2 != (n * 2).roundToDouble() ? 'Enter 0–366 in half-day increments.' : null; })),
+        const SizedBox(width: 12),
+        Expanded(child: TextFormField(controller: monthlyFields['${r['id']}'], enabled: !saving, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Monthly limit', suffixText: 'days', border: OutlineInputBorder(), helperText: '0 = no monthly limit'), validator: (s) { final n = double.tryParse(s ?? ''); return n == null || !n.isFinite || n < 0 || n > 31 || n * 2 != (n * 2).roundToDouble() ? 'Enter 0–31 in half-day increments.' : null; })),
+      ]))),
     ])))),
     actions: [TextButton(onPressed: saving ? null : () => Navigator.pop(context), child: const Text('Close')), FilledButton(onPressed: loading || saving || rows.isEmpty ? null : save, child: Text(saving ? 'Saving…' : 'Save Policies'))],
   );

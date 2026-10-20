@@ -1,5 +1,7 @@
 const db = require('../config/db');
 const bcrypt = require('bcrypt');
+const { normalizePhone } = require('../lib/employeePhone');
+const { employeeFilters } = require('../lib/employeeFilters');
 const {
   createEmployeeAtomically,
   assertUniqueForUpdate,
@@ -120,6 +122,7 @@ function toUi(row) {
     status: row.employment_status,
     modeColor: modeColor(row.work_mode),
       email: row.email || '',
+    phone: row.phone || '',
     username: row.username || '',
     passwordLastChangedAt: row.password_last_changed_at || null,
     employeeUserId: row.employee_user_id
@@ -150,38 +153,10 @@ async function list(req, res) {
       changed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, changed_by VARCHAR(30) NOT NULL DEFAULT 'employee',
       KEY password_changed_employee (employee_user_id, changed_at)
     )`);
-    const search = String(req.query.search || req.query.query || '').trim();
-    const department = String(req.query.department || '').trim();
-    const status = String(req.query.status || '').trim();
-    const workMode = String(req.query.workMode || req.query.work_mode || '').trim();
+    const { clause, params } = employeeFilters(req.query);
     const page = Math.max(1, Number(req.query.page || 1));
     const limit = Math.min(50, Math.max(1, Number(req.query.limit || 6)));
-    // Deleted employees are safely deactivated, not hard-deleted, so their
-    // historical attendance and payroll records remain intact. They are not
-    // part of active Employee Management or dashboard lists.
-    const where = ["u.user_type = 'employee'", 'u.is_active = 1'];
-    const params = [];
-
-    if (search) {
-      where.push('(full_name LIKE ? OR employee_code LIKE ? OR email LIKE ?)');
-      const like = '%' + search + '%';
-      params.push(like, like, like);
-    }
-    if (department && department !== 'All Departments') {
-      where.push('department = ?');
-      params.push(department);
-    }
-    if (status && status !== 'All Status') {
-      where.push('employment_status = ?');
-      params.push(status);
-    }
-    if (workMode && workMode !== 'All Work Modes') {
-      where.push('work_mode = ?');
-      params.push(workMode);
-    }
-
-    const clause = where.length ? 'WHERE ' + where.join(' AND ') : '';
-    const [countRows] = await db.query('SELECT COUNT(*) AS total FROM hrms_employee_profiles p INNER JOIN employee_users u ON u.id = p.employee_user_id ' + clause.replace(/\b(full_name|employee_code|email|department|employment_status|work_mode)\b/g, 'p.$1'), params);
+    const [countRows] = await db.query('SELECT COUNT(*) AS total FROM hrms_employee_profiles p INNER JOIN employee_users u ON u.id = p.employee_user_id ' + clause, params);
     const total = Number(countRows[0].total || 0);
     const totalPages = Math.max(1, Math.ceil(total / limit));
     const safePage = Math.min(page, totalPages);
@@ -194,7 +169,7 @@ async function list(req, res) {
         WHERE a.profile_id = p.id AND a.effective_from <= CURDATE()
         ORDER BY a.effective_from DESC, a.id DESC LIMIT 1) AS weekly_off_template,
        (SELECT MAX(changed_at) FROM hrms_password_change_log l WHERE l.employee_user_id = p.employee_user_id) AS password_last_changed_at
-       FROM hrms_employee_profiles p LEFT JOIN employee_users u ON u.id = p.employee_user_id ` + clause.replace(/\b(full_name|employee_code|email|department|employment_status|work_mode)\b/g, 'p.$1') + ' ORDER BY p.full_name ASC LIMIT ? OFFSET ?',
+       FROM hrms_employee_profiles p INNER JOIN employee_users u ON u.id = p.employee_user_id ` + clause + ' ORDER BY p.full_name ASC LIMIT ? OFFSET ?',
       params.concat([limit, offset])
     );
     const [allRows] = await db.query("SELECT p.employment_status FROM hrms_employee_profiles p INNER JOIN employee_users u ON u.id = p.employee_user_id WHERE u.user_type = 'employee' AND u.is_active = 1");
@@ -364,6 +339,8 @@ async function detail(req, res) {
 async function create(req, res) {
   try {
     const body = req.body || {};
+    let phone;
+    try { phone = normalizePhone(body.phone); } catch (error) { return fail(res, 400, error.message); }
     const name = String(body.name || body.full_name || '').trim();
     const code = String(body.employeeCode || body.employee_code || body.id || '').trim();
     const department = String(body.department || 'Engineering').trim();
@@ -397,7 +374,7 @@ async function create(req, res) {
         gender: gender, status: status, salary: salary, salaryType: cycle.salaryType,
         cycleStartDay: cycle.cycleStartDay, cycleEndDay: cycle.cycleEndDay,
         cycleStartDate: cycle.cycleStartDate, cycleEndDate: cycle.cycleEndDate,
-        username: username, email: email, password: password, joiningDate: startDate,
+        username: username, email: email, phone: phone, password: password, joiningDate: startDate,
         firstName: name.split(/\s+/)[0], lastName: name.split(/\s+/).slice(1).join(' '),
         initials: name.split(/\s+/).map(function (part) { return part[0]; }).join('').slice(0, 3).toUpperCase()
       },
@@ -466,6 +443,8 @@ async function update(req, res) {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id < 1) return fail(res, 400, 'Invalid employee ID');
     const body = req.body || {};
+    let phone;
+    try { if (Object.prototype.hasOwnProperty.call(body, 'phone')) phone = normalizePhone(body.phone); } catch (error) { return fail(res, 400, error.message); }
     const name = String(body.name || body.full_name || '').trim();
     const code = String(body.employeeCode || body.employee_code || body.id || '').trim();
     const department = String(body.department || '').trim();
@@ -539,8 +518,8 @@ async function update(req, res) {
     );
 
     await connection.query(
-      'UPDATE hrms_employee_profiles SET employee_code = ?, full_name = ?, email = ?, department = ?, work_mode = ?, employee_type = ?, overtime_eligible = ?, gender = ?, employment_status = ?, joining_date = COALESCE(?, joining_date), monthly_salary = ?, salary_type = ?, flexible_cycle_start_day = ?, flexible_cycle_end_day = ?, flexible_cycle_start_date = ?, flexible_cycle_end_date = ? WHERE id = ?',
-      [code, name, email, department, workMode, employeeType, overtimeEligible, gender, status, requestedJoiningDate, salary, cycle.salaryType, cycle.cycleStartDay, cycle.cycleEndDay, cycle.cycleStartDate, cycle.cycleEndDate, id]
+      'UPDATE hrms_employee_profiles SET employee_code = ?, full_name = ?, email = ?, phone = ?, department = ?, work_mode = ?, employee_type = ?, overtime_eligible = ?, gender = ?, employment_status = ?, joining_date = COALESCE(?, joining_date), monthly_salary = ?, salary_type = ?, flexible_cycle_start_day = ?, flexible_cycle_end_day = ?, flexible_cycle_start_date = ?, flexible_cycle_end_date = ? WHERE id = ?',
+      [code, name, email, phone === undefined ? existingProfile.phone : phone, department, workMode, employeeType, overtimeEligible, gender, status, requestedJoiningDate, salary, cycle.salaryType, cycle.cycleStartDay, cycle.cycleEndDay, cycle.cycleStartDate, cycle.cycleEndDate, id]
     );
 
     const updates = ['full_name = ?', 'email = ?', 'username = ?', 'staff_id = ?'];
@@ -693,8 +672,10 @@ async function remove(req, res) {
 
 async function exportCsv(req, res) {
   try {
+    const { clause, params } = employeeFilters(req.query);
     const [rows] = await db.query(
-      'SELECT p.* FROM hrms_employee_profiles p INNER JOIN employee_users u ON u.id = p.employee_user_id WHERE u.is_active = 1 ORDER BY p.full_name ASC'
+      'SELECT p.* FROM hrms_employee_profiles p INNER JOIN employee_users u ON u.id = p.employee_user_id ' + clause + ' ORDER BY p.full_name ASC',
+      params
     );
     const lines = ['Employee,Employee ID,Department,Work Mode,Monthly Salary,Status'];
     rows.forEach(function (row) {

@@ -69,6 +69,14 @@ test('commits one successful unique employee creation', async () => {
   assert.deepEqual(pool.calls.slice(-2), ['commit', 'release']);
 });
 
+test('stores the submitted phone in the shared employee profile', async () => {
+  const pool = fakePool([duplicateRows(), { insertId: 44 }, { insertId: 77 }, [{ id: 77 }]]);
+  await createWith(pool, { phone: '+91 98765 43210' });
+  const insert = pool.calls.find((call) => call.sql && call.sql.includes('INSERT INTO hrms_employee_profiles'));
+  assert.match(insert.sql, /email, phone, department/);
+  assert.equal(insert.params[4], '+91 98765 43210');
+});
+
 test('a second Create click is rejected and does not add another employee', async () => {
   const first = fakePool([duplicateRows(), { insertId: 44 }, { insertId: 77 }, [{ id: 77 }]]);
   await createWith(first);

@@ -34,11 +34,13 @@ class _EmployeeProfilePageState extends State<EmployeeProfilePage> {
   };
   Map<String, dynamic> _work = const {};
   bool _loading = true, _saving = false;
+  bool _phoneLoading = true, _phoneSaving = false, _phoneLoaded = false;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _loadPhone();
   }
 
   @override
@@ -67,6 +69,7 @@ class _EmployeeProfilePageState extends State<EmployeeProfilePage> {
       if (body is Map && body['success'] == true && body['data'] is Map) {
         final data = Map<String, dynamic>.from(body['data'] as Map);
         for (final entry in _fields.entries) {
+          if (entry.key == 'phone') continue;
           entry.value.text = data[_dbKey(entry.key)]?.toString() ?? '';
         }
         if (_fields['firstName']!.text.isEmpty)
@@ -75,8 +78,46 @@ class _EmployeeProfilePageState extends State<EmployeeProfilePage> {
           _fields['lastName']!.text = data['last_name']?.toString() ?? '';
         _work = data;
       }
+    } catch (_) {
+      // Other profile details may be unavailable independently of contact.
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _loadPhone() async {
+    try {
+      final response = await http.get(Uri.parse('${ApiConfig.baseUrl}/auth/contact'), headers: await _headers());
+      final body = jsonDecode(response.body);
+      if (response.statusCode >= 400 || body is! Map || body['success'] != true || body['data'] is! Map) {
+        throw Exception('Could not load phone number');
+      }
+      if (!mounted) return;
+      _fields['phone']!.text = (body['data'] as Map)['phone']?.toString() ?? '';
+      setState(() => _phoneLoaded = true);
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not load phone number. Please try again.')));
+    } finally {
+      if (mounted) setState(() => _phoneLoading = false);
+    }
+  }
+
+  Future<void> _savePhone() async {
+    final phone = _fields['phone']!.text.trim();
+    if (phone.length > 32 || (phone.isNotEmpty && (!RegExp(r'^[0-9+(). -]+$').hasMatch(phone) || !RegExp(r'[0-9]').hasMatch(phone)))) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter a valid phone number using up to 32 characters.')));
+      return;
+    }
+    setState(() => _phoneSaving = true);
+    try {
+      final response = await http.put(Uri.parse('${ApiConfig.baseUrl}/auth/contact'), headers: await _headers(), body: jsonEncode({'phone': phone}));
+      final body = jsonDecode(response.body);
+      if (response.statusCode >= 400 || body is! Map || body['success'] != true) throw Exception(body is Map ? body['message'] : 'Could not save phone number');
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Phone number saved.')));
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+    } finally {
+      if (mounted) setState(() => _phoneSaving = false);
     }
   }
 
@@ -87,7 +128,7 @@ class _EmployeeProfilePageState extends State<EmployeeProfilePage> {
     setState(() => _saving = true);
     try {
       final data = {
-        for (final item in _fields.entries) item.key: item.value.text,
+        for (final item in _fields.entries) if (item.key != 'phone') item.key: item.value.text,
       };
       final response = await http.put(
         Uri.parse('${ApiConfig.baseUrl}/auth/profile'),
@@ -218,10 +259,22 @@ class _EmployeeProfilePageState extends State<EmployeeProfilePage> {
             _input('firstName', 'First name', required: true),
             _input('middleName', 'Middle name'),
             _input('lastName', 'Last name', required: true),
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              TextFormField(
+                controller: _fields['phone'],
+                keyboardType: TextInputType.phone,
+                maxLength: 32,
+                enabled: _phoneLoaded && !_phoneSaving,
+                decoration: const InputDecoration(labelText: 'Phone number', border: OutlineInputBorder()),
+              ),
+              if (!_phoneLoaded && !_phoneLoading)
+                TextButton(onPressed: () { setState(() => _phoneLoading = true); _loadPhone(); }, child: const Text('Retry loading phone'))
+              else
+                OutlinedButton(onPressed: _phoneLoaded && !_phoneSaving ? _savePhone : null, child: Text(_phoneSaving ? 'Saving...' : 'Save phone number')),
+            ]),
           ]),
           const SizedBox(height: 16),
           _section('Identification & Contact', Icons.badge_outlined, [
-            _input('phone', 'Phone number'),
             _input('panNumber', 'PAN card number'),
             _input('aadhaarNumber', 'Aadhaar number'),
           ]),

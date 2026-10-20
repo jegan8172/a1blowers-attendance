@@ -10,7 +10,7 @@ import '../../services/auth_service.dart';
 import '../../services/auth_storage.dart';
 import '../../screens/login_screen.dart';
 
-const employeeBlue = Color(0xFFE3162A);
+const employeeBlue = Color(0xFF1769E0);
 const employeeNavy = Color(0xFF07143F);
 const employeeMuted = Color(0xFF66738F);
 const employeeLine = Color(0xFFDCE4F0);
@@ -921,6 +921,10 @@ class EmployeeProfileMenu extends StatelessWidget {
           MaterialPageRoute(builder: (_) => const LoginScreen()),
           (_) => false,
         );
+      } else if (value == 'profile') {
+        if (ModalRoute.of(context)?.settings.name != '/employee/profile') {
+          Navigator.of(context).pushNamed('/employee/profile');
+        }
       } else if (value == 'password') {
         await _showChangePasswordDialog(context);
       }
@@ -946,6 +950,14 @@ class EmployeeProfileMenu extends StatelessWidget {
         ),
       ),
       const PopupMenuDivider(),
+      const PopupMenuItem<String>(
+        value: 'profile',
+        child: Row(children: [
+          Icon(Icons.person_outline, size: 18, color: employeeBlue),
+          SizedBox(width: 10),
+          Text('Profile settings', style: TextStyle(color: employeeBlue, fontWeight: FontWeight.w600)),
+        ]),
+      ),
       const PopupMenuItem<String>(
         value: 'password',
         child: Row(
@@ -1098,12 +1110,12 @@ class EmployeeCard extends StatelessWidget {
     decoration: BoxDecoration(
       color: color,
       border: Border.all(color: borderColor),
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(16),
       boxShadow: const [
         BoxShadow(
-          color: Color(0x0D193B75),
-          blurRadius: 22,
-          offset: Offset(0, 9),
+          color: Color(0x0C174D9A),
+          blurRadius: 24,
+          offset: Offset(0, 10),
         ),
       ],
     ),
@@ -1167,8 +1179,8 @@ class PrimaryButton extends StatelessWidget {
     style: FilledButton.styleFrom(
       backgroundColor: color,
       foregroundColor: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 17),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
     ),
     onPressed: onPressed ?? () {},
     icon: Icon(icon, size: 20),

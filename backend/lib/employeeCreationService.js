@@ -83,8 +83,8 @@ async function createEmployeeAtomically({ pool, bcrypt, input, adminId, recordCo
       [input.firstName, input.lastName, input.name, input.email, input.username, hashedPassword, input.department, input.code, input.initials]
     );
     const [profileResult] = await connection.query(
-      'INSERT INTO hrms_employee_profiles (employee_user_id, employee_code, full_name, email, department, work_mode, employee_type, overtime_eligible, gender, employment_status, joining_date, monthly_salary, salary_type, flexible_cycle_start_day, flexible_cycle_end_day, flexible_cycle_start_date, flexible_cycle_end_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [userResult.insertId, input.code, input.name, input.email, input.department, input.workMode, input.employeeType, input.overtimeEligible, input.gender, input.status, input.joiningDate, input.salary, input.salaryType, input.cycleStartDay, input.cycleEndDay, input.cycleStartDate, input.cycleEndDate]
+      'INSERT INTO hrms_employee_profiles (employee_user_id, employee_code, full_name, email, phone, department, work_mode, employee_type, overtime_eligible, gender, employment_status, joining_date, monthly_salary, salary_type, flexible_cycle_start_day, flexible_cycle_end_day, flexible_cycle_start_date, flexible_cycle_end_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [userResult.insertId, input.code, input.name, input.email, input.phone || null, input.department, input.workMode, input.employeeType, input.overtimeEligible, input.gender, input.status, input.joiningDate, input.salary, input.salaryType, input.cycleStartDay, input.cycleEndDay, input.cycleStartDate, input.cycleEndDate]
     );
     const [[profile]] = await connection.query('SELECT * FROM hrms_employee_profiles WHERE id = ?', [profileResult.insertId]);
     if (!profile) throw new Error('Employee profile could not be created');

@@ -14,7 +14,7 @@ import 'package:godigital_portal/hrms_employee/pages/permission_page.dart';
 import 'package:godigital_portal/hrms_employee/pages/extra_hours_page.dart';
 import 'package:godigital_portal/hrms_employee/pages/salary_page.dart';
 import 'package:godigital_portal/hrms_employee/pages/tracking_page.dart';
-import 'package:godigital_portal/hrms_employee/pages/profile_page.dart';
+import 'package:godigital_portal/hrms_employee/pages/contact_page.dart';
 import 'package:godigital_portal/hrms_employee/shared/field_waiting_prompt_host.dart';
 import 'package:godigital_portal/hrms_employee/shared/live_tracking_coordinator.dart';
 import 'package:godigital_portal/hrms_employee/shared/android_live_tracking_service.dart';
@@ -62,7 +62,7 @@ class AttendanceApp extends StatelessWidget {
         '/employee/extra-hours': (_) => const EmployeeExtraHoursPage(),
         '/employee/salary': (_) => const EmployeeSalaryPage(),
         '/employee/tracking': (_) => const EmployeeTrackingPage(),
-        '/employee/profile': (_) => const EmployeeProfilePage(),
+        '/employee/profile': (_) => const EmployeeContactPage(),
       },
       // The admin portal is a nested MaterialApp. Register its deep links in
       // the root app too, so a browser refresh or Flutter hot restart while

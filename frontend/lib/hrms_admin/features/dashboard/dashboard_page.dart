@@ -1,31 +1,34 @@
-import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import '../../shared/theme/admin_surface_palette.dart';
-import 'package:intl/intl.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import '../../shared/theme/admin_surface_palette.dart';
 import 'package:provider/provider.dart';
 
 import '../../../screens/admin_dashboard/helpers/csv_export.dart';
 import '../../../screens/login_screen.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/hrms_dashboard_api.dart';
+import '../../../services/hrms_approvals_api.dart';
+import '../../../services/hrms_employees_api.dart';
 import '../../shared/widgets/admin_top_nav.dart';
+import '../../shared/widgets/admin_pattern_background.dart';
 import 'widgets/attendance_grid.dart';
 import 'widgets/manage_calendar_dialog.dart';
 import 'widgets/manage_time_dialog.dart';
+import 'widgets/quick_approvals_dialog.dart';
+import 'yearly_attendance.dart';
+import 'attendance_export.dart';
 
 const _navy = Color(0xFF07186F);
-const _blue = Color(0xFFE3162A);
+const _blue = Color(0xFF1769E0);
 const _green = Color(0xFF008A32);
 const _red = Color(0xFFE00012);
 const _orange = Color(0xFFFF6A00);
 const _purple = Color(0xFF7E20E8);
 const _line = Color(0xFFD9E2F1);
 const _muted = Color(0xFF52638E);
-const _a1Red = Color(0xFFE3162A);
-const _a1RedDeep = Color(0xFFB70B1B);
+const _a1Red = Color(0xFF1769E0);
 
 String _fullMonthName(String month) =>
     const {
@@ -45,7 +48,11 @@ String _fullMonthName(String month) =>
     month;
 
 class DashboardPage extends StatefulWidget {
-  const DashboardPage({super.key, this.settingsAction, this.inSettingsDialog = false});
+  const DashboardPage({
+    super.key,
+    this.settingsAction,
+    this.inSettingsDialog = false,
+  });
 
   final String? settingsAction;
   final bool inSettingsDialog;
@@ -59,6 +66,7 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage> {
   bool _openedSettingsAction = false;
   final ScrollController _tableScrollController = ScrollController();
+  final TextEditingController _searchController = TextEditingController();
   bool _monthly = true;
   bool _showSummary = true;
   bool _employeeListExpanded = false;
@@ -71,8 +79,29 @@ class _DashboardPageState extends State<DashboardPage> {
   int _kpiPresent = 0;
   int _kpiAbsent = 0;
   int _kpiLate = 0;
+  int? _pendingApprovals;
   bool _loading = true;
   String? _error;
+  int _loadGeneration = 0;
+  String _search = '';
+  String _statusFilter = 'All statuses';
+
+  List<_EmployeeAttendance> get _visibleEmployees {
+    final query = _search.trim().toLowerCase();
+    return _employees.where((employee) {
+      final matchesSearch =
+          query.isEmpty ||
+          employee.name.toLowerCase().contains(query) ||
+          employee.designation.toLowerCase().contains(query);
+      final matchesStatus = switch (_statusFilter) {
+        'Absent' => employee.absent > 0,
+        'Late' => employee.late > 0,
+        'Leave' => employee.approvedLeave > 0 || employee.halfLeave > 0,
+        _ => true,
+      };
+      return matchesSearch && matchesStatus;
+    }).toList();
+  }
 
   static const _monthCodes = [
     'Jan',
@@ -101,7 +130,8 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final action = widget.settingsAction ??
+    final action =
+        widget.settingsAction ??
         (ModalRoute.of(context)?.settings.arguments as Map?)?['settingsAction'];
     if (_openedSettingsAction || action == null) return;
     _openedSettingsAction = true;
@@ -113,8 +143,26 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _boot() async {
+    _loadPendingApprovals();
     await _loadCalendarSettings();
     await _loadDashboard();
+  }
+
+  Future<void> _loadPendingApprovals() async {
+    try {
+      final results = await Future.wait([
+        HrmsApprovalsApi.list(leaveTab: true),
+        HrmsEmployeesApi.deviceRequests(),
+      ]);
+      final kpis = Map<String, dynamic>.from(results[0]['kpis'] as Map? ?? {});
+      final devices = results[1]['items'] as List? ?? [];
+      if (mounted)
+        setState(
+          () => _pendingApprovals = _asInt(kpis['pending']) + devices.length,
+        );
+    } catch (_) {
+      if (mounted) setState(() => _pendingApprovals = null);
+    }
   }
 
   Future<void> _loadCalendarSettings() async {
@@ -128,16 +176,30 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _loadDashboard() async {
+    final generation = ++_loadGeneration;
+    final selectedYear = _year;
+    final selectedMonth = _monthCodes.indexOf(_month) + 1;
+    final monthly = _monthly;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final data = await HrmsDashboardApi.month(
-        year: _year,
-        month: _monthCodes.indexOf(_month) + 1,
-        weeklyOff: _weeklyOffDay,
-      );
+      final months = monthly
+          ? [selectedMonth]
+          : List.generate(12, (i) => i + 1);
+      final results = <Map<String, dynamic>>[];
+      for (final month in months) {
+        results.add(
+          await HrmsDashboardApi.month(
+            year: selectedYear,
+            month: month,
+            weeklyOff: _weeklyOffDay,
+          ),
+        );
+        if (!mounted || generation != _loadGeneration) return;
+      }
+      final data = monthly ? results.first : results[selectedMonth - 1];
       final kpis = Map<String, dynamic>.from(data['kpis'] as Map? ?? {});
       final items = (data['employees'] as List? ?? [])
           .whereType<Map>()
@@ -146,9 +208,9 @@ class _DashboardPageState extends State<DashboardPage> {
                 _EmployeeAttendance.fromApi(Map<String, dynamic>.from(item)),
           )
           .toList();
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
-        _employees = items;
+        _employees = monthly ? items : aggregateYearlyAttendance(results).map(_EmployeeAttendance.fromApi).toList();
         _kpiTotal = _asInt(kpis['totalEmployees']);
         _kpiPresent = _asInt(kpis['present']);
         _kpiAbsent = _asInt(kpis['absent']);
@@ -156,7 +218,7 @@ class _DashboardPageState extends State<DashboardPage> {
         _loading = false;
       });
     } catch (err) {
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _error = err.toString().replaceFirst('Exception: ', '');
         _loading = false;
@@ -164,129 +226,67 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
+  void _changePeriod(bool monthly) {
+    if (_monthly == monthly) return;
+    setState(() => _monthly = monthly);
+    _loadDashboard();
+  }
+
   int _asInt(dynamic value) =>
       value is int ? value : int.tryParse('$value') ?? 0;
 
-  static String _hex(Color color) =>
-      '#${color.toARGB32().toRadixString(16).substring(2)}';
-
-  String _dayMarkColor(String code) {
-    switch (code) {
-      case 'P':
-        return _hex(_green);
-      case 'A':
-        return _hex(_red);
-      case 'L':
-        return _hex(_orange);
-      case 'HL':
-      case 'LV':
-        return _hex(_purple);
-      default:
-        return _hex(_muted); // OFF, –, blank
-    }
-  }
-
   Future<void> _exportAttendanceCsv() async {
-    final month = _monthCodes.indexOf(_month) + 1;
-    final dayCount = DateTime(_year, month + 1, 0).day;
-    const weekdayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    final monthLabel = '${_fullMonthName(_month)} $_year';
-    final logoBytes = (await rootBundle.load(
-      'assets/images/a1_blowers_logo_header.png',
-    )).buffer.asUint8List();
-    final logoData = base64Encode(logoBytes);
-
-    final html = StringBuffer();
-    html.writeln('''
-      <html>
-      <head>
-      <meta charset="utf-8">
-      <style>
-        body { font-family: 'Segoe UI', Arial, sans-serif; margin: 18px; color: ${_hex(_navy)}; }
-        .brand { border-bottom: 2px solid #0767F2; padding-bottom: 12px; margin-bottom: 10px; }
-        .brand img { width: 110px; height: auto; vertical-align: middle; margin-right: 16px; }
-        .brand-title { display: inline-block; vertical-align: middle; font-size: 18px; font-weight: bold; color: ${_hex(_navy)}; }
-        .brand-subtitle { display: block; font-size: 11px; font-weight: normal; color: ${_hex(_muted)}; margin-top: 3px; }
-        .title { font-size: 16px; font-weight: bold; color: ${_hex(_navy)}; padding: 8px 4px; }
-        .legend td { font-size: 10px; font-weight: bold; padding: 4px 8px; color: ${_hex(_navy)}; }
-        table.data { border-collapse: collapse; margin-top: 6px; }
-        table.data th { background-color: #EAF1FF; font-size: 10px; font-weight: 700; padding: 7px 6px; border: 1px solid ${_hex(_line)}; color: ${_hex(_navy)}; text-align: center; white-space: nowrap; }
-        table.data td { font-size: 10px; padding: 7px 6px; border: 1px solid ${_hex(_line)}; text-align: center; color: ${_hex(_navy)}; }
-        td.name { text-align: left; font-weight: 700; }
-        td.designation { text-align: left; color: ${_hex(_muted)}; font-weight: 400; }
-      </style>
-      </head>
-      <body>
-      <table class="brand"><tr><td><img src="data:image/png;base64,$logoData"><span class="brand-title">A1 BLOWERS<span class="brand-subtitle">Employee Attendance Directory</span></span></td><td style="text-align:right; color:${_hex(_muted)}; font-size:10px;">Generated ${DateFormat('dd MMM yyyy, HH:mm').format(DateTime.now())}</td></tr></table>
-      <table>
-        <tr><td class="title">$monthLabel Attendance</td></tr>
-      </table>
-      <table class="legend">
-        <tr>
-          <td style="color:${_hex(_green)}">● Present</td>
-          <td style="color:${_hex(_red)}">● Absent</td>
-          <td style="color:${_hex(_orange)}">● Late</td>
-          <td style="color:${_hex(_purple)}">● Holiday</td>
-          <td style="color:${_hex(_purple)}">● Leave</td>
-          <td style="color:${_hex(_purple)}">● Half Leave</td>
-          <td style="color:${_hex(_muted)}">○ Weekly Off</td>
-        </tr>
-      </table>
-      <table class="data">
-        <tr>
-          <th>Employee Name</th>
-          <th>Designation</th>
-    ''');
-    for (var day = 1; day <= dayCount; day++) {
-      html.write(
-        '<th>$day<br>${weekdayNames[DateTime(_year, month, day).weekday - 1]}</th>',
+    if (_loading || _error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Wait for attendance data to load before exporting.')),
       );
+      return;
     }
-    html.writeln('''
-          <th style="color:${_hex(_green)}">Present</th>
-          <th style="color:${_hex(_orange)}">Late</th>
-          <th style="color:${_hex(_purple)}">Leave</th>
-          <th style="color:${_hex(_purple)}">Half Leave</th>
-          <th style="color:${_hex(_blue)}">Earned Leave</th>
-          <th>Salary Per Month</th>
-          <th style="color:${_hex(_red)}">Absent Deduction</th>
-          <th>Updated Salary</th>
-        </tr>
-    ''');
-
-    for (final employee in _employees) {
-      html.write(
-        '<tr><td class="name">${employee.name}</td>'
-        '<td class="designation">${employee.designation}</td>',
-      );
-      for (var i = 0; i < dayCount; i++) {
-        final mark = i < employee.days.length ? employee.days[i] : '';
-        final display = mark.isEmpty ? '–' : (mark == 'LV' ? 'L' : mark);
-        html.write('<td style="color:${_dayMarkColor(mark)}">$display</td>');
+    try {
+      final month = _monthCodes.indexOf(_month) + 1;
+      final days = _monthly ? DateTime(_year, month + 1, 0).day : 0;
+      const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+      final headers = <String>[
+        'Employee Name', 'Designation',
+        for (var day = 1; day <= days; day++)
+          '$day ${weekdays[DateTime(_year, month, day).weekday - 1]}',
+        'Present', if (!_monthly) 'Absent', 'Late', 'Leave', 'Half Leave', 'Earned Leave',
+        if (_monthly) ...['Salary Per Month', 'Absent Deduction', 'Updated Salary'],
+      ];
+      final rows = <List<Object?>>[
+        for (final employee in _visibleEmployees)
+          [employee.name, employee.designation,
+            for (var day = 0; day < days; day++)
+              _AttendanceTable.markForDay(day, employee, _year, month, _weeklyOffDay, _calendarOverrides),
+            employee.present, if (!_monthly) employee.absent, employee.late,
+            employee.approvedLeave, employee.halfLeave, employee.earnedLeave,
+            if (_monthly) ...[employee.salary, '${employee.absent} ${employee.absentDeduction}', employee.updatedSalary],
+          ],
+      ];
+      final title = _monthly ? '${_fullMonthName(_month)} $_year Attendance' : '$_year Yearly Attendance';
+      final logoData = await rootBundle.load('assets/images/a1_blowers_logo_header.png');
+      final bytes = buildAttendanceWorkbook(title: title, headers: headers, rows: rows, logo: logoData.buffer.asUint8List(logoData.offsetInBytes, logoData.lengthInBytes));
+      final period = _monthly ? '$_month$_year' : '$_year';
+      await saveAndShareCsv(bytes, 'A1_Blowers_Attendance_$period.xlsx');
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not export attendance: $error')),
+        );
       }
-      html.writeln('''
-          <td style="color:${_hex(_green)}; font-weight:700;">${employee.present}</td>
-          <td style="color:${_hex(_orange)}; font-weight:700;">${employee.late}</td>
-          <td style="color:${_hex(_purple)}; font-weight:700;">${employee.approvedLeave}</td>
-          <td style="color:${_hex(_purple)}; font-weight:700;">${employee.halfLeave}</td>
-          <td style="color:${_hex(_blue)}; font-weight:700;">${employee.earnedLeave}</td>
-          <td>${employee.salary}</td>
-          <td style="color:${_hex(_red)}; font-weight:700;">${employee.absent} ${employee.absentDeduction}</td>
-          <td>${employee.updatedSalary}</td>
-        </tr>
-      ''');
     }
-
-    html.writeln('</table></body></html>');
-
-    final fileName =
-        'A1_Blowers_Attendance_$_month${_year}_${DateFormat('yyyyMMdd_HHmm').format(DateTime.now())}.xls';
-    final bytes = <int>[0xEF, 0xBB, 0xBF, ...utf8.encode(html.toString())];
-    await saveAndShareCsv(bytes, fileName);
   }
 
   Future<void> _openManageTime() async {
     await showManageTimeDialog(context);
+  }
+
+  Future<void> _openQuickApprovals(QuickApprovalCategory category) async {
+    await showQuickApprovalsDialog(context, category);
+    if (mounted) {
+      _loadPendingApprovals();
+      _loadDashboard();
+    }
   }
 
   Future<void> _openManageCalendar() async {
@@ -300,6 +300,7 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void dispose() {
     _tableScrollController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -309,15 +310,23 @@ class _DashboardPageState extends State<DashboardPage> {
     if (width < 600) {
       return _MobileDashboard(
         monthly: _monthly,
-        onMonthlyChanged: (value) => setState(() => _monthly = value),
+        onMonthlyChanged: _changePeriod,
         year: _year,
         onYearChanged: (value) {
           setState(() => _year = value);
           _loadDashboard();
         },
         onExport: _exportAttendanceCsv,
+        onSearchChanged: (value) => setState(() => _search = value),
+        searchController: _searchController,
+        statusFilter: _statusFilter,
+        onStatusChanged: (value) => setState(() => _statusFilter = value),
         month: _month,
-        employees: _employees,
+        onMonthChanged: (value) {
+          setState(() => _month = value);
+          _loadDashboard();
+        },
+        employees: _visibleEmployees,
         total: _kpiTotal,
         present: _kpiPresent,
         absent: _kpiAbsent,
@@ -329,7 +338,7 @@ class _DashboardPageState extends State<DashboardPage> {
     }
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      body: Column(
+      body: AdminPatternBackground(child: Column(
         children: [
           const AdminTopNav(activeRoute: '/admin/dashboard'),
           Expanded(
@@ -346,7 +355,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   ),
           ),
         ],
-      ),
+      )),
     );
   }
 
@@ -362,20 +371,40 @@ class _DashboardPageState extends State<DashboardPage> {
     mainAxisSize: expanded ? MainAxisSize.min : MainAxisSize.max,
     children: [
       SizedBox(
-        height: 104,
-        child: _KpiRow(
-          monthly: _monthly,
-          total: _kpiTotal,
-          monthlyWorkingDays: _monthlyWorkingDays,
-          present: _kpiPresent,
-          absent: _kpiAbsent,
-          late: _kpiLate,
+        height: 120,
+        child: LayoutBuilder(
+          builder: (context, constraints) => FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: SizedBox(
+              width: math.max(900.0, constraints.maxWidth),
+              child: _KpiRow(
+                monthly: _monthly,
+                total: _kpiTotal,
+                monthlyWorkingDays: _monthlyWorkingDays,
+                present: _kpiPresent,
+                absent: _kpiAbsent,
+                late: _kpiLate,
+                pendingApprovals: _pendingApprovals,
+              ),
+            ),
+          ),
         ),
       ),
       const SizedBox(height: 12),
-      _QuickActionBar(
-        onManageTime: _openManageTime,
-        onManageCalendar: _openManageCalendar,
+      LayoutBuilder(
+        builder: (context, constraints) => FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: SizedBox(
+            width: math.max(900.0, constraints.maxWidth),
+            child: _QuickActionBar(
+              onManageTime: _openManageTime,
+              onManageCalendar: _openManageCalendar,
+              onApprove: _openQuickApprovals,
+            ),
+          ),
+        ),
       ),
       const SizedBox(height: 12),
       if (expanded)
@@ -402,117 +431,179 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget _attendancePanel({required bool expanded}) {
     final palette = AdminSurfacePalette.of(context);
     return Container(
-    decoration: BoxDecoration(
-      color: palette.surface,
-      border: Border.all(color: palette.border),
-      borderRadius: BorderRadius.circular(14),
-    ),
-    clipBehavior: Clip.antiAlias,
-    child: Column(
-      children: [
-        SizedBox(
-          height: 60,
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFE8EB),
-                    borderRadius: BorderRadius.circular(11),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        border: Border.all(color: palette.border),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          SizedBox(
+            height: 60,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEAF2FF),
+                      borderRadius: BorderRadius.circular(11),
+                    ),
+                    child: const Icon(
+                      Icons.calendar_month_outlined,
+                      color: _a1Red,
+                      size: 20,
+                    ),
                   ),
-                  child: const Icon(
-                    Icons.calendar_month_outlined,
-                    color: _a1Red,
-                    size: 20,
+                  const SizedBox(width: 10),
+                  Text(
+                    _monthly
+                        ? '${_monthName(_month)} $_year Attendance'
+                        : '$_year Yearly Attendance',
+                    style: TextStyle(
+                      color: palette.text,
+                      fontSize: 19,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  _monthly
-                      ? '${_monthName(_month)} $_year Attendance'
-                      : '$_year Yearly Attendance',
-                  style: TextStyle(
-                    color: palette.text,
-                    fontSize: 19,
-                    fontWeight: FontWeight.w800,
+                  const SizedBox(width: 18),
+                  _PeriodToggle(
+                    width: 180,
+                    monthly: _monthly,
+                    onChanged: _changePeriod,
                   ),
-                ),
-                const SizedBox(width: 18),
-                const _AttendanceLegend(),
-                const SizedBox(width: 18),
-                if (_monthly) ...[
-                  Tooltip(
-                    message: _showSummary
-                        ? 'Hide payroll summary columns'
-                        : 'Show payroll summary columns',
-                    child: OutlinedButton(
-                      onPressed: () =>
-                          setState(() => _showSummary = !_showSummary),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: _showSummary ? _a1Red : _muted,
-                        backgroundColor: _showSummary
-                            ? const Color(0xFFFFE8EB)
-                            : palette.surface,
-                        side: BorderSide(
-                          color: _showSummary
-                              ? _a1Red
-                              : const Color(0xFFBFD2F2),
+                  const SizedBox(width: 8),
+                  _YearSelector(
+                    compact: true,
+                    value: _year,
+                    onChanged: (value) {
+                      setState(() => _year = value);
+                      _loadDashboard();
+                    },
+                  ),
+                  const SizedBox(width: 18),
+                  const _AttendanceLegend(),
+                  const SizedBox(width: 18),
+                  if (_monthly) ...[
+                    Tooltip(
+                      message: _showSummary
+                          ? 'Hide payroll summary columns'
+                          : 'Show payroll summary columns',
+                      child: OutlinedButton(
+                        onPressed: () =>
+                            setState(() => _showSummary = !_showSummary),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: _showSummary ? _a1Red : _muted,
+                          backgroundColor: _showSummary
+                              ? const Color(0xFFEAF2FF)
+                              : palette.surface,
+                          side: BorderSide(
+                            color: _showSummary
+                                ? _a1Red
+                                : const Color(0xFFBFD2F2),
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(6),
+                          ),
                         ),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(6),
+                        child: Icon(
+                          _showSummary
+                              ? Icons.view_column
+                              : Icons.view_column_outlined,
+                          size: 20,
                         ),
                       ),
-                      child: Icon(
-                        _showSummary
-                            ? Icons.view_column
-                            : Icons.view_column_outlined,
-                        size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  OutlinedButton.icon(
+                    onPressed: _exportAttendanceCsv,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: palette.text,
+                      side: BorderSide(color: palette.border),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 8,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                    ),
+                    icon: const Icon(Icons.file_download_outlined, size: 20),
+                    label: const Text(
+                      'Export',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
                       ),
                     ),
                   ),
                   const SizedBox(width: 8),
                 ],
-                OutlinedButton.icon(
-                  onPressed: _exportAttendanceCsv,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: palette.text,
-                    side: BorderSide(color: palette.border),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 8,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                  ),
-                  icon: const Icon(Icons.file_download_outlined, size: 20),
-                  label: const Text(
-                    'Export',
-                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-                  ),
-                ),
-                const SizedBox(width: 8),
-              ],
+              )),
             ),
           ),
+          const Divider(height: 1, color: _line),
+          if (!_monthly || _loading || _error != null)
+            Align(alignment: Alignment.centerLeft, child: _attendanceFilters()),
+          if (expanded)
+            _attendanceContent(expanded: true)
+          else
+            Expanded(child: _attendanceContent(expanded: false)),
+        ],
+      ),
+    );
+  }
+
+  Widget _attendanceFilters() {
+    final palette = AdminSurfacePalette.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        SizedBox(width: 230, height: 38, child: TextField(
+          controller: _searchController,
+          onChanged: (value) => setState(() => _search = value),
+          style: TextStyle(color: palette.text, fontSize: 13),
+          decoration: InputDecoration(
+            filled: true, fillColor: palette.surface, isDense: true,
+            prefixIcon: Icon(Icons.search_rounded, size: 19, color: palette.text),
+            suffixIcon: _search.isEmpty ? null : IconButton(
+              tooltip: 'Clear search', icon: const Icon(Icons.close_rounded, size: 17),
+              onPressed: () { _searchController.clear(); setState(() => _search = ''); },
+            ),
+            hintText: 'Search name or designation',
+            hintStyle: TextStyle(color: palette.text.withValues(alpha: .58), fontSize: 12),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: palette.border)),
+            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: palette.border)),
+          ),
+        )),
+        const SizedBox(width: 8),
+        Container(height: 38, padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(color: palette.surface, border: Border.all(color: _statusFilter == 'All statuses' ? palette.border : Theme.of(context).colorScheme.primary), borderRadius: BorderRadius.circular(8)),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.filter_list_rounded, size: 18, color: _statusFilter == 'All statuses' ? palette.text : Theme.of(context).colorScheme.primary),
+            const SizedBox(width: 6),
+            DropdownButtonHideUnderline(child: DropdownButton<String>(
+              value: _statusFilter, style: TextStyle(color: palette.text, fontSize: 12, fontWeight: FontWeight.w600),
+              items: const ['All statuses', 'Absent', 'Late', 'Leave'].map((value) => DropdownMenuItem(value: value, child: Text(value))).toList(),
+              onChanged: (value) { if (value != null) setState(() => _statusFilter = value); },
+            )),
+          ]),
         ),
-        const Divider(height: 1, color: _line),
-        if (expanded)
-          _attendanceContent(expanded: true)
-        else
-          Expanded(child: _attendanceContent(expanded: false)),
-      ],
-    ),
-  );
+      ]),
+    );
   }
 
   Widget _attendanceContent({required bool expanded}) => _loading
@@ -540,13 +631,14 @@ class _DashboardPageState extends State<DashboardPage> {
           month: _monthCodes.indexOf(_month) + 1,
           weeklyOffDay: _weeklyOffDay,
           overrides: _calendarOverrides,
-          employees: _employees,
+          employees: _visibleEmployees,
           showSummary: _showSummary,
           expanded: expanded,
+          filters: _attendanceFilters(),
           onToggleExpanded: () =>
               setState(() => _employeeListExpanded = !_employeeListExpanded),
         )
-      : _YearlyAttendanceSummary(employees: _employees);
+      : _YearlyAttendanceSummary(employees: _visibleEmployees);
 
   Widget _monthSelector() {
     const months = _monthCodes;
@@ -619,11 +711,13 @@ class _KpiRow extends StatelessWidget {
     required this.present,
     required this.absent,
     required this.late,
+    required this.pendingApprovals,
   });
 
   final bool monthly;
   final int monthlyWorkingDays;
   final int total, present, absent, late;
+  final int? pendingApprovals;
 
   @override
   Widget build(BuildContext context) => Row(
@@ -673,7 +767,7 @@ class _KpiRow extends StatelessWidget {
       Expanded(
         child: _KpiCard(
           label: 'Pending Approvals',
-          value: '$absent',
+          value: pendingApprovals?.toString() ?? '—',
           subtitle: 'Leave · devices · overtime',
           color: _a1Red,
           icon: Icons.assignment_outlined,
@@ -687,44 +781,45 @@ class _QuickActionBar extends StatelessWidget {
   const _QuickActionBar({
     required this.onManageTime,
     required this.onManageCalendar,
+    required this.onApprove,
   });
 
   final VoidCallback onManageTime;
   final VoidCallback onManageCalendar;
+  final ValueChanged<QuickApprovalCategory> onApprove;
 
   @override
   Widget build(BuildContext context) => Container(
-    height: 64,
-    padding: const EdgeInsets.symmetric(horizontal: 16),
+    height: 68,
+    padding: const EdgeInsets.symmetric(horizontal: 12),
     decoration: BoxDecoration(
-      gradient: const LinearGradient(
-        colors: [_a1Red, _a1RedDeep],
-        begin: Alignment.centerLeft,
-        end: Alignment.centerRight,
+      color: Theme.of(context).colorScheme.surface.withValues(
+        alpha: Theme.of(context).brightness == Brightness.dark ? .28 : .38,
       ),
+      border: Border.all(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: .5)),
       borderRadius: BorderRadius.circular(13),
       boxShadow: const [
         BoxShadow(
-          color: Color(0x2EE3162A),
-          blurRadius: 20,
-          offset: Offset(0, 9),
+          color: Color(0x120C1B33),
+          blurRadius: 12,
+          offset: Offset(0, 4),
         ),
       ],
     ),
     child: Row(
       children: [
-        const Icon(Icons.bolt_rounded, color: Colors.white, size: 24),
+        const Icon(Icons.bolt_rounded, color: _a1Red, size: 24),
         const SizedBox(width: 9),
-        const Text(
+        Text(
           'Quick Actions',
           style: TextStyle(
-            color: Colors.white,
+            color: Theme.of(context).colorScheme.onSurface,
             fontSize: 16,
             fontWeight: FontWeight.w800,
           ),
         ),
         const SizedBox(width: 16),
-        Container(width: 1, height: 28, color: const Color(0x80FFFFFF)),
+        Container(width: 1, height: 28, color: Theme.of(context).colorScheme.outlineVariant),
         const SizedBox(width: 16),
         Expanded(
           child: _QuickActionButton(
@@ -733,7 +828,7 @@ class _QuickActionBar extends StatelessWidget {
             onTap: onManageTime,
           ),
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 6),
         Expanded(
           child: _QuickActionButton(
             label: 'Manage Calendar',
@@ -741,31 +836,28 @@ class _QuickActionBar extends StatelessWidget {
             onTap: onManageCalendar,
           ),
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 6),
         Expanded(
           child: _QuickActionButton(
             label: 'Approve Leave',
             icon: Icons.flight_takeoff_outlined,
-            onTap: () =>
-                Navigator.pushReplacementNamed(context, '/admin/approvals'),
+            onTap: () => onApprove(QuickApprovalCategory.leave),
           ),
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 6),
         Expanded(
           child: _QuickActionButton(
             label: 'Approve Devices',
             icon: Icons.phone_android_outlined,
-            onTap: () =>
-                Navigator.pushReplacementNamed(context, '/admin/approvals'),
+            onTap: () => onApprove(QuickApprovalCategory.device),
           ),
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 6),
         Expanded(
           child: _QuickActionButton(
             label: 'Approve Extra Hours',
             icon: Icons.groups_2_outlined,
-            onTap: () =>
-                Navigator.pushReplacementNamed(context, '/admin/approvals'),
+            onTap: () => onApprove(QuickApprovalCategory.extraHours),
           ),
         ),
       ],
@@ -784,9 +876,14 @@ class _QuickActionButton extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => Material(
-    color: const Color(0x1FFFFFFF),
-    borderRadius: BorderRadius.circular(9),
+  Widget build(BuildContext context) => SizedBox(
+    height: 42,
+    child: Material(
+    color: const Color(0xFF1769E0),
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(9),
+      side: const BorderSide(color: Color(0xFF78A9EF)),
+    ),
     child: InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(9),
@@ -811,6 +908,7 @@ class _QuickActionButton extends StatelessWidget {
         ),
       ),
     ),
+    ),
   );
 }
 
@@ -825,6 +923,7 @@ class _AttendanceTable extends StatelessWidget {
     required this.showSummary,
     required this.expanded,
     required this.onToggleExpanded,
+    required this.filters,
   });
 
   final ScrollController horizontalController;
@@ -836,6 +935,7 @@ class _AttendanceTable extends StatelessWidget {
   final bool showSummary;
   final bool expanded;
   final VoidCallback onToggleExpanded;
+  final Widget filters;
 
   @override
   Widget build(BuildContext context) {
@@ -844,10 +944,8 @@ class _AttendanceTable extends StatelessWidget {
       (index) => index + 1,
     );
     const weekdayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    if (employees.isEmpty) {
-      return const Center(child: Text('No employees to show.'));
-    }
     return AttendanceGrid(
+      toolbarLeading: filters,
       showSummary: showSummary,
       expanded: expanded,
       onToggleExpanded: onToggleExpanded,
@@ -864,7 +962,7 @@ class _AttendanceTable extends StatelessWidget {
             days: [
               for (var i = 0; i < days.length; i++)
                 AttendanceDayMark(
-                  _markForDay(
+                  markForDay(
                     i,
                     employee,
                     year,
@@ -892,7 +990,7 @@ class _AttendanceTable extends StatelessWidget {
     );
   }
 
-  String _markForDay(
+  static String markForDay(
     int index,
     _EmployeeAttendance employee,
     int year,
@@ -927,8 +1025,9 @@ class _YearlyAttendanceSummary extends StatelessWidget {
         return const Center(child: Text('No employees to show.'));
       }
       return SingleChildScrollView(
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.topLeft,
           child: SizedBox(
             width: math.max(constraints.maxWidth, 1050),
             child: Column(
@@ -1018,7 +1117,12 @@ class _MobileDashboard extends StatelessWidget {
     required this.year,
     required this.onYearChanged,
     required this.onExport,
+    required this.onSearchChanged,
+    required this.searchController,
+    required this.statusFilter,
+    required this.onStatusChanged,
     required this.month,
+    required this.onMonthChanged,
     required this.employees,
     required this.total,
     required this.present,
@@ -1033,7 +1137,12 @@ class _MobileDashboard extends StatelessWidget {
   final int year;
   final ValueChanged<int> onYearChanged;
   final VoidCallback onExport;
+  final ValueChanged<String> onSearchChanged;
+  final TextEditingController searchController;
+  final String statusFilter;
+  final ValueChanged<String> onStatusChanged;
   final String month;
+  final ValueChanged<String> onMonthChanged;
   final List<_EmployeeAttendance> employees;
   final int total, present, absent, late;
   final bool loading;
@@ -1042,14 +1151,17 @@ class _MobileDashboard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    backgroundColor: const Color(0xFFF8FAFF),
+    backgroundColor: Colors.transparent,
     bottomNavigationBar: const AdminMobileBottomNav(
       activeRoute: '/admin/dashboard',
     ),
     appBar: AppBar(
       backgroundColor: Colors.white,
       elevation: 0,
-      title: Image.asset('assets/images/a1_blowers_logo_header.png', height: 38),
+      title: Image.asset(
+        'assets/images/a1_blowers_logo_header.png',
+        height: 38,
+      ),
       actions: [
         const Icon(Icons.notifications_none_rounded, color: _navy),
         const SizedBox(width: 8),
@@ -1095,7 +1207,7 @@ class _MobileDashboard extends StatelessWidget {
         const SizedBox(width: 6),
       ],
     ),
-    body: loading
+    body: AdminPatternBackground(child: loading
         ? const Center(child: CircularProgressIndicator())
         : error != null
         ? Center(
@@ -1129,6 +1241,28 @@ class _MobileDashboard extends StatelessWidget {
                   style: TextStyle(color: _muted),
                 ),
                 const SizedBox(height: 16),
+                TextField(
+                  controller: searchController,
+                  onChanged: onSearchChanged,
+                  decoration: const InputDecoration(
+                    prefixIcon: Icon(Icons.search),
+                    hintText: 'Search employees',
+                  ),
+                ),
+                DropdownButton<String>(
+                  value: statusFilter,
+                  isExpanded: true,
+                  items: const ['All statuses', 'Absent', 'Late', 'Leave']
+                      .map(
+                        (value) =>
+                            DropdownMenuItem(value: value, child: Text(value)),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    if (value != null) onStatusChanged(value);
+                  },
+                ),
+                const SizedBox(height: 12),
                 Row(
                   children: [
                     Expanded(
@@ -1151,6 +1285,24 @@ class _MobileDashboard extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 14),
+                if (monthly) ...[
+                  DropdownButtonFormField<String>(
+                    initialValue: month,
+                    decoration: const InputDecoration(labelText: 'Month'),
+                    items: _DashboardPageState._monthCodes
+                        .map(
+                          (value) => DropdownMenuItem(
+                            value: value,
+                            child: Text(_fullMonthName(value)),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value != null) onMonthChanged(value);
+                    },
+                  ),
+                  const SizedBox(height: 14),
+                ],
                 Row(
                   children: [
                     _MobileDashboardMetric(
@@ -1188,7 +1340,7 @@ class _MobileDashboard extends StatelessWidget {
                 ),
               ],
             ),
-          ),
+          )),
   );
 }
 
@@ -2131,9 +2283,12 @@ class _KpiCard extends StatelessWidget {
       final compact = constraints.maxWidth < 245;
       final iconSize = compact ? 38.0 : 46.0;
       return Container(
-        padding: EdgeInsets.symmetric(horizontal: compact ? 10 : 14),
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 14 : 20,
+          vertical: compact ? 10 : 14,
+        ),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: Theme.of(context).colorScheme.surface.withValues(alpha: .82),
           border: Border.all(color: const Color(0xFFE0E6EF)),
           borderRadius: BorderRadius.circular(12),
           boxShadow: const [

@@ -120,8 +120,9 @@ class _AttendanceViewState extends State<_AttendanceView> {
                 final isHoliday = statusStr == 'holiday';
                 final isWeeklyOff = statusStr == 'weekly_off' || statusStr == 'weekly off';
                 final isHalfLeave = statusStr == 'half_leave';
+                final leaveCode = {'earned_leave': 'EL', 'casual_leave': 'CL', 'sick_leave': 'SL', 'optional_holiday': 'OL', 'attendance_regularization': 'AR'}[statusStr];
                 daysMap[dayNum] = {
-                  'status': isHoliday ? 'H' : (isWeeklyOff ? 'OFF' : (isHalfLeave ? 'HL' : (isAbsent ? 'A' : (isLate ? 'L' : 'P')))),
+                  'status': leaveCode ?? (isHoliday ? 'H' : (isWeeklyOff ? 'OFF' : (isHalfLeave ? 'HL' : (isAbsent ? 'A' : (isLate ? 'L' : 'P'))))),
                   'clock_in': item['clock_in_at'] ?? item['checkInAt'],
                 };
               }

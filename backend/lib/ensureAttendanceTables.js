@@ -14,6 +14,15 @@ async function ensureAttendanceTables(db) {
     await db.query(statements[i]);
   }
 
+  await db.query(`CREATE TABLE IF NOT EXISTS attendance_admin_remarks (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    attendance_id BIGINT UNSIGNED NOT NULL,
+    admin_user_id INT NOT NULL,
+    remark TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_attendance_remark (attendance_id, created_at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
   // CREATE TABLE IF NOT EXISTS does not upgrade an older installation.  Add
   // only missing columns so existing attendance data is preserved.
   const [columns] = await db.query(
@@ -32,7 +41,13 @@ async function ensureAttendanceTables(db) {
     is_late: 'TINYINT(1) NOT NULL DEFAULT 0',
     working_minutes: 'INT UNSIGNED NOT NULL DEFAULT 0',
     clock_out_reason: 'TEXT NULL',
-    tracking_stop_reason: 'TEXT NULL'
+    tracking_stop_reason: 'TEXT NULL',
+    check_in_latitude: 'DECIMAL(10,7) NULL',
+    check_in_longitude: 'DECIMAL(10,7) NULL',
+    check_out_latitude: 'DECIMAL(10,7) NULL',
+    check_out_longitude: 'DECIMAL(10,7) NULL',
+    scheduled_shift_start: 'TIME NULL',
+    scheduled_shift_end: 'TIME NULL'
   };
   for (const [name, definition] of Object.entries(required)) {
     if (!existing.has(name)) {

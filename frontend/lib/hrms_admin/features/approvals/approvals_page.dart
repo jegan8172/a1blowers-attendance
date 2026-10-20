@@ -5,7 +5,7 @@ import '../../../services/hrms_approvals_api.dart';
 import '../../shared/widgets/admin_top_nav.dart';
 
 abstract final class _C {
-  static const red = Color(0xFFE3162A);
+  static const red = Color(0xFF1769E0);
   static const navy = Color(0xFF102653);
   static const ink = Color(0xFF182846);
   static const muted = Color(0xFF647493);
@@ -109,7 +109,21 @@ class _ApprovalsPageState extends State<ApprovalsPage> {
   Future<void> _review(_Request request, String status) async {
     try {
       String? salaryMode;
-      if (status == 'Approved' && request.requestType == 'permission') {
+      final needsLeaveSalaryChoice = status == 'Approved' &&
+          request.leaveType.isNotEmpty && request.leaveType != 'Earned Leave';
+      final needsRegularizationSalaryChoice = status == 'Approved' && request.requestType == 'attendance_regularization';
+      if (needsLeaveSalaryChoice || needsRegularizationSalaryChoice) {
+        salaryMode = await showDialog<String>(context: context, builder: (context) => AlertDialog(
+          title: Text(needsRegularizationSalaryChoice ? 'Regularization salary decision' : '${request.leaveType} salary decision'),
+          content: Text(needsRegularizationSalaryChoice ? 'Paid regularization counts as Present. Unpaid regularization is recorded as AR and is not paid.' : 'Choose whether this approved leave is paid or unpaid. Paid leave counts as a paid payroll day; unpaid leave remains approved leave.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            OutlinedButton(onPressed: () => Navigator.pop(context, 'unpaid'), child: const Text('Unpaid')),
+            FilledButton(onPressed: () => Navigator.pop(context, 'paid'), child: const Text('Paid')),
+          ],
+        ));
+        if (salaryMode == null) return;
+      } else if (status == 'Approved' && request.requestType == 'permission') {
         salaryMode = await showDialog<String>(context: context, builder: (context) => AlertDialog(
           title: const Text('Permission salary decision'),
           content: const Text('Choose whether this approved permission is paid or unpaid. Unpaid permission is recorded as Half Leave.'),
@@ -282,8 +296,8 @@ class _Category extends StatelessWidget {
         height: 58,
         padding: const EdgeInsets.symmetric(horizontal: 17),
         decoration: BoxDecoration(
-          color: const Color(0xFFFFEFF1),
-          border: Border.all(color: const Color(0xFFFFBBC2)),
+          color: const Color(0xFFEAF2FF),
+          border: Border.all(color: const Color(0xFFBFD6FA)),
           borderRadius: BorderRadius.circular(10),
         ),
         child: Row(
@@ -345,7 +359,7 @@ class _Table extends StatelessWidget { const _Table({required this.requests, req
 class _TableHeader extends StatelessWidget { const _TableHeader(); @override Widget build(BuildContext context) => Container(height: 43, padding: const EdgeInsets.symmetric(horizontal: 18), color: AdminSurfacePalette.of(context).subtleSurface, child: Row(children: [const SizedBox(width: 40), Expanded(flex: 22, child: Text('Employee', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12, fontWeight: FontWeight.w700))), Expanded(flex: 23, child: Text('Request details', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12, fontWeight: FontWeight.w700))), Expanded(flex: 19, child: Text('Dates', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12, fontWeight: FontWeight.w700))), Expanded(flex: 8, child: Text('Days', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12, fontWeight: FontWeight.w700))), Expanded(flex: 12, child: Text('Status', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12, fontWeight: FontWeight.w700)))])); }
 
 class _Row extends StatelessWidget { const _Row({required this.request, required this.selected, required this.onTap}); final _Request request; final bool selected; final VoidCallback onTap;
-  @override Widget build(BuildContext context) => InkWell(onTap: onTap, child: AnimatedContainer(duration: const Duration(milliseconds: 130), height: 80, color: selected ? const Color(0xFFFFEFF1) : AdminSurfacePalette.of(context).surface, padding: const EdgeInsets.symmetric(horizontal: 18), child: Row(children: [SizedBox(width: 40, child: Icon(selected ? Icons.check_box_rounded : Icons.check_box_outline_blank_rounded, color: selected ? _C.red : const Color(0xFFC8D1DF), size: 21)), Expanded(flex: 22, child: _Person(request: request)), Expanded(flex: 23, child: _Two(title: request.type, subtitle: request.reason)), Expanded(flex: 19, child: _Two(title: request.dates, subtitle: request.dayRange)), Expanded(flex: 8, child: Text(request.duration, style: TextStyle(color: Theme.of(context).colorScheme.onSurface, fontWeight: FontWeight.w600))), Expanded(flex: 12, child: _Status(value: request.status))]))); }
+  @override Widget build(BuildContext context) => InkWell(onTap: onTap, child: AnimatedContainer(duration: const Duration(milliseconds: 130), height: 80, color: selected ? const Color(0xFFEAF2FF) : AdminSurfacePalette.of(context).surface, padding: const EdgeInsets.symmetric(horizontal: 18), child: Row(children: [SizedBox(width: 40, child: Icon(selected ? Icons.check_box_rounded : Icons.check_box_outline_blank_rounded, color: selected ? _C.red : const Color(0xFFC8D1DF), size: 21)), Expanded(flex: 22, child: _Person(request: request)), Expanded(flex: 23, child: _Two(title: request.type, subtitle: request.reason)), Expanded(flex: 19, child: _Two(title: request.dates, subtitle: request.dayRange)), Expanded(flex: 8, child: Text(request.duration, style: TextStyle(color: Theme.of(context).colorScheme.onSurface, fontWeight: FontWeight.w600))), Expanded(flex: 12, child: _Status(value: request.status))]))); }
 
 class _Person extends StatelessWidget { const _Person({required this.request}); final _Request request; @override Widget build(BuildContext context) => Row(children: [CircleAvatar(radius: 19, backgroundColor: const Color(0xFFEAF0F9), child: Text(request.initials, style: const TextStyle(color: _C.navy, fontSize: 12, fontWeight: FontWeight.w800))), const SizedBox(width: 10), Expanded(child: _Two(title: request.name, subtitle: request.id))]); }
 class _Two extends StatelessWidget { const _Two({required this.title, required this.subtitle}); final String title, subtitle; @override Widget build(BuildContext context) => Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: _C.ink, fontSize: 13, fontWeight: FontWeight.w700)), const SizedBox(height: 3), Text(subtitle.isEmpty ? '—' : subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: _C.muted, fontSize: 12))]); }
@@ -365,6 +379,6 @@ class _PageButton extends StatelessWidget { const _PageButton(this.icon, {this.t
 class _Empty extends StatelessWidget { const _Empty(); @override Widget build(BuildContext context) => const Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.inbox_outlined, size: 38, color: Color(0xFF9FAEC3)), SizedBox(height: 10), Text('No approval requests match these filters.', style: TextStyle(color: _C.muted))])); }
 class _Error extends StatelessWidget { const _Error({required this.message, required this.onRetry}); final String message; final VoidCallback onRetry; @override Widget build(BuildContext context) => Center(child: Padding(padding: const EdgeInsets.all(24), child: Column(mainAxisSize: MainAxisSize.min, children: [Text(message, textAlign: TextAlign.center, style: const TextStyle(color: _C.muted)), const SizedBox(height: 14), FilledButton(onPressed: onRetry, style: FilledButton.styleFrom(backgroundColor: _C.red), child: const Text('Retry'))]))); }
 
-class _Request { const _Request({required this.requestId, required this.name, required this.id, required this.type, required this.requestType, required this.dates, required this.dayRange, required this.duration, required this.reason, required this.status}); final int requestId; final String name, id, type, requestType, dates, dayRange, duration, reason, status; String get initials { final words = name.trim().split(RegExp(r'\s+')).where((word) => word.isNotEmpty).toList(); return words.isEmpty ? '?' : words.take(2).map((word) => word[0].toUpperCase()).join(); } factory _Request.fromApi(Map<String, dynamic> json) => _Request(requestId: json['id'] is int ? json['id'] as int : int.tryParse('${json['id']}') ?? 0, name: '${json['name'] ?? ''}', id: '${json['employeeCode'] ?? ''}', type: '${json['type'] ?? 'Request'}', requestType: '${json['requestType'] ?? ''}', dates: '${json['dates'] ?? ''}', dayRange: '${json['dayRange'] ?? ''}', duration: '${json['duration'] ?? ''}', reason: '${json['reason'] ?? ''}', status: '${json['status'] ?? 'Pending'}'); }
+class _Request { const _Request({required this.requestId, required this.name, required this.id, required this.type, required this.requestType, required this.leaveType, required this.dates, required this.dayRange, required this.duration, required this.reason, required this.status}); final int requestId; final String name, id, type, requestType, leaveType, dates, dayRange, duration, reason, status; String get initials { final words = name.trim().split(RegExp(r'\s+')).where((word) => word.isNotEmpty).toList(); return words.isEmpty ? '?' : words.take(2).map((word) => word[0].toUpperCase()).join(); } factory _Request.fromApi(Map<String, dynamic> json) => _Request(requestId: json['id'] is int ? json['id'] as int : int.tryParse('${json['id']}') ?? 0, name: '${json['name'] ?? ''}', id: '${json['employeeCode'] ?? ''}', type: '${json['type'] ?? 'Request'}', requestType: '${json['requestType'] ?? ''}', leaveType: '${json['leaveType'] ?? ''}', dates: '${json['dates'] ?? ''}', dayRange: '${json['dayRange'] ?? ''}', duration: '${json['duration'] ?? ''}', reason: '${json['reason'] ?? ''}', status: '${json['status'] ?? 'Pending'}'); }
 
 const _head = TextStyle(color: _C.muted, fontSize: 12, fontWeight: FontWeight.w700);

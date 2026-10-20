@@ -150,9 +150,11 @@ class HrmsEmployeesApi {
     return _decode(response);
   }
 
-  static Future<String> exportCsv() async {
+  static Future<String> exportCsv({String search = '', String department = '', String status = '', String workMode = ''}) async {
     final response = await http.get(
-      Uri.parse('${ApiConfig.baseUrl}/hrms/employees/export'),
+      Uri.parse('${ApiConfig.baseUrl}/hrms/employees/export').replace(queryParameters: {
+        'search': search, 'department': department, 'status': status, 'workMode': workMode,
+      }),
       headers: await _headers(),
     );
     if (response.statusCode >= 400) {

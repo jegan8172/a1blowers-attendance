@@ -11,7 +11,7 @@ import '../../../services/hrms_notifications_api.dart';
 import '../../../services/auth_service.dart';
 import '../../../screens/login_screen.dart';
 
-const _blue = Color(0xFFE3162A);
+const _blue = Color(0xFF1769E0);
 const _navy = Color(0xFF081B3C);
 
 /// Opens the same notification preferences dialog used by the notification bell.
@@ -85,7 +85,7 @@ class AdminTopNav extends StatelessWidget {
             : 20,
       ),
       decoration: BoxDecoration(
-        color: dark ? navSurface : Colors.white,
+        color: navSurface,
         boxShadow: [
           BoxShadow(
             color: Color(0x12071A72),
@@ -204,7 +204,7 @@ class _AdminNavMenu extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 13),
         decoration: BoxDecoration(
           color: const Color(0xFFFFF8F8),
-          border: Border.all(color: const Color(0xFFF1C5CA)),
+          border: Border.all(color: const Color(0xFFC9DCF9)),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(

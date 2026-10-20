@@ -180,7 +180,7 @@ class _DesktopLeave extends StatelessWidget {
       children: [
         _LeaveBalance(balances: balances),
         const SizedBox(height: 20),
-        _LeaveForm(desktop: true, onSuccess: onRefresh),
+        _LeaveForm(desktop: true, leaveTypes: balances.map((b) => '${b['type']}').toList(), onSuccess: onRefresh),
       ],
     );
   }
@@ -459,8 +459,9 @@ class _DesktopRequestRow extends StatelessWidget {
 }
 
 class _LeaveForm extends StatefulWidget {
-  const _LeaveForm({required this.desktop, required this.onSuccess});
+  const _LeaveForm({required this.desktop, required this.leaveTypes, required this.onSuccess});
   final bool desktop;
+  final List<String> leaveTypes;
   final VoidCallback onSuccess;
 
   @override
@@ -474,6 +475,20 @@ class _LeaveFormState extends State<_LeaveForm> {
   DateTime toDate = DateTime.now();
   final _reasonCtrl = TextEditingController();
   bool _submitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.leaveTypes.isNotEmpty && !widget.leaveTypes.contains(type)) type = widget.leaveTypes.first;
+  }
+
+  @override
+  void didUpdateWidget(covariant _LeaveForm oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.leaveTypes.isNotEmpty && !widget.leaveTypes.contains(type)) {
+      setState(() => type = widget.leaveTypes.first);
+    }
+  }
 
   Future<void> _pickDate(bool isFrom) async {
     final picked = await showDatePicker(
@@ -566,6 +581,10 @@ class _LeaveFormState extends State<_LeaveForm> {
     final fromStr = DateFormat('dd/MM/yyyy').format(fromDate);
     final toStr = DateFormat('dd/MM/yyyy').format(toDate);
 
+    if (widget.leaveTypes.isEmpty) {
+      return const EmployeeCard(child: Text('No leave types are currently available. Please contact your administrator.'));
+    }
+
     return EmployeeCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -579,12 +598,7 @@ class _LeaveFormState extends State<_LeaveForm> {
             Row(
               children: [
                 Expanded(
-                  child: _DropdownField('LEAVE TYPE', type, const [
-                    'Casual Leave',
-                    'Sick Leave',
-                    'Earned Leave',
-                    'Optional Holiday',
-                  ], (v) => setState(() => type = v!)),
+                  child: _DropdownField('LEAVE TYPE', type, widget.leaveTypes, (v) => setState(() => type = v!)),
                 ),
                 const SizedBox(width: 18),
                 Expanded(
@@ -596,12 +610,7 @@ class _LeaveFormState extends State<_LeaveForm> {
               ],
             )
           else ...[
-            _DropdownField('Leave Type', type, const [
-              'Casual Leave',
-              'Sick Leave',
-              'Earned Leave',
-              'Optional Holiday',
-            ], (v) => setState(() => type = v!)),
+            _DropdownField('Leave Type', type, widget.leaveTypes, (v) => setState(() => type = v!)),
             const SizedBox(height: 14),
             _DropdownField('Duration', duration, const [
               'Full Day',
@@ -969,7 +978,7 @@ class _MobileLeave extends StatelessWidget {
         const SizedBox(height: 18),
         _MobileLeaveBalance(balances: balances),
         const SizedBox(height: 18),
-        _LeaveForm(desktop: false, onSuccess: onRefresh),
+        _LeaveForm(desktop: false, leaveTypes: balances.map((b) => '${b['type']}').toList(), onSuccess: onRefresh),
       ],
     );
   }

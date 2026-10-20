@@ -47,10 +47,13 @@ class _EmployeeDashboardPageState extends State<EmployeeDashboardPage> {
         body: SafeArea(
             child: Stack(children: [
       Column(children: [
-        _Header(
-            mobile: mobile,
-            open: menuOpen,
-            onMenu: () => setState(() => menuOpen = !menuOpen)),
+        if (mobile)
+          _Header(
+              mobile: true,
+              open: menuOpen,
+              onMenu: () => setState(() => menuOpen = !menuOpen))
+        else
+          const EmployeeTopNavigation(route: '/employee/dashboard'),
         Expanded(
             child: SingleChildScrollView(
           padding: EdgeInsets.fromLTRB(
@@ -267,13 +270,13 @@ class _Content extends StatelessWidget {
           ('Clock Log', Icons.history_rounded, '/employee/clock-log')
         ]),
         const SizedBox(height: 12),
-        const _Actions('LEAVE', Color(0xFF6C36E8), Icons.eco_outlined, [
+        const _Actions('LEAVE', Color(0xFF245FC7), Icons.eco_outlined, [
           ('Apply Leave', Icons.note_add_outlined, '/employee/leave'),
           ('My Requests', Icons.assignment_outlined, '/employee/leave')
         ]),
         const SizedBox(height: 12),
         const _Actions(
-            'PERMISSION', Color(0xFF5B35D5), Icons.verified_user_outlined, [
+            'PERMISSION', Color(0xFF367AD9), Icons.verified_user_outlined, [
           (
             'Apply Permission',
             Icons.verified_user_outlined,
@@ -282,7 +285,7 @@ class _Content extends StatelessWidget {
           ('View Log', Icons.history_rounded, '/employee/permission')
         ]),
         const SizedBox(height: 12),
-        const _Actions('EXTRA HOURS', employeeOrange, Icons.more_time_rounded, [
+        const _Actions('EXTRA HOURS', Color(0xFF4A8AE6), Icons.more_time_rounded, [
           ('Log Hours', Icons.more_time_rounded, '/employee/extra-hours'),
           ('0h', Icons.timelapse_rounded, null)
         ]),
@@ -290,7 +293,7 @@ class _Content extends StatelessWidget {
         const _DynamicSalaryAction(),
         const SizedBox(height: 12),
         const _Actions(
-            'TRACKING', Color(0xFF079B9B), Icons.location_on_outlined, [
+            'TRACKING', Color(0xFF1769E0), Icons.location_on_outlined, [
           ('Live Tracking', Icons.location_on_outlined, '/employee/tracking'),
           ('Route History', Icons.map_outlined, '/employee/tracking')
         ]),
@@ -318,7 +321,7 @@ class _DynamicSalaryActionState extends State<_DynamicSalaryAction> {
           final payroll = snapshot.data?['payroll'];
           final map = payroll is Map ? payroll : const <String, dynamic>{};
           final netPay = map['net_pay'] ?? map['updated_salary'] ?? map['monthly_salary'];
-          return _Actions('SALARY', const Color(0xFF07368D), Icons.currency_rupee_rounded, [
+          return _Actions('SALARY', const Color(0xFF0C4EB6), Icons.currency_rupee_rounded, [
             ('Net Pay ${_money(netPay)}', Icons.currency_rupee_rounded, null),
             ('View Payslip', Icons.description_outlined, '/employee/salary'),
           ]);

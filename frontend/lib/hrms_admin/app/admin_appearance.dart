@@ -1,15 +1,11 @@
 import 'package:flutter/material.dart';
-/// Provides the fixed, light GoDigital admin appearance.
+
+/// The fixed default appearance of the admin workspace.
 class AdminAppearanceController extends ChangeNotifier {
-  static const Color _accent = Color(0xFFE3162A);
-  bool _ready = false;
-
-  Color get accent => _accent;
-  bool get ready => _ready;
+  Color get accent => const Color(0xFF1769E0);
+  Color get background => const Color(0xFFF7F9FD);
+  Color get card => Colors.white;
+  Color get text => const Color(0xFF102653);
+  Color get border => const Color(0xFFE1E7F0);
   Brightness get brightness => Brightness.light;
-
-  Future<void> load() async {
-    _ready = true;
-    notifyListeners();
-  }
 }

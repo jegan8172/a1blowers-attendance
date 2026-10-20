@@ -1,8 +1,11 @@
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const jwt = require('jsonwebtoken');
 const { createApp } = require('./app');
+const sharedPool = require('../config/db');
 const secret = 'isolated-attendance-test-secret';
+
+after(async () => { await sharedPool.end(); });
 
 async function withApp(pool, callback) {
   const app = createApp({ pool, jwtSecret: secret });
@@ -29,7 +32,7 @@ test('dashboard uses JWT identity even when request supplies a different employe
   const pool = { execute: async (sql, params) => {
     ids.push(params[0]);
     if (sql.includes('employee_users')) return [[{ id: 7, full_name: 'Employee', staff_id: 'EMP7', is_active: 1 }]];
-    if (sql.includes('COUNT')) return [[{ present_days: 0 }]];
+    if (sql.includes('AS present_days')) return [[{ present_days: 0, late_days: 0, absent_days: 0 }]];
     return [[]];
   } };
   await withApp(pool, async base => {
@@ -39,7 +42,7 @@ test('dashboard uses JWT identity even when request supplies a different employe
     assert.equal(response.status, 200);
     assert.equal(response.headers.get('cache-control'), 'no-store');
     assert.equal((await response.json()).data.employee.id, 7);
-    assert.deepEqual(ids, [7, 7, 7, 7]);
+    assert.deepEqual(ids, [7, 7, 7, 7, 7]);
   });
 });
 
@@ -60,7 +63,7 @@ test('attendance mounts under the existing API without intercepting unrelated ro
   parent.use('/api/attendance', createApp({ jwtSecret: secret, basePath: '',
     pool: { execute: async (sql) => {
       if (sql.includes('employee_users')) return [[{ id: 7, full_name: 'Employee', staff_id: 'EMP7', is_active: 1 }]];
-      return sql.includes('COUNT') ? [[{ present_days: 0 }]] : [[]];
+      return sql.includes('AS present_days') ? [[{ present_days: 0, late_days: 0, absent_days: 0 }]] : [[]];
     } },
   }));
   parent.get('/api/unrelated', (req, res) => res.json({ intact: true }));

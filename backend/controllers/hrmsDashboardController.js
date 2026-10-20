@@ -241,14 +241,26 @@ async function monthView(req, res) {
 
     const [leaves] = userIds.length
       ? await db.query(
-          `SELECT employee_id, duration_type, leave_type,
-                  DATE_FORMAT(from_date, '%Y-%m-%d') AS from_date,
-                  DATE_FORMAT(to_date, '%Y-%m-%d') AS to_date
-           FROM employee_leaves
-           WHERE status = 'APPROVED'
-             AND from_date <= ? AND to_date >= ?
-             AND employee_id IN (?)`,
+        `SELECT l.employee_id, l.duration_type, l.leave_type,
+                  approval.salary_mode,
+                  DATE_FORMAT(l.from_date, '%Y-%m-%d') AS from_date,
+                  DATE_FORMAT(l.to_date, '%Y-%m-%d') AS to_date
+           FROM employee_leaves l
+           LEFT JOIN hrms_leave_approval_links link ON link.leave_id = l.id
+           LEFT JOIN attendance_permission_requests approval ON approval.id = link.approval_request_id
+           WHERE l.status = 'APPROVED'
+             AND l.from_date <= ? AND l.to_date >= ?
+             AND l.employee_id IN (?)`,
           [end, start, userIds]
+        )
+      : [[]];
+    const [regularizations] = userIds.length
+      ? await db.query(
+          `SELECT employee_id, DATE_FORMAT(request_date, '%Y-%m-%d') AS request_date, salary_mode
+           FROM attendance_permission_requests
+           WHERE request_type = 'attendance_regularization' AND status = 'approved'
+             AND request_date BETWEEN ? AND ? AND employee_id IN (?)`,
+          [start, end, userIds]
         )
       : [[]];
 
@@ -264,14 +276,23 @@ async function monthView(req, res) {
     const leaveMap = new Map();
     leaves.forEach(function (row) {
       let date = row.from_date;
-      const code = row.duration_type === 'Half Day'
-        ? 'HL'
-        : (row.leave_type === 'Earned Leave' ? 'EL' : 'LV');
+      const code = row.duration_type === 'Half Day' ? 'HL' : ({
+        'Earned Leave': 'EL', 'Casual Leave': 'CL',
+        'Sick Leave': 'SL', 'Optional Holiday': 'OL',
+      }[row.leave_type] || 'LV');
       while (date <= row.to_date) {
         const key = row.employee_id + '|' + date;
-        leaveMap.set(key, { code: code, leaveType: row.leave_type });
+        leaveMap.set(key, {
+          code: code,
+          leaveType: row.leave_type,
+          isPaid: row.leave_type === 'Earned Leave' || String(row.salary_mode).toLowerCase() === 'paid',
+        });
         date = nextDate(date);
       }
+    });
+    const regularizationMap = new Map();
+    regularizations.forEach(function (row) {
+      regularizationMap.set(row.employee_id + '|' + row.request_date, String(row.salary_mode || '').toLowerCase());
     });
 
     let presentDays = 0;
@@ -308,6 +329,7 @@ async function monthView(req, res) {
         const key = userId ? userId + '|' + date : '';
         const record = key ? recordMap.get(key) : null;
         const leaveInfo = key ? leaveMap.get(key) : null;
+        const regularization = key ? regularizationMap.get(key) : null;
         const leaveType = leaveInfo ? leaveInfo.code : null;
 
         // Future dates stay blank, except for leave that is already approved.
@@ -320,7 +342,14 @@ async function monthView(req, res) {
         // shown only when the employee has no attendance record.
         // An explicit absence is always shown as an absence. Whether it is
         // an LOP day is a separate payroll-policy decision.
-        if (record && String(record.attendance_status).toLowerCase() === 'absent') {
+        if (regularization === 'paid') {
+          days.push('P');
+          present += 1;
+          presentDays += 1;
+          accruedPaidDays += 1;
+        } else if (regularization === 'unpaid') {
+          days.push('AR');
+        } else if (record && String(record.attendance_status).toLowerCase() === 'absent') {
           days.push('A');
           absent += 1;
           absentDays += 1;
@@ -346,9 +375,8 @@ async function monthView(req, res) {
           days.push(leaveType);
           approvedLeave += 1;
           if (leaveType === 'HL') halfLeave += 1;
-          if (leaveInfo.leaveType === 'Earned Leave') {
+          if (leaveInfo.isPaid) {
             earnedLeave += 1;
-            // Earned Leave is the approved paid-leave type.
             accruedPaidDays += leaveType === 'HL' ? 0.5 : 1;
           }
           if (date <= today && payrollRules.deductLeave) unexcused += leaveType === 'HL' ? 0.5 : 1;
@@ -422,8 +450,13 @@ async function monthView(req, res) {
         [today, userIds]
       );
       const [todayLeaves] = await db.query(
-        `SELECT employee_id FROM employee_leaves
-         WHERE status = 'APPROVED' AND from_date <= ? AND to_date >= ? AND employee_id IN (?)`,
+        `SELECT l.employee_id FROM employee_leaves l
+         LEFT JOIN hrms_leave_approval_links link ON link.leave_id = l.id
+         LEFT JOIN attendance_permission_requests approval ON approval.id = link.approval_request_id
+         WHERE l.status = 'APPROVED'
+           AND (l.leave_type = 'Earned Leave' OR approval.salary_mode = 'paid')
+           AND l.from_date = ? AND l.to_date = ?
+           AND LOWER(l.duration_type) = 'full day' AND l.employee_id IN (?)`,
         [today, today, userIds]
       );
       const todayRecordMap = new Map();

@@ -15,7 +15,7 @@ import '../../shared/widgets/admin_top_nav.dart';
 import 'widgets/home_locations_dialog.dart';
 
 abstract final class HrmsColors {
-  static const blue = Color(0xFFE3162A);
+  static const blue = Color(0xFF1769E0);
   static const navy = Color(0xFF081B3C);
   static const page = Color(0xFFF7F8FA);
 }
@@ -3393,7 +3393,7 @@ class _OfficeLocationDialogState extends State<_OfficeLocationDialog> {
       padding: const EdgeInsets.all(22),
       decoration: const BoxDecoration(
         gradient: LinearGradient(
-          colors: [Color(0xFFE3162A), Color(0xFF9E1020)],
+          colors: [Color(0xFF1769E0), Color(0xFF0C46A0)],
         ),
         borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),

@@ -6,6 +6,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const db = require('../config/db'); 
+const { normalizePhone } = require('../lib/employeePhone');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'change-this-in-production-to-random-key';
 const JWT_EXPIRY = '7d';
@@ -290,6 +291,35 @@ router.get('/verify', authenticateToken, (req, res) => {
     message: 'Token is valid',
     user: req.user,
   });
+});
+
+// An employee may access only the contact number linked to their own account.
+router.get('/contact', authenticateToken, async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT phone FROM hrms_employee_profiles WHERE employee_user_id = ? LIMIT 1', [req.user.id]);
+    if (!rows.length) return res.status(404).json({ success: false, message: 'Employee profile not found' });
+    return res.json({ success: true, data: { phone: rows[0].phone || '' } });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Could not load phone number' });
+  }
+});
+
+router.put('/contact', authenticateToken, async (req, res) => {
+  let phone;
+  try {
+    if (!req.body || !Object.prototype.hasOwnProperty.call(req.body, 'phone')) throw new Error('Phone number is required');
+    phone = normalizePhone(req.body.phone);
+  } catch (error) {
+    return res.status(400).json({ success: false, message: error.message });
+  }
+  try {
+    const [rows] = await db.query('SELECT id FROM hrms_employee_profiles WHERE employee_user_id = ? LIMIT 1', [req.user.id]);
+    if (!rows.length) return res.status(404).json({ success: false, message: 'Employee profile not found' });
+    await db.query('UPDATE hrms_employee_profiles SET phone = ? WHERE id = ? AND employee_user_id = ?', [phone, rows[0].id, req.user.id]);
+    return res.json({ success: true, data: { phone: phone || '' } });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Could not save phone number' });
+  }
 });
 
 // Read the signed-in employee's current profile from employee_users.

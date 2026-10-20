@@ -19,7 +19,6 @@ function requireAdmin(req, res, next) {
   return next();
 }
 
-const LEAVE_TYPES = ['leave', 'risk_leave', 'annual_leave', 'sick_leave', 'personal_leave'];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
 
@@ -334,16 +333,28 @@ async function computeRows(year, month, today, options) {
       )
     : [[]];
 
-  const leavePlaceholders = LEAVE_TYPES.map(function () { return '?'; }).join(', ');
   const [leaves] = userIds.length
+    ? await db.query(
+        `SELECT l.employee_id, DATE_FORMAT(l.from_date, '%Y-%m-%d') AS request_date
+         FROM employee_leaves l
+         LEFT JOIN hrms_leave_approval_links link ON link.leave_id = l.id
+         LEFT JOIN attendance_permission_requests approval ON approval.id = link.approval_request_id
+         WHERE l.status = 'APPROVED'
+           AND (l.leave_type = 'Earned Leave' OR approval.salary_mode = 'paid')
+           AND l.from_date = l.to_date AND LOWER(l.duration_type) = 'full day'
+           AND l.from_date BETWEEN ? AND ?
+           AND l.employee_id IN (?)`,
+        [queryStart, queryEnd, userIds]
+      )
+    : [[]];
+  const [paidRegularizations] = userIds.length
     ? await db.query(
         `SELECT employee_id, DATE_FORMAT(request_date, '%Y-%m-%d') AS request_date
          FROM attendance_permission_requests
-         WHERE status = 'approved'
-           AND request_type IN (` + leavePlaceholders + `)
-           AND request_date BETWEEN ? AND ?
+         WHERE request_type = 'attendance_regularization' AND status = 'approved'
+           AND salary_mode = 'paid' AND request_date BETWEEN ? AND ?
            AND employee_id IN (?)`,
-        LEAVE_TYPES.concat([queryStart, queryEnd, userIds])
+        [queryStart, queryEnd, userIds]
       )
     : [[]];
 
@@ -368,8 +379,14 @@ async function computeRows(year, month, today, options) {
     recordMap.set(row.employee_id + '|' + isoDate(row.attendance_date), row);
   });
   const leaveSet = new Set();
+  const paidRegularizationSet = new Set();
   leaves.forEach(function (row) {
     leaveSet.add(row.employee_id + '|' + isoDate(row.request_date));
+  });
+  paidRegularizations.forEach(function (row) {
+    const regularizationKey = row.employee_id + '|' + isoDate(row.request_date);
+    leaveSet.add(regularizationKey);
+    paidRegularizationSet.add(regularizationKey);
   });
 
   return profiles.map(function (profile) {
@@ -412,7 +429,12 @@ async function computeRows(year, month, today, options) {
       // 1. Safely read the status to ignore case (e.g., 'Absent' vs 'absent')
       const attStatus = record && record.attendance_status ? String(record.attendance_status).toLowerCase().trim() : '';
 
-      if (attStatus === 'half_leave') {
+      if (key && paidRegularizationSet.has(key)) {
+        // An approved paid regularization wins over a generated/explicit
+        // absence, without manufacturing a clock-in timestamp.
+        present += 1;
+        earnedDays += 1;
+      } else if (attStatus === 'half_leave') {
         unpaidHalfDays += 0.5;
         absentEntries.push({ date: date, days: 0.5 });
         earnedDays += 0.5;

@@ -5,7 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../../services/hrms_dashboard_api.dart';
 
-const _blue = Color(0xFFE3162A);
+const _blue = Color(0xFF1769E0);
 const _navy = Color(0xFF081B3C);
 const _line = Color(0xFFD8E1F1);
 const _green = Color(0xFF138B2B);

@@ -19,7 +19,7 @@ function requireAdmin(req, res, next) {
 }
 
 const LEAVE_TYPES = ['leave', 'risk_leave', 'annual_leave', 'sick_leave', 'personal_leave', 'casual_leave', 'earned_leave', 'optional_holiday'];
-const EXTRA_TYPES = ['extra_hours', 'late_entry', 'early_exit', 'reclock_in'];
+const EXTRA_TYPES = ['extra_hours', 'late_entry', 'early_exit', 'reclock_in', 'attendance_regularization'];
 
 function displayType(requestType) {
   const value = String(requestType || '').toLowerCase();
@@ -33,13 +33,14 @@ function displayType(requestType) {
   if (value === 'late_entry') return 'Late Entry';
   if (value === 'early_exit') return 'Early Exit';
   if (value === 'reclock_in') return 'Clock In Request';
+  if (value === 'attendance_regularization') return 'Attendance Regularization';
   return String(requestType || '').replace(/_/g, ' ');
 }
 
 function iconMeta(typeLabel) {
   if (typeLabel === 'Sick Leave') return { icon: 'medical', color: 0xFFFF4F62 };
   if (typeLabel === 'Personal Leave') return { icon: 'event_busy', color: 0xFFFF6D3A };
-  if (typeLabel === 'Extra Hours' || typeLabel === 'Late Entry' || typeLabel === 'Early Exit' || typeLabel === 'Clock In Request') {
+  if (typeLabel === 'Extra Hours' || typeLabel === 'Late Entry' || typeLabel === 'Early Exit' || typeLabel === 'Clock In Request' || typeLabel === 'Attendance Regularization') {
     return { icon: 'more_time', color: 0xFFFF6500 };
   }
   return { icon: 'beach', color: 0xFF7137E8 };
@@ -101,6 +102,7 @@ function toUi(row) {
     salaryMode: row.salary_mode || null,
     permissionStartTime: row.permission_start_time || null,
     permissionEndTime: row.permission_end_time || null,
+    leaveType: row.leave_type || null,
     icon: meta.icon,
     color: meta.color,
     tab: extra ? 'extra' : 'leave',
@@ -212,7 +214,7 @@ async function list(req, res) {
               DATE_FORMAT(p.request_date, '%Y-%m-%d') AS request_date,
               DATE_FORMAT(leave_request.from_date, '%Y-%m-%d') AS from_date,
               DATE_FORMAT(leave_request.to_date, '%Y-%m-%d') AS to_date,
-              leave_request.duration_type,
+              leave_request.leave_type, leave_request.duration_type,
               s.${staff.quote(staff.STAFF.name)} AS full_name,
               s.${staff.quote(staff.STAFF.staffCode)} AS staff_id
        FROM attendance_permission_requests p
@@ -254,15 +256,45 @@ async function review(req, res) {
     if (status !== 'approved' && status !== 'rejected') {
       return fail(res, 400, 'status must be approved or rejected');
     }
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS hrms_leave_approval_links (
+        leave_id BIGINT UNSIGNED NOT NULL,
+        approval_request_id BIGINT UNSIGNED NOT NULL,
+        PRIMARY KEY (leave_id),
+        UNIQUE KEY uniq_leave_approval_request (approval_request_id)
+      )
+    `);
     const [[pendingRequest]] = await db.query(
-      `SELECT id, employee_id, request_type, request_date
-       FROM attendance_permission_requests WHERE id = ? AND status = 'pending'`,
+      `SELECT p.id, p.employee_id, p.request_type, p.request_date,
+              leave_request.leave_type
+       FROM attendance_permission_requests p
+       LEFT JOIN hrms_leave_approval_links link ON link.approval_request_id = p.id
+       LEFT JOIN employee_leaves leave_request ON leave_request.id = link.leave_id
+       WHERE p.id = ? AND p.status = 'pending'`,
       [id]
     );
     if (!pendingRequest) return fail(res, 404, 'Pending request not found');
+    let approvedSalaryMode = null;
     if (status === 'approved' && pendingRequest.request_type === 'permission' &&
         salaryMode !== 'paid' && salaryMode !== 'unpaid') {
       return fail(res, 400, 'Choose paid or unpaid permission before approving');
+    }
+    if (status === 'approved' && pendingRequest.request_type === 'attendance_regularization' &&
+        salaryMode !== 'paid' && salaryMode !== 'unpaid') {
+      return fail(res, 400, 'Choose paid or unpaid attendance regularization before approving');
+    }
+    if (status === 'approved' && pendingRequest.leave_type) {
+      if (pendingRequest.leave_type === 'Earned Leave') {
+        approvedSalaryMode = 'paid';
+      } else if (salaryMode === 'paid' || salaryMode === 'unpaid') {
+        approvedSalaryMode = salaryMode;
+      } else {
+        return fail(res, 400, 'Choose paid or unpaid leave before approving');
+      }
+    } else if (status === 'approved' && pendingRequest.request_type === 'permission') {
+      approvedSalaryMode = salaryMode;
+    } else if (status === 'approved' && pendingRequest.request_type === 'attendance_regularization') {
+      approvedSalaryMode = salaryMode;
     }
     // Approval intentionally does not rewrite attendance. It unlocks a single
     // additional Clock In; that Clock In reopens the same session while keeping
@@ -272,16 +304,8 @@ async function review(req, res) {
       `UPDATE attendance_permission_requests
        SET status = ?, salary_mode = ?, reviewed_by = ?, reviewed_at = ?
        WHERE id = ? AND status = 'pending'`,
-      [status, pendingRequest.request_type === 'permission' && status === 'approved' ? salaryMode : null, req.user.id, at, id]
+      [status, approvedSalaryMode, req.user.id, at, id]
     );
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS hrms_leave_approval_links (
-        leave_id BIGINT UNSIGNED NOT NULL,
-        approval_request_id BIGINT UNSIGNED NOT NULL,
-        PRIMARY KEY (leave_id),
-        UNIQUE KEY uniq_leave_approval_request (approval_request_id)
-      )
-    `);
     await db.query(
       `UPDATE employee_leaves l
        INNER JOIN hrms_leave_approval_links link ON link.leave_id = l.id
@@ -294,7 +318,7 @@ async function review(req, res) {
               DATE_FORMAT(p.request_date, '%Y-%m-%d') AS request_date,
               DATE_FORMAT(leave_request.from_date, '%Y-%m-%d') AS from_date,
               DATE_FORMAT(leave_request.to_date, '%Y-%m-%d') AS to_date,
-              leave_request.duration_type,
+              leave_request.leave_type, leave_request.duration_type,
               s.${staff.quote(staff.STAFF.name)} AS full_name,
               s.${staff.quote(staff.STAFF.staffCode)} AS staff_id
        FROM attendance_permission_requests p

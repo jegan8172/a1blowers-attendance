@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import 'admin_appearance.dart';
 import '../routing/app_router.dart';
+import '../shared/widgets/admin_pattern_background.dart';
 
 class AdminPortalApp extends StatefulWidget {
   const AdminPortalApp({super.key});
@@ -18,7 +19,7 @@ class _AdminPortalAppState extends State<AdminPortalApp> {
   @override
   void initState() {
     super.initState();
-    _appearance = AdminAppearanceController()..load();
+    _appearance = AdminAppearanceController();
   }
 
   @override
@@ -34,6 +35,8 @@ class _AdminPortalAppState extends State<AdminPortalApp> {
       builder: (_, appearance, __) => MaterialApp(
         title: 'A1 Blowers HRMS — Admin',
         theme: _themeFor(appearance),
+        builder: (context, child) => ColoredBox(color: appearance.background,
+          child: AdminPatternBackground(global: true, child: child ?? const SizedBox.shrink())),
         initialRoute: '/admin/dashboard',
         routes: AppRouter.routes,
         debugShowCheckedModeBanner: false,
@@ -45,52 +48,53 @@ class _AdminPortalAppState extends State<AdminPortalApp> {
     final scheme = ColorScheme.fromSeed(
       seedColor: appearance.accent,
       primary: appearance.accent,
-      brightness: Brightness.light,
+      brightness: appearance.brightness,
     ).copyWith(
-      surface: Colors.white,
-      surfaceContainerHighest: const Color(0xFFF9FBFE),
-      onSurface: const Color(0xFF102653),
-      onSurfaceVariant: const Color(0xFF647493),
-      outline: const Color(0xFFE1E7F0),
+      surface: appearance.card,
+      surfaceContainerHighest: Color.alphaBlend(appearance.text.withValues(alpha: .04), appearance.card),
+      onSurface: appearance.text,
+      onSurfaceVariant: appearance.text.withValues(alpha: .72),
+      outline: appearance.border,
     );
     final base = HrmsTheme.light();
     return base.copyWith(
       colorScheme: scheme,
-      scaffoldBackgroundColor: const Color(0xFFF7F9FD),
+      textTheme: base.textTheme.apply(bodyColor: appearance.text, displayColor: appearance.text),
+      scaffoldBackgroundColor: Colors.transparent,
       appBarTheme: base.appBarTheme.copyWith(
-        backgroundColor: Colors.white,
-        foregroundColor: const Color(0xFF102653),
+        backgroundColor: appearance.card,
+        foregroundColor: appearance.text,
       ),
       cardTheme: base.cardTheme.copyWith(
-        color: Colors.white,
+        color: appearance.card,
       ),
       dividerTheme: DividerThemeData(
-        color: const Color(0xFFE1E7F0),
+        color: appearance.border,
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: Colors.white,
+        fillColor: appearance.card,
         hintStyle: TextStyle(
-          color: const Color(0xFF647493),
+          color: appearance.text.withValues(alpha: .72),
         ),
         labelStyle: TextStyle(
-          color: const Color(0xFF647493),
+          color: appearance.text.withValues(alpha: .72),
         ),
         enabledBorder: OutlineInputBorder(
           borderSide: BorderSide(
-            color: const Color(0xFFE1E7F0),
+            color: appearance.border,
           ),
         ),
       ),
       dialogTheme: base.dialogTheme.copyWith(
-        backgroundColor: Colors.white,
+        backgroundColor: appearance.card,
         titleTextStyle: TextStyle(
-          color: const Color(0xFF102653),
+          color: appearance.text,
           fontWeight: FontWeight.w700,
           fontSize: 20,
         ),
         contentTextStyle: TextStyle(
-          color: const Color(0xFF647493),
+          color: appearance.text.withValues(alpha: .72),
         ),
       ),
       filledButtonTheme: FilledButtonThemeData(

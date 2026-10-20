@@ -17,6 +17,8 @@ router.get('/dashboard', function (req, res, next) {
   return attendance.employeeDashboard(req, res, next);
 });
 router.get('/clock-logs', attendance.requireAdmin, attendance.clockLogs);
+router.get('/clock-logs/:id/remarks', attendance.requireAdmin, attendance.clockLogRemarks);
+router.post('/clock-logs/:id/remarks', attendance.requireAdmin, attendance.addClockLogRemark);
 router.get('/overtime/my', attendance.myOvertime);
 router.get('/overtime/:employeeId/history', attendance.requireAdmin, attendance.overtimeHistory);
 router.get('/export', attendance.requireAdmin, attendance.exportCsv);

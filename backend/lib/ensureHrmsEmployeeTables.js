@@ -22,6 +22,11 @@ async function ensureHrmsEmployeeTables(db) {
   const sql = fs.readFileSync(sqlPath, 'utf8');
   await db.query(sql);
   try {
+    await db.query('ALTER TABLE hrms_employee_profiles ADD COLUMN phone VARCHAR(32) NULL AFTER email');
+  } catch (error) {
+    if (error.code !== 'ER_DUP_FIELDNAME') throw error;
+  }
+  try {
     await db.query(
       'ALTER TABLE hrms_employee_profiles ADD COLUMN field_tracking_enabled TINYINT(1) NOT NULL DEFAULT 0 AFTER employment_status'
     );
