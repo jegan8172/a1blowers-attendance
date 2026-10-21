@@ -1486,17 +1486,9 @@ class MobileEmployeeHeader extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Row(
-        children: [
-          Image.asset('assets/images/godigital_logo.png', height: 68),
-          const Spacer(),
-          const EmployeeNotificationButton(compact: true),
-          const SizedBox(width: 12),
-          const EmployeeProfileMenu(radius: 25),
-        ],
-      ),
+      // EmployeeScaffold already provides the logo, notifications and profile.
+      // Page content only needs the optional greeting.
       if (showGreeting) ...[
-        const SizedBox(height: 22),
         Consumer<AuthService>(
           builder: (_, auth, __) {
             final name =
