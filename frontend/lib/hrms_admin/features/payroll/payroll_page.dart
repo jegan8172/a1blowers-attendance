@@ -278,6 +278,7 @@ class _PayrollPageState extends State<PayrollPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.inSettingsDialog) return const SizedBox.shrink();
     final mobile = MediaQuery.sizeOf(context).width < 600;
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,

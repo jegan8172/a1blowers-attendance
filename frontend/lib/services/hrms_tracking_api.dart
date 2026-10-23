@@ -1,12 +1,46 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api_config.dart';
 import 'auth_storage.dart';
 
 class HrmsTrackingApi {
   HrmsTrackingApi._();
+
+  static Future<List<Map<String, dynamic>>> trackingTemplates() async {
+    final response = await http.get(Uri.parse('${ApiConfig.baseUrl}/hrms/tracking/templates'), headers: await _headers());
+    final data = _decode(response);
+    return (data['items'] as List? ?? []).whereType<Map>().map((e) => Map<String,dynamic>.from(e)).toList();
+  }
+
+  static Future<void> createTrackingTemplate(Map<String,dynamic> values) async {
+    final response = await http.post(Uri.parse('${ApiConfig.baseUrl}/hrms/tracking/templates'), headers: await _headers(), body: jsonEncode(values)); _decode(response);
+  }
+  static Future<void> updateTrackingTemplate(int id, Map<String,dynamic> values) async {
+    final response = await http.put(Uri.parse('${ApiConfig.baseUrl}/hrms/tracking/templates/$id'), headers: await _headers(), body: jsonEncode(values)); _decode(response);
+  }
+  static Future<void> archiveTrackingTemplate(int id) async {
+    final response = await http.patch(Uri.parse('${ApiConfig.baseUrl}/hrms/tracking/templates/$id/archive'), headers: await _headers()); _decode(response);
+  }
+  static Future<void> restoreTrackingTemplate(int id) async {
+    final response = await http.patch(Uri.parse('${ApiConfig.baseUrl}/hrms/tracking/templates/$id/restore'), headers: await _headers()); _decode(response);
+  }
+  static Future<void> deleteTrackingTemplate(int id) async {
+    final response = await http.delete(Uri.parse('${ApiConfig.baseUrl}/hrms/tracking/templates/$id'), headers: await _headers()); _decode(response);
+  }
+
+  static Future<List<Map<String, dynamic>>> officeLocations() async {
+    final response = await http.get(Uri.parse('${ApiConfig.baseUrl}/hrms/tracking/office-locations'), headers: await _headers());
+    final data = _decode(response);
+    return (data['items'] as List? ?? []).whereType<Map>().map((e) => Map<String,dynamic>.from(e)).toList();
+  }
+  static Future<void> createOfficeLocation(Map<String,dynamic> values) async { final r=await http.post(Uri.parse('${ApiConfig.baseUrl}/hrms/tracking/office-locations'),headers:await _headers(),body:jsonEncode(values)); _decode(r); }
+  static Future<void> updateOfficeLocation(int id, Map<String,dynamic> values) async { final r=await http.put(Uri.parse('${ApiConfig.baseUrl}/hrms/tracking/office-locations/$id'),headers:await _headers(),body:jsonEncode(values)); _decode(r); }
+  static Future<void> archiveOfficeLocation(int id) async { final r=await http.patch(Uri.parse('${ApiConfig.baseUrl}/hrms/tracking/office-locations/$id/archive'),headers:await _headers()); _decode(r); }
+  static Future<void> restoreOfficeLocation(int id) async { final r=await http.patch(Uri.parse('${ApiConfig.baseUrl}/hrms/tracking/office-locations/$id/restore'),headers:await _headers()); _decode(r); }
+  static Future<void> deleteOfficeLocation(int id) async { final r=await http.delete(Uri.parse('${ApiConfig.baseUrl}/hrms/tracking/office-locations/$id'),headers:await _headers()); _decode(r); }
 
   static Future<Map<String, dynamic>?> myHomeLocation() async {
     final response = await http
@@ -91,7 +125,7 @@ class HrmsTrackingApi {
     _decode(response);
   }
 
-  static Future<Map<String, dynamic>> updateOfficeLocation({
+  static Future<Map<String, dynamic>> updateLegacyOfficeLocation({
     required String officeName,
     required String officeAddress,
     required double officeLatitude,
@@ -383,6 +417,36 @@ class HrmsTrackingApi {
     );
 
     _decode(response);
+  }
+
+  static Future<void> queueWaitingReason({
+    required int reasonId,
+    required String reason,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final pending = prefs.getStringList('pending_waiting_reasons') ?? <String>[];
+    final encoded = jsonEncode({'id': reasonId, 'reason': reason});
+    if (!pending.contains(encoded)) pending.add(encoded);
+    await prefs.setStringList('pending_waiting_reasons', pending);
+  }
+
+  static Future<void> flushQueuedWaitingReasons() async {
+    final prefs = await SharedPreferences.getInstance();
+    final pending = prefs.getStringList('pending_waiting_reasons') ?? <String>[];
+    if (pending.isEmpty) return;
+    final remaining = <String>[];
+    for (final item in pending) {
+      try {
+        final value = jsonDecode(item);
+        await submitWaitingReason(
+          reasonId: int.parse('${value['id']}'),
+          reason: '${value['reason']}',
+        );
+      } catch (_) {
+        remaining.add(item);
+      }
+    }
+    await prefs.setStringList('pending_waiting_reasons', remaining);
   }
 
   static Future<Map<String, dynamic>> trackingSettings() async {

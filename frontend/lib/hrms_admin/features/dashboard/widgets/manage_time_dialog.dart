@@ -143,12 +143,12 @@ class _ManageTimeDialogState extends State<ManageTimeDialog> {
     return Dialog(
       backgroundColor: Colors.white,
       surfaceTintColor: Colors.white,
-      insetPadding: EdgeInsets.symmetric(horizontal: compact ? 16 : 24),
+      insetPadding: EdgeInsets.symmetric(horizontal: compact ? 16 : 80, vertical: 24),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 620),
+        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 760),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(26, 22, 26, 20),
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
           child: _loading
               ? const SizedBox(
                   height: 250,

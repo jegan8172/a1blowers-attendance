@@ -12,6 +12,143 @@ function fail(res, status, message) {
   return res.status(status).json({ success: false, message: message });
 }
 
+function officeDistance(lat1, lon1, lat2, lon2) {
+  const r = 6371000, rad = (v) => v * Math.PI / 180;
+  const dLat = rad(lat2-lat1), dLon = rad(lon2-lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(rad(lat1))*Math.cos(rad(lat2))*Math.sin(dLon/2)**2;
+  return r * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+async function activeOfficeMatch(latitude, longitude) {
+  let rows;
+  try { [rows] = await db.query('SELECT id,name,latitude,longitude,radius_meters FROM hrms_office_locations WHERE is_active=1'); }
+  catch (e) { if (e.code === 'ER_NO_SUCH_TABLE') return null; throw e; }
+  const matches = rows.map((o) => ({ ...o, distance: officeDistance(latitude, longitude, Number(o.latitude), Number(o.longitude)) }))
+    .filter((o) => o.distance <= Number(o.radius_meters) + 30)
+    .sort((a,b) => a.distance-b.distance);
+  return matches[0] || null;
+}
+
+async function officeLocations(req, res) {
+  try { const [items] = await db.query('SELECT * FROM hrms_office_locations ORDER BY is_active DESC, name'); return ok(res, { items }); }
+  catch (e) { return fail(res, 500, e.message); }
+}
+
+function officeValues(body) {
+  const name = String(body.name || '').trim(), address = String(body.address || '').trim();
+  const latitude = Number(body.latitude), longitude = Number(body.longitude), radiusMeters = Number(body.radiusMeters ?? body.radius_meters);
+  if (!name || name.length > 120 || !address || address.length > 500) throw new Error('Office name and address are required.');
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) throw new Error('Valid latitude and longitude are required.');
+  if (!Number.isInteger(radiusMeters) || radiusMeters < 1 || radiusMeters > 10000) throw new Error('Radius must be between 1 and 10000 metres.');
+  return { name, address, latitude, longitude, radiusMeters };
+}
+
+async function createOfficeLocation(req,res) { try { const v=officeValues(req.body||{}); const [r]=await db.query('INSERT INTO hrms_office_locations (name,address,latitude,longitude,radius_meters,created_by,updated_by) VALUES (?,?,?,?,?,?,?)',[v.name,v.address,v.latitude,v.longitude,v.radiusMeters,req.user.id,req.user.id]); return ok(res,{id:r.insertId},'Office location created'); } catch(e){ return fail(res, e.code==='ER_DUP_ENTRY'?409:400,e.message); } }
+async function updateOfficeLocation(req,res) { try { const id=Number(req.params.id), v=officeValues(req.body||{}); const [r]=await db.query('UPDATE hrms_office_locations SET name=?,address=?,latitude=?,longitude=?,radius_meters=?,updated_by=? WHERE id=?',[v.name,v.address,v.latitude,v.longitude,v.radiusMeters,req.user.id,id]); if(!r.affectedRows)return fail(res,404,'Office location not found'); return ok(res,{id},'Office location updated'); } catch(e){ return fail(res,400,e.message); } }
+async function archiveOfficeLocation(req,res) { try { const id=Number(req.params.id); const [r]=await db.query('UPDATE hrms_office_locations SET is_active=0,updated_by=? WHERE id=?',[req.user.id,id]); if(!r.affectedRows)return fail(res,404,'Office location not found'); return ok(res,{id},'Office location archived'); } catch(e){ return fail(res,400,e.message); } }
+async function restoreOfficeLocation(req,res) { try { const id=Number(req.params.id); const [r]=await db.query('UPDATE hrms_office_locations SET is_active=1,updated_by=? WHERE id=?',[req.user.id,id]); if(!r.affectedRows)return fail(res,404,'Office location not found'); return ok(res,{id},'Office location restored'); } catch(e){ return fail(res,400,e.message); } }
+async function deleteOfficeLocation(req,res) {
+  try {
+    const id = Number(req.params.id);
+    const [[active]] = await db.query('SELECT COUNT(*) AS count FROM hrms_tracking_mode_audit WHERE office_location_id=? AND created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)', [id]);
+    if (Number(active.count) > 0) return fail(res, 409, 'This office location is used by recent tracking records. Archive it instead of deleting it.');
+    const [result] = await db.query('DELETE FROM hrms_office_locations WHERE id=?', [id]);
+    if (!result.affectedRows) return fail(res, 404, 'Office location not found');
+    return ok(res, { id }, 'Office location deleted');
+  } catch (e) { return fail(res, 400, e.message); }
+}
+
+function templateValues(body) {
+  const values = {
+    name: String(body.name || '').trim(),
+    fieldWaitingMinutes: Number(body.fieldWaitingMinutes ?? body.field_waiting_minutes),
+    stationaryRadiusMeters: Number(body.stationaryRadiusMeters ?? body.stationary_radius_meters),
+    fieldPingIntervalMinutes: Number(body.fieldPingIntervalMinutes ?? body.field_ping_interval_minutes),
+    popupAlertRepeatSeconds: Number(body.popupAlertRepeatSeconds ?? body.popup_alert_repeat_seconds),
+  };
+  if (!values.name || values.name.length > 120) throw new Error('Template name is required (maximum 120 characters).');
+  if (![values.fieldWaitingMinutes, values.fieldPingIntervalMinutes].every(Number.isInteger) || values.fieldWaitingMinutes < 1 || values.fieldWaitingMinutes > 1440 || values.fieldPingIntervalMinutes < 1 || values.fieldPingIntervalMinutes > 1440) throw new Error('Waiting and GPS intervals must be between 1 and 1440 minutes.');
+  if (!Number.isInteger(values.stationaryRadiusMeters) || values.stationaryRadiusMeters < 1 || values.stationaryRadiusMeters > 10000) throw new Error('Stationary radius must be between 1 and 10000 metres.');
+  if (!Number.isInteger(values.popupAlertRepeatSeconds) || values.popupAlertRepeatSeconds < 2 || values.popupAlertRepeatSeconds > 3600) throw new Error('Popup repeat must be between 2 and 3600 seconds.');
+  return values;
+}
+
+async function trackingTemplates(req, res) {
+  try {
+    const [rows] = await db.query(`SELECT t.*, COUNT(p.id) AS assigned_employee_count FROM hrms_tracking_templates t LEFT JOIN hrms_employee_profiles p ON p.tracking_template_id=t.id AND p.work_mode IN ('Field','Hybrid') GROUP BY t.id ORDER BY t.is_active DESC, t.name`);
+    return ok(res, { items: rows });
+  } catch (error) { return fail(res, 500, error.message); }
+}
+
+async function createTrackingTemplate(req, res) {
+  try {
+    const v = templateValues(req.body || {});
+    const [result] = await db.query(`INSERT INTO hrms_tracking_templates (name,field_waiting_minutes,stationary_radius_meters,field_ping_interval_minutes,popup_alert_repeat_seconds,created_by,updated_by) VALUES (?,?,?,?,?,?,?)`, [v.name,v.fieldWaitingMinutes,v.stationaryRadiusMeters,v.fieldPingIntervalMinutes,v.popupAlertRepeatSeconds,req.user.id,req.user.id]);
+    await db.query('INSERT INTO hrms_tracking_template_audit (action_type,admin_id,template_id,new_values) VALUES (?,?,?,?)', ['create',req.user.id,result.insertId,JSON.stringify(v)]);
+    return ok(res, { id: result.insertId }, 'Tracking template created');
+  } catch (error) { return fail(res, error.code === 'ER_DUP_ENTRY' ? 409 : 400, error.message); }
+}
+
+async function updateTrackingTemplate(req, res) {
+  try {
+    const id = Number(req.params.id); const v = templateValues(req.body || {});
+    const [before] = await db.query('SELECT * FROM hrms_tracking_templates WHERE id=?', [id]);
+    if (!before.length) return fail(res, 404, 'Tracking template not found');
+    await db.query(`UPDATE hrms_tracking_templates SET name=?,field_waiting_minutes=?,stationary_radius_meters=?,field_ping_interval_minutes=?,popup_alert_repeat_seconds=?,updated_by=? WHERE id=?`, [v.name,v.fieldWaitingMinutes,v.stationaryRadiusMeters,v.fieldPingIntervalMinutes,v.popupAlertRepeatSeconds,req.user.id,id]);
+    await db.query('INSERT INTO hrms_tracking_template_audit (action_type,admin_id,template_id,old_values,new_values) VALUES (?,?,?,?,?)', ['update',req.user.id,id,JSON.stringify(before[0]),JSON.stringify(v)]);
+    return ok(res, { id }, 'Tracking template updated');
+  } catch (error) { return fail(res, error.code === 'ER_DUP_ENTRY' ? 409 : 400, error.message); }
+}
+
+async function archiveTrackingTemplate(req, res) {
+  try {
+    const id = Number(req.params.id); const [rows] = await db.query('SELECT * FROM hrms_tracking_templates WHERE id=?', [id]);
+    if (!rows.length) return fail(res, 404, 'Tracking template not found');
+    await db.query('UPDATE hrms_tracking_templates SET is_active=0,updated_by=? WHERE id=?', [req.user.id,id]);
+    await db.query('INSERT INTO hrms_tracking_template_audit (action_type,admin_id,template_id,old_values,new_values) VALUES (?,?,?,?,?)', ['archive',req.user.id,id,JSON.stringify(rows[0]),JSON.stringify({is_active:0})]);
+    return ok(res, { id }, 'Tracking template archived');
+  } catch (error) { return fail(res, 400, error.message); }
+}
+
+async function restoreTrackingTemplate(req, res) {
+  try {
+    const id = Number(req.params.id);
+    const [rows] = await db.query('SELECT * FROM hrms_tracking_templates WHERE id=?', [id]);
+    if (!rows.length) return fail(res, 404, 'Tracking template not found');
+    await db.query('UPDATE hrms_tracking_templates SET is_active=1, updated_by=? WHERE id=?', [req.user.id, id]);
+    await db.query('INSERT INTO hrms_tracking_template_audit (action_type,admin_id,template_id,old_values,new_values) VALUES (?,?,?,?,?)', ['restore', req.user.id, id, JSON.stringify({is_active: rows[0].is_active}), JSON.stringify({is_active: 1})]);
+    return ok(res, { id }, 'Tracking template restored');
+  } catch (error) { return fail(res, 400, error.message); }
+}
+
+async function deleteTrackingTemplate(req, res) {
+  try {
+    const id = Number(req.params.id);
+    const [assigned] = await db.query('SELECT COUNT(*) AS count FROM hrms_employee_profiles WHERE tracking_template_id=?', [id]);
+    if (Number(assigned[0].count) > 0) return fail(res, 409, 'This template is used by other employees. Reassign them before deleting it.');
+    const [result] = await db.query('DELETE FROM hrms_tracking_templates WHERE id=? AND name<>\'Default\'', [id]);
+    if (!result.affectedRows) return fail(res, 400, 'Default or missing template cannot be deleted.');
+    await db.query('INSERT INTO hrms_tracking_template_audit (action_type,admin_id,template_id,new_values) VALUES (?,?,?,?)', ['delete', req.user.id, id, JSON.stringify({deleted: true})]);
+    return ok(res, { id }, 'Tracking template deleted');
+  } catch (error) { return fail(res, 400, error.message); }
+}
+
+async function assignTrackingTemplate(req, res) {
+  try {
+    const employeeId = Number(req.params.employeeId); const templateId = req.body && req.body.templateId == null ? null : Number(req.body.templateId);
+    const [employee] = await db.query('SELECT id,employee_user_id,work_mode,tracking_template_id FROM hrms_employee_profiles WHERE id=?', [employeeId]);
+    if (!employee.length) return fail(res, 404, 'Employee not found');
+    if (['Field','Hybrid'].includes(employee[0].work_mode)) {
+      if (!templateId) return fail(res, 400, 'A tracking template is required for Field and Hybrid employees');
+      const [t] = await db.query('SELECT id FROM hrms_tracking_templates WHERE id=? AND is_active=1', [templateId]);
+      if (!t.length) return fail(res, 400, 'Select an active tracking template');
+    }
+    await db.query('UPDATE hrms_employee_profiles SET tracking_template_id=? WHERE id=?', [templateId || null, employeeId]);
+    await db.query('INSERT INTO hrms_tracking_template_audit (action_type,admin_id,employee_id,old_values,new_values) VALUES (?,?,?,?,?)', ['assign',req.user.id,employeeId,JSON.stringify({trackingTemplateId:employee[0].tracking_template_id}),JSON.stringify({trackingTemplateId:templateId || null})]);
+    return ok(res, { employeeId, trackingTemplateId: templateId || null }, 'Tracking template assigned');
+  } catch (error) { return fail(res, 400, error.message); }
+}
+
 function requireAdmin(req, res, next) {
   const userType = String((req.user && req.user.userType) || '').toLowerCase();
   if (userType !== 'admin') {
@@ -205,7 +342,10 @@ const ACTIVE_WINDOW_MINUTES = 15;
 // accuracy indoors. Keep a generous ceiling so legitimate tracking can start;
 // mock locations and impossible travel jumps are still rejected separately.
 const MAX_LOCATION_ACCURACY_METERS = 2000;
-const MAX_TRAVEL_SPEED_KMPH = 160;
+// Chrome DevTools can teleport a simulated GPS fix between locations. Keep
+// the production anti-jump guard strict, while allowing local development
+// sensor testing to exercise office/field transitions without being rejected.
+const MAX_TRAVEL_SPEED_KMPH = process.env.NODE_ENV === 'production' ? 160 : 1000;
 
 function distanceMeters(aLat, aLng, bLat, bLng) {
   const radians = Math.PI / 180;
@@ -531,7 +671,7 @@ function distanceMeters(lat1, lng1, lat2, lng2) {
 
 async function detectFieldWaitingTime(employeeUserId, latitude, longitude) {
   const [sessions] = await db.query(
-    `SELECT id, started_at
+    `SELECT id, started_at, field_started_at, session_mode, field_waiting_minutes AS session_waiting_minutes, stationary_radius_meters AS session_radius_meters
      FROM hrms_field_tracking_sessions
      WHERE employee_user_id = ? AND is_active = 1
      ORDER BY started_at DESC
@@ -542,6 +682,7 @@ async function detectFieldWaitingTime(employeeUserId, latitude, longitude) {
   if (!sessions.length) return;
 
   const session = sessions[0];
+  if (session.session_mode && session.session_mode !== 'field_tracking') return;
 
   const [settingsRows] = await db.query(
     `SELECT field_waiting_minutes, stationary_radius_meters
@@ -551,10 +692,10 @@ async function detectFieldWaitingTime(employeeUserId, latitude, longitude) {
 
   if (!settingsRows.length) return;
 
-  const waitingMinutes = Number(settingsRows[0].field_waiting_minutes || 60);
+  const waitingMinutes = Number(session.session_waiting_minutes || settingsRows[0].field_waiting_minutes || 60);
 
   const stationaryRadius = Number(
-    settingsRows[0].stationary_radius_meters || 50
+    session.session_radius_meters || settingsRows[0].stationary_radius_meters || 50
   );
 
   const [existingAlerts] = await db.query(
@@ -575,7 +716,7 @@ async function detectFieldWaitingTime(employeeUserId, latitude, longitude) {
      WHERE employee_user_id = ?
        AND recorded_at >= ?
      ORDER BY recorded_at ASC`,
-    [employeeUserId, session.started_at]
+    [employeeUserId, session.field_started_at || session.started_at]
   );
 
   if (pings.length < 2) return;
@@ -662,6 +803,22 @@ async function ping(req, res) {
     const isMocked = req.body.isMocked === true;
     if (!employeeUserId) return fail(res, 401, 'Unauthorized');
     await validateTrackingLocation(employeeUserId, latitude, longitude, accuracy, isMocked);
+    const [sessions] = await db.query('SELECT id,session_mode,outside_fix_count FROM hrms_field_tracking_sessions WHERE employee_user_id=? AND is_active=1 ORDER BY id DESC LIMIT 1',[employeeUserId]);
+    const activeSession = sessions[0];
+    const office = await activeOfficeMatch(latitude, longitude);
+    if (activeSession) {
+      const previousMode = activeSession.session_mode || 'field_tracking';
+      if (office) {
+        await db.query(`UPDATE hrms_field_tracking_sessions SET session_mode='office_tracking', outside_fix_count=0, office_started_at=IF(session_mode='office_tracking',office_started_at,CURRENT_TIMESTAMP), last_mode_changed_at=IF(session_mode='office_tracking',last_mode_changed_at,CURRENT_TIMESTAMP) WHERE id=?`,[activeSession.id]);
+        if (previousMode !== 'office_tracking') await db.query('INSERT INTO hrms_tracking_mode_audit (employee_user_id,field_session_id,previous_mode,new_mode,latitude,longitude,office_location_id,reason) VALUES (?,?,?,?,?,?,?,?)',[employeeUserId,activeSession.id,previousMode,'office_tracking',latitude,longitude,office.id,'Returned inside active office']);
+      } else {
+        const count = Number(activeSession.outside_fix_count || 0) + 1;
+        if (previousMode === 'office_tracking' && count >= 3) {
+          await db.query(`UPDATE hrms_field_tracking_sessions SET session_mode='field_tracking', outside_fix_count=?, field_started_at=CURRENT_TIMESTAMP, last_mode_changed_at=CURRENT_TIMESTAMP WHERE id=?`,[count,activeSession.id]);
+          await db.query('INSERT INTO hrms_tracking_mode_audit (employee_user_id,field_session_id,previous_mode,new_mode,latitude,longitude,reason) VALUES (?,?,?,?,?,?,?)',[employeeUserId,activeSession.id,previousMode,'field_tracking',latitude,longitude,'Three consecutive outside-office fixes']);
+        } else await db.query('UPDATE hrms_field_tracking_sessions SET outside_fix_count=? WHERE id=?',[count,activeSession.id]);
+      }
+    }
     const [result] = await db.query(
       `INSERT INTO hrms_location_pings (employee_user_id, latitude, longitude, accuracy_meters)
        VALUES (?, ?, ?, ?)`,
@@ -1355,6 +1512,7 @@ async function getTrackingPermissions(req, res) {
     const workMode = String((profile && profile.work_mode) || 'Office');
     return ok(res, {
       fieldTrackingEnabled: ['Field', 'Hybrid'].includes(workMode),
+      workMode,
       homeLocationEnabled: Number(settings && settings.home_tracking_enabled) === 1,
     });
   } catch (error) {
@@ -1369,7 +1527,7 @@ async function getFieldSessionSummary(req, res) {
     if (!employeeUserId) return fail(res, 401, 'Unauthorized');
 
     const [sessions] = await db.query(
-      `SELECT id, started_at
+      `SELECT id, started_at, session_mode
        FROM hrms_field_tracking_sessions
        WHERE employee_user_id = ? AND is_active = 1
        ORDER BY started_at DESC LIMIT 1`,
@@ -1415,6 +1573,7 @@ async function getFieldSessionSummary(req, res) {
 
     return ok(res, {
       hasSession: true,
+      sessionMode: session.session_mode || 'field_tracking',
       durationSeconds,
       distanceKm,
       averageSpeedKmph,
@@ -1497,7 +1656,7 @@ async function startFieldTracking(req, res) {
     await validateTrackingLocation(employeeUserId, latitude, longitude, accuracy, isMocked);
 
     const [profiles] = await db.query(
-      `SELECT work_mode
+      `SELECT work_mode, tracking_template_id
        FROM hrms_employee_profiles
        WHERE employee_user_id = ?`,
       [employeeUserId]
@@ -1506,6 +1665,10 @@ async function startFieldTracking(req, res) {
     if (!profiles.length || !['Field', 'Hybrid'].includes(profiles[0].work_mode)) {
       return fail(res, 403, 'Live tracking is available only for Field or Hybrid employees');
     }
+    if (!profiles[0].tracking_template_id) return fail(res, 400, 'Ask Admin to assign a live tracking template before starting tracking.');
+    const [templates] = await db.query('SELECT * FROM hrms_tracking_templates WHERE id=? AND is_active=1', [profiles[0].tracking_template_id]);
+    if (!templates.length) return fail(res, 400, 'Ask Admin to assign an active live tracking template before starting tracking.');
+    const template = templates[0];
 
     const [activeSessions] = await db.query(
       `SELECT id
@@ -1523,11 +1686,13 @@ async function startFieldTracking(req, res) {
       );
     }
 
+    const office = await activeOfficeMatch(latitude, longitude);
+    const sessionMode = office ? 'office_tracking' : 'field_tracking';
     const [session] = await db.query(
       `INSERT INTO hrms_field_tracking_sessions
-        (employee_user_id, start_latitude, start_longitude)
-       VALUES (?, ?, ?)`,
-      [employeeUserId, latitude, longitude]
+        (employee_user_id, start_latitude, start_longitude, tracking_template_id, template_name, field_waiting_minutes, stationary_radius_meters, field_ping_interval_minutes, popup_alert_repeat_seconds, session_mode, outside_fix_count, office_started_at, field_started_at, last_mode_changed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, IF(?='office_tracking',CURRENT_TIMESTAMP,NULL), IF(?='field_tracking',CURRENT_TIMESTAMP,NULL), CURRENT_TIMESTAMP)`,
+      [employeeUserId, latitude, longitude, template.id, template.name, template.field_waiting_minutes, template.stationary_radius_meters, template.field_ping_interval_minutes, template.popup_alert_repeat_seconds, sessionMode, office ? 0 : 1, sessionMode, sessionMode]
     );
 
     await db.query(
@@ -1548,7 +1713,7 @@ async function startFieldTracking(req, res) {
 
     return ok(
       res,
-      { sessionId: session.insertId, isActive: true },
+      { sessionId: session.insertId, isActive: true, sessionMode, template: { id: template.id, name: template.name, fieldWaitingMinutes: template.field_waiting_minutes, stationaryRadiusMeters: template.stationary_radius_meters, fieldPingIntervalMinutes: template.field_ping_interval_minutes, popupAlertRepeatSeconds: template.popup_alert_repeat_seconds } },
       'Field live tracking started'
     );
   } catch (error) {
@@ -1705,6 +1870,9 @@ async function submitWaitingReason(req, res) {
 
     if (!reasonId || !reason) {
       return fail(res, 400, 'Waiting reason is required');
+    }
+    if (reason.length > 500) {
+      return fail(res, 400, 'Waiting reason must be 500 characters or less');
     }
 
     const [result] = await db.query(
@@ -1863,4 +2031,17 @@ reviewFieldWaitingReason,
   addTrackingComment,
   myTrackingComments,
   adminTrackingComments,
+  trackingTemplates,
+  createTrackingTemplate,
+  updateTrackingTemplate,
+  archiveTrackingTemplate,
+  restoreTrackingTemplate,
+  deleteTrackingTemplate,
+  assignTrackingTemplate,
+  officeLocations,
+  createOfficeLocation,
+  updateOfficeLocation,
+  archiveOfficeLocation,
+  restoreOfficeLocation,
+  deleteOfficeLocation,
 };

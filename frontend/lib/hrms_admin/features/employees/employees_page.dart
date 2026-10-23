@@ -15,6 +15,7 @@ import '../../shared/theme/admin_surface_palette.dart';
 import '../../../services/hrms_employees_api.dart';
 import '../../../services/api_config.dart';
 import '../../../services/auth_storage.dart';
+import '../../../services/hrms_tracking_api.dart';
 
 abstract final class HrmsColors {
   static const blue = Color(0xFF1769E0);
@@ -191,6 +192,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.inSettingsDialog) return const SizedBox.shrink();
     final palette = AdminSurfacePalette.of(context);
     final mobile = MediaQuery.sizeOf(context).width < 600;
     final drawerWidth = MediaQuery.sizeOf(context).width < 1500 ? 390.0 : 450.0;
@@ -648,6 +650,8 @@ class _EmployeesPageState extends State<EmployeesPage> {
             ? availableDepartments.first
             : 'Engineering');
     var selectedMode = employee?.workMode ?? 'Office';
+    final templates = await HrmsTrackingApi.trackingTemplates();
+    var selectedTrackingTemplateId = employee?.trackingTemplateId;
     var selectedEmployeeType = employee?.employeeType ?? 'Employee';
     var overtimeEligible = employee?.overtimeEligible ?? false;
     var selectedGender = employee?.gender ?? 'Male';
@@ -667,6 +671,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
       'employeeCode': id.text.trim(),
       'department': selectedDepartment,
       'workMode': selectedMode,
+      if (selectedMode == 'Field' || selectedMode == 'Hybrid') 'trackingTemplateId': selectedTrackingTemplateId,
       'employeeType': selectedEmployeeType,
       'overtimeEligible': overtimeEligible,
       'gender': selectedGender,
@@ -851,7 +856,17 @@ class _EmployeesPageState extends State<EmployeesPage> {
                       'Office',
                       'Hybrid',
                       'Field',
-                    ], (value) => setDialogState(() => selectedMode = value!)),
+                    ], (value) => setDialogState(() { selectedMode = value!; if (selectedMode == 'Office' || selectedMode == 'Home') selectedTrackingTemplateId = null; })),
+                    if (selectedMode == 'Field' || selectedMode == 'Hybrid') ...[
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<int>(
+                        value: templates.any((t) => int.tryParse('${t['id']}') == selectedTrackingTemplateId) ? selectedTrackingTemplateId : null,
+                        decoration: const InputDecoration(labelText: 'Live tracking template', border: OutlineInputBorder()),
+                        items: templates.where((t) => t['is_active'] == 1 || t['is_active'] == true).map((t) => DropdownMenuItem<int>(value: int.parse('${t['id']}'), child: Text('${t['name']}'))).toList(),
+                        onChanged: (value) => setDialogState(() => selectedTrackingTemplateId = value),
+                        validator: (value) => value == null ? 'Select a tracking template' : null,
+                      ),
+                    ],
                     const SizedBox(height: 12),
                     _formDropdown(
                       'Employee type',
@@ -2329,7 +2344,7 @@ class _TableHeader extends StatelessWidget {
     height: 38,
     child: Row(
       children: [
-        for (final col in <(String, double)>[('#', 40), ('Employee Name', 155), ('Designation', 105), ('Department', 95), ('Contact', 75), ('Email', 130), ('Status', 70), ('Joining Date', 85), ('Actions', 120)])
+        for (final col in <(String, double)>[('#', 40), ('Employee Name', 155), ('Designation', 105), ('Department', 95), ('Contact', 75), ('Work Mode', 100), ('Status', 70), ('Joining Date', 85), ('Actions', 120)])
           _TableCell(width: col.$2 * scale, child: Center(child: Text(col.$1, textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: AdminSurfacePalette.of(context).text, fontSize: 12, fontWeight: FontWeight.w600)))),
       ],
     ),
@@ -2413,7 +2428,7 @@ class _EmployeeRow extends StatelessWidget {
         _TableCell(width: 105 * scale, child: Text(employee.designation, textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis, style: _cellStyle)),
         _TableCell(width: 95 * scale, child: Text(employee.department, textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis, style: _cellStyle)),
         _TableCell(width: 75 * scale, child: Text(employee.phone.isEmpty ? '—' : employee.phone, textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis, style: _cellStyle)),
-        _TableCell(width: 130 * scale, child: Text(employee.email.isEmpty ? '—' : employee.email, textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis, style: _cellStyle)),
+        _TableCell(width: 100 * scale, child: Text(employee.workMode, textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis, style: _cellStyle)),
         _TableCell(
           width: 70 * scale,
           child: Align(
@@ -3432,6 +3447,8 @@ class _Employee {
     this.weeklyOffTemplate,
     this.email,
     this.phone,
+    this.trackingTemplateId,
+    this.trackingTemplateName,
   );
   final int profileId;
   final String name,
@@ -3457,6 +3474,8 @@ class _Employee {
   final String weeklyOffTemplate;
   final String email;
   final String phone;
+  final int? trackingTemplateId;
+  final String? trackingTemplateName;
 
   factory _Employee.fromApi(Map<String, dynamic> json) {
     final profileId = json['id'] is int
@@ -3494,6 +3513,8 @@ class _Employee {
        (json['weeklyOffTemplate'] ?? 'Global Payroll Policy').toString(),
        (json['email'] ?? '').toString(),
        (json['phone'] ?? '').toString(),
+      json['trackingTemplateId'] is num ? (json['trackingTemplateId'] as num).toInt() : int.tryParse('${json['trackingTemplateId'] ?? ''}'),
+      json['trackingTemplateName']?.toString(),
     );
   }
 }

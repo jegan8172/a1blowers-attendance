@@ -98,6 +98,66 @@ async function ensureHrmsTrackingTables(db) {
     )
   `);
 
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS hrms_tracking_templates (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(120) NOT NULL,
+      field_waiting_minutes INT NOT NULL DEFAULT 60,
+      stationary_radius_meters INT NOT NULL DEFAULT 50,
+      field_ping_interval_minutes INT NOT NULL DEFAULT 15,
+      popup_alert_repeat_seconds INT NOT NULL DEFAULT 5,
+      is_active TINYINT(1) NOT NULL DEFAULT 1,
+      created_by INT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by INT NULL, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_tracking_template_name (name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS hrms_office_locations (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(120) NOT NULL,
+      address VARCHAR(500) NOT NULL,
+      latitude DECIMAL(10,7) NOT NULL,
+      longitude DECIMAL(10,7) NOT NULL,
+      radius_meters INT NOT NULL DEFAULT 100,
+      is_active TINYINT(1) NOT NULL DEFAULT 1,
+      created_by INT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by INT NULL, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_office_locations_active (is_active)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS hrms_tracking_mode_audit (
+      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      employee_user_id INT NOT NULL, field_session_id BIGINT UNSIGNED NOT NULL,
+      previous_mode VARCHAR(30) NULL, new_mode VARCHAR(30) NOT NULL,
+      latitude DECIMAL(10,7) NULL, longitude DECIMAL(10,7) NULL,
+      office_location_id INT NULL, reason VARCHAR(255) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_tracking_mode_audit_session (field_session_id, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  const [officeRows] = await db.query('SELECT id FROM hrms_office_locations LIMIT 1');
+  if (!officeRows.length) {
+    await db.query(`INSERT INTO hrms_office_locations (name,address,latitude,longitude,radius_meters,is_active)
+      SELECT office_name, office_address, office_latitude, office_longitude, office_radius_meters, 1
+      FROM hrms_tracking_settings WHERE id=1`);
+  }
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS hrms_tracking_template_audit (
+      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      action_type VARCHAR(40) NOT NULL,
+      admin_id INT NULL, employee_id INT NULL, template_id INT NULL,
+      old_values JSON NULL, new_values JSON NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_tracking_template_audit (template_id, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  const [profileColumns] = await db.query(`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='hrms_employee_profiles'`);
+  if (!profileColumns.some((c) => c.COLUMN_NAME === 'tracking_template_id')) {
+    await db.query('ALTER TABLE hrms_employee_profiles ADD COLUMN tracking_template_id INT NULL');
+  }
+
   // Existing installations predate Hybrid work mode. CREATE TABLE IF NOT
   // EXISTS cannot change an existing ENUM, so upgrade it explicitly.
   await db.query(
@@ -141,6 +201,29 @@ async function ensureHrmsTrackingTables(db) {
   if (!fieldSessionColumns.some((column) => column.COLUMN_NAME === 'stop_reason')) {
     await db.query('ALTER TABLE hrms_field_tracking_sessions ADD COLUMN stop_reason TEXT NULL');
   }
+  for (const [name, definition] of [
+    ['tracking_template_id', 'INT NULL'],
+    ['template_name', 'VARCHAR(120) NULL'],
+    ['field_waiting_minutes', 'INT NULL'],
+    ['stationary_radius_meters', 'INT NULL'],
+    ['field_ping_interval_minutes', 'INT NULL'],
+    ['popup_alert_repeat_seconds', 'INT NULL'],
+    ['session_mode', "VARCHAR(30) NOT NULL DEFAULT 'field_tracking'"],
+    ['outside_fix_count', 'INT NOT NULL DEFAULT 0'],
+    ['field_started_at', 'DATETIME NULL'],
+    ['office_started_at', 'DATETIME NULL'],
+    ['last_mode_changed_at', 'DATETIME NULL'],
+  ]) {
+    if (!fieldSessionColumns.some((c) => c.COLUMN_NAME === name)) {
+      await db.query(`ALTER TABLE hrms_field_tracking_sessions ADD COLUMN ${name} ${definition}`);
+    }
+  }
+  const [defaults] = await db.query('SELECT id FROM hrms_tracking_templates WHERE name = ? LIMIT 1', ['Default']);
+  if (!defaults.length) {
+    await db.query(`INSERT INTO hrms_tracking_templates (name, field_waiting_minutes, stationary_radius_meters, field_ping_interval_minutes, popup_alert_repeat_seconds)
+      SELECT 'Default', field_waiting_minutes, stationary_radius_meters, field_ping_interval_minutes, popup_alert_repeat_seconds FROM hrms_tracking_settings WHERE id = 1`);
+  }
+  await db.query(`UPDATE hrms_employee_profiles p JOIN hrms_tracking_templates t ON t.name='Default' SET p.tracking_template_id=t.id WHERE p.work_mode IN ('Field','Hybrid') AND p.tracking_template_id IS NULL`);
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS hrms_field_waiting_reasons (

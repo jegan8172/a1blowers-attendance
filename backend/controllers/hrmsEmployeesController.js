@@ -126,6 +126,8 @@ function toUi(row) {
     username: row.username || '',
     passwordLastChangedAt: row.password_last_changed_at || null,
     employeeUserId: row.employee_user_id
+    ,trackingTemplateId: row.tracking_template_id || null
+    ,trackingTemplateName: row.tracking_template_name || null
   };
 }
 
@@ -168,8 +170,9 @@ async function list(req, res) {
          JOIN hrms_weekly_off_templates t ON t.id = a.template_id
         WHERE a.profile_id = p.id AND a.effective_from <= CURDATE()
         ORDER BY a.effective_from DESC, a.id DESC LIMIT 1) AS weekly_off_template,
-       (SELECT MAX(changed_at) FROM hrms_password_change_log l WHERE l.employee_user_id = p.employee_user_id) AS password_last_changed_at
-       FROM hrms_employee_profiles p INNER JOIN employee_users u ON u.id = p.employee_user_id ` + clause + ' ORDER BY p.full_name ASC LIMIT ? OFFSET ?',
+       (SELECT MAX(changed_at) FROM hrms_password_change_log l WHERE l.employee_user_id = p.employee_user_id) AS password_last_changed_at,
+       t.name AS tracking_template_name
+       FROM hrms_employee_profiles p INNER JOIN employee_users u ON u.id = p.employee_user_id LEFT JOIN hrms_tracking_templates t ON t.id=p.tracking_template_id ` + clause + ' ORDER BY p.full_name ASC LIMIT ? OFFSET ?',
       params.concat([limit, offset])
     );
     const [allRows] = await db.query("SELECT p.employment_status FROM hrms_employee_profiles p INNER JOIN employee_users u ON u.id = p.employee_user_id WHERE u.user_type = 'employee' AND u.is_active = 1");
@@ -345,6 +348,7 @@ async function create(req, res) {
     const code = String(body.employeeCode || body.employee_code || body.id || '').trim();
     const department = String(body.department || 'Engineering').trim();
     const workMode = String(body.workMode || body.work_mode || 'Office').trim();
+    const trackingTemplateId = ['Field','Hybrid'].includes(workMode) ? Number(body.trackingTemplateId || body.tracking_template_id) : null;
     const employeeType = String(body.employeeType || body.employee_type || 'Employee').trim();
     const overtimeEligible = body.overtimeEligible || body.overtime_eligible ? 1 : 0;
     if (!['Employee', 'Labour'].includes(employeeType)) return fail(res, 400, 'Employee type must be Employee or Labour');
@@ -360,6 +364,8 @@ async function create(req, res) {
     const password = String(body.password || '');
     const email = String(body.email || '').trim() || null;
     if (!name || !code) return fail(res, 400, 'name and employeeCode are required');
+    if (['Field','Hybrid'].includes(workMode) && !trackingTemplateId) return fail(res, 400, 'A live tracking template is required for Field and Hybrid employees');
+    if (trackingTemplateId) { const [t] = await db.query('SELECT id FROM hrms_tracking_templates WHERE id=? AND is_active=1', [trackingTemplateId]); if (!t.length) return fail(res, 400, 'Select an active live tracking template'); }
     if (!username || !email || password.length < 8) return fail(res, 400, 'username, email and a password of at least 8 characters are required');
 
     // Ensure this table before opening the transaction: CREATE/ALTER TABLE
@@ -376,6 +382,7 @@ async function create(req, res) {
         cycleStartDate: cycle.cycleStartDate, cycleEndDate: cycle.cycleEndDate,
         username: username, email: email, phone: phone, password: password, joiningDate: startDate,
         firstName: name.split(/\s+/)[0], lastName: name.split(/\s+/).slice(1).join(' '),
+        trackingTemplateId: trackingTemplateId,
         initials: name.split(/\s+/).map(function (part) { return part[0]; }).join('').slice(0, 3).toUpperCase()
       },
       adminId: req.user && req.user.id,
@@ -452,6 +459,7 @@ async function update(req, res) {
     const code = String(body.employeeCode || body.employee_code || body.id || '').trim();
     const department = String(body.department || '').trim();
     const workMode = String(body.workMode || body.work_mode || '').trim();
+    const trackingTemplateId = ['Field','Hybrid'].includes(workMode) ? Number(body.trackingTemplateId || body.tracking_template_id) : null;
     const employeeType = String(body.employeeType || body.employee_type || 'Employee').trim();
     const overtimeEligible = body.overtimeEligible || body.overtime_eligible ? 1 : 0;
     if (!['Employee', 'Labour'].includes(employeeType)) return fail(res, 400, 'Employee type must be Employee or Labour');
@@ -467,6 +475,8 @@ async function update(req, res) {
     const requestedUsername = String(body.username || '').trim();
     const password = String(body.password || '');
     if (!name || !code) return fail(res, 400, 'Employee name and Employee ID are required');
+    if (['Field','Hybrid'].includes(workMode) && !trackingTemplateId) return fail(res, 400, 'A live tracking template is required for Field and Hybrid employees');
+    if (trackingTemplateId) { const [t] = await db.query('SELECT id FROM hrms_tracking_templates WHERE id=? AND is_active=1', [trackingTemplateId]); if (!t.length) return fail(res, 400, 'Select an active live tracking template'); }
     if (password && password.length < 8) {
       return fail(res, 400, 'New password must be at least 8 characters');
     }
@@ -521,9 +531,12 @@ async function update(req, res) {
     );
 
     await connection.query(
-      'UPDATE hrms_employee_profiles SET employee_code = ?, full_name = ?, email = ?, phone = ?, department = ?, work_mode = ?, employee_type = ?, overtime_eligible = ?, gender = ?, employment_status = ?, joining_date = COALESCE(?, joining_date), monthly_salary = ?, salary_type = ?, flexible_cycle_start_day = ?, flexible_cycle_end_day = ?, flexible_cycle_start_date = ?, flexible_cycle_end_date = ? WHERE id = ?',
-      [code, name, email, phone === undefined ? existingProfile.phone : phone, department, workMode, employeeType, overtimeEligible, gender, status, requestedJoiningDate, salary, cycle.salaryType, cycle.cycleStartDay, cycle.cycleEndDay, cycle.cycleStartDate, cycle.cycleEndDate, id]
+      'UPDATE hrms_employee_profiles SET employee_code = ?, full_name = ?, email = ?, phone = ?, department = ?, work_mode = ?, tracking_template_id = ?, employee_type = ?, overtime_eligible = ?, gender = ?, employment_status = ?, joining_date = COALESCE(?, joining_date), monthly_salary = ?, salary_type = ?, flexible_cycle_start_day = ?, flexible_cycle_end_day = ?, flexible_cycle_start_date = ?, flexible_cycle_end_date = ? WHERE id = ?',
+      [code, name, email, phone === undefined ? existingProfile.phone : phone, department, workMode, trackingTemplateId, employeeType, overtimeEligible, gender, status, requestedJoiningDate, salary, cycle.salaryType, cycle.cycleStartDay, cycle.cycleEndDay, cycle.cycleStartDate, cycle.cycleEndDate, id]
     );
+    if (Number(existingProfile.tracking_template_id || 0) !== Number(trackingTemplateId || 0)) {
+      await connection.query('INSERT INTO hrms_tracking_template_audit (action_type,admin_id,employee_id,old_values,new_values) VALUES (?,?,?,?,?)', ['assign', req.user && req.user.id, id, JSON.stringify({ trackingTemplateId: existingProfile.tracking_template_id || null }), JSON.stringify({ trackingTemplateId: trackingTemplateId || null })]);
+    }
 
     const updates = ['full_name = ?', 'email = ?', 'username = ?', 'staff_id = ?'];
     const values = [name, email, username, code];

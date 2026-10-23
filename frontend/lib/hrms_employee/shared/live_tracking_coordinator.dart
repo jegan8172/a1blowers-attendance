@@ -148,7 +148,13 @@ class LiveTrackingCoordinator extends ChangeNotifier with WidgetsBindingObserver
     _busy = true; notifyListeners();
     try {
       final position = await _position(requireBackground: defaultTargetPlatform == TargetPlatform.android);
-      await HrmsTrackingApi.startFieldSession(latitude: position.latitude, longitude: position.longitude, accuracy: position.accuracy, isMocked: position.isMocked);
+      final started = await HrmsTrackingApi.startFieldSession(latitude: position.latitude, longitude: position.longitude, accuracy: position.accuracy, isMocked: position.isMocked);
+      final template = started['template'];
+      final assignedMinutes = template is Map
+          ? (template['fieldPingIntervalMinutes'] ?? template['field_ping_interval_minutes'])
+          : null;
+      final parsedMinutes = assignedMinutes is num ? assignedMinutes.toInt() : int.tryParse('$assignedMinutes');
+      if (parsedMinutes != null && parsedMinutes > 0) _pingMinutes = parsedMinutes;
       _active = true;
       if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
         await AndroidLiveTrackingService.start(employeeName: await _employeeName(), pingMinutes: _pingMinutes);

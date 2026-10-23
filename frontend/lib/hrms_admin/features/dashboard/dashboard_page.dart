@@ -306,6 +306,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.inSettingsDialog) return const SizedBox.shrink();
     final width = MediaQuery.sizeOf(context).width;
     if (width < 600) {
       return _MobileDashboard(

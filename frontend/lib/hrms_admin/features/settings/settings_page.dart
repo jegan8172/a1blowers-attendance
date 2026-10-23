@@ -6,6 +6,7 @@ import '../dashboard/dashboard_page.dart';
 import '../employees/employees_page.dart';
 import '../payroll/payroll_page.dart';
 import '../tracking/tracking_page.dart';
+import 'weekly_off_templates_page.dart';
 import '../../shared/widgets/admin_top_nav.dart';
 
 class SettingsPage extends StatelessWidget {
@@ -18,12 +19,15 @@ class SettingsPage extends StatelessWidget {
       '/admin/employees' => EmployeesPage(settingsAction: action, inSettingsDialog: true),
       '/admin/payroll' => PayrollPage(settingsAction: action, inSettingsDialog: true),
       '/admin/tracking' => TrackingPage(settingsAction: action, inSettingsDialog: true),
+      '/admin/weekly-off-templates' => const WeeklyOffTemplatesPage(inSettingsDialog: true),
       _ => const SizedBox.shrink(),
     };
     return showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (_) => Dialog(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
         insetPadding: const EdgeInsets.all(24),
         clipBehavior: Clip.antiAlias,
         child: SizedBox(width: 1280, height: 760, child: destination),
@@ -53,7 +57,8 @@ class SettingsPage extends StatelessWidget {
       ]),
       _SettingsGroup('Live tracking', 'Locations and field activity controls', Icons.location_on_outlined, [
         _SettingsAction('Office locations', 'Manage office check-in locations', Icons.business_outlined, () => _open(context, '/admin/tracking', 'officeLocation')),
-        _SettingsAction('Tracking settings', 'GPS interval, radius and waiting rules', Icons.timer_outlined, () => _open(context, '/admin/tracking', 'trackingSettings')),
+        _SettingsAction('Tracking templates', 'Assign GPS and waiting rules by employee', Icons.timer_outlined, () => _open(context, '/admin/tracking', 'trackingSettings')),
+        _SettingsAction('Other tracking settings', 'Home tracking and global controls', Icons.tune_outlined, () => _open(context, '/admin/tracking', 'otherTrackingSettings')),
       ]),
       _SettingsGroup('Reminders', 'Clock-out reminders and notification preferences', Icons.notifications_active_outlined, [
         _SettingsAction('Clock-out reminders', 'Timing, sound and repeat reminders', Icons.alarm_outlined, () => _open(context, '/admin/tracking', 'clockOutReminderSettings')),

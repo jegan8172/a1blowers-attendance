@@ -379,7 +379,9 @@ class _TrackingViewState extends State<_TrackingView>
         ),
       ),
     );
-    controller.dispose();
+    // Wait for the dialog pop transition to finish before disposing the
+    // controller; otherwise Flutter may rebuild the TextField once more.
+    Future<void>.delayed(const Duration(milliseconds: 350), controller.dispose);
     return reason;
   }
 

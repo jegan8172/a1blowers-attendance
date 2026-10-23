@@ -1023,8 +1023,18 @@ async function checkIn(req, res) {
         [employeeId]
       );
       hasActiveFieldTracking = tracking.length > 0;
-      if (!tracking.length) {
-        throw new locationPolicy.LocationPolicyError(403, 'Start live tracking before clocking in as a Field or Hybrid employee.');
+      if (!tracking.length && rules.workMode === 'Field') {
+        throw new locationPolicy.LocationPolicyError(403, 'Start live tracking before clocking in as a Field employee.');
+      }
+      if (!tracking.length && rules.workMode === 'Hybrid') {
+        try {
+          locationPolicy.validateCheckIn(rules, req.body || {});
+        } catch (error) {
+          if (error instanceof locationPolicy.LocationPolicyError) {
+            throw new locationPolicy.LocationPolicyError(403, 'You are outside all office locations. Start live tracking before clocking in.');
+          }
+          throw error;
+        }
       }
     }
     if (!['Hybrid', 'Field'].includes(rules.workMode)) {

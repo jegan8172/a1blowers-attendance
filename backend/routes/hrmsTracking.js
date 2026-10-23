@@ -6,6 +6,19 @@ const hrms = require('../controllers/hrmsTrackingController');
 router.use(authenticateToken);
 router.get('/settings', hrms.getTrackingSettings);
 router.put('/settings', hrms.requireAdmin, hrms.updateTrackingSettings);
+router.get('/templates', hrms.requireAdmin, hrms.trackingTemplates);
+router.post('/templates', hrms.requireAdmin, hrms.createTrackingTemplate);
+router.put('/templates/:id', hrms.requireAdmin, hrms.updateTrackingTemplate);
+router.patch('/templates/:id/archive', hrms.requireAdmin, hrms.archiveTrackingTemplate);
+router.patch('/templates/:id/restore', hrms.requireAdmin, hrms.restoreTrackingTemplate);
+router.delete('/templates/:id', hrms.requireAdmin, hrms.deleteTrackingTemplate);
+router.put('/templates/employee/:employeeId', hrms.requireAdmin, hrms.assignTrackingTemplate);
+router.get('/office-locations', hrms.requireAdmin, hrms.officeLocations);
+router.post('/office-locations', hrms.requireAdmin, hrms.createOfficeLocation);
+router.put('/office-locations/:id', hrms.requireAdmin, hrms.updateOfficeLocation);
+router.patch('/office-locations/:id/archive', hrms.requireAdmin, hrms.archiveOfficeLocation);
+router.patch('/office-locations/:id/restore', hrms.requireAdmin, hrms.restoreOfficeLocation);
+router.delete('/office-locations/:id', hrms.requireAdmin, hrms.deleteOfficeLocation);
 
 // Employee self-service — called from the mobile app
 router.post('/status', hrms.setStatus);

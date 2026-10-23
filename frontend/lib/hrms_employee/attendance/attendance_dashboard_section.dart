@@ -37,6 +37,7 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
   bool _breakCommentDialogOpen = false;
   bool _trackingBusy = false;
   bool _fieldTrackingEnabled = false;
+  String _workMode = 'Office';
   bool _trackingActive = false;
   int _request = 0;
   int _ticks = 0;
@@ -211,6 +212,7 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
         _fieldTrackingEnabled =
             permissions['fieldTrackingEnabled'] == true ||
             permissions['field_tracking_enabled'] == true;
+        _workMode = '${permissions['workMode'] ?? permissions['work_mode'] ?? 'Office'}';
         _trackingActive = context.read<LiveTrackingCoordinator>().active;
       });
     } catch (_) {}
@@ -255,7 +257,10 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
         ),
       ),
     );
-    controller.dispose();
+    // Let the dialog's pop transition finish before disposing the controller.
+    // Disposing immediately can make the TextField rebuild during the route
+    // animation and trigger "controller used after disposed" assertions.
+    Future<void>.delayed(const Duration(milliseconds: 300), controller.dispose);
     return result;
   }
 
@@ -405,7 +410,7 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
         ),
       ),
     );
-    controller.dispose();
+    Future<void>.delayed(const Duration(milliseconds: 300), controller.dispose);
     return result;
   }
 
@@ -505,7 +510,7 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
         ),
       ),
     );
-    controller.dispose();
+    Future<void>.delayed(const Duration(milliseconds: 300), controller.dispose);
   }
 
   Future<void> _toggleBreak() async {
@@ -629,7 +634,7 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
         ),
       ),
     );
-    controller.dispose();
+    Future<void>.delayed(const Duration(milliseconds: 300), controller.dispose);
     _breakCommentDialogOpen = false;
   }
 
@@ -943,7 +948,9 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
                   child: Text(
                     _trackingActive
                         ? 'Live tracking is active. Check In is available.'
-                        : 'Start live tracking to unlock Check In.',
+                        : (_workMode == 'Hybrid'
+                            ? 'Inside an office, Check In is available normally. Start tracking when working outside.'
+                            : 'Start live tracking to unlock Check In.'),
                     style: const TextStyle(
                       color: employeeNavy,
                       fontWeight: FontWeight.w700,
@@ -1057,6 +1064,7 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
                         _punching ||
                         _error != null ||
                         (!_trackingActive &&
+                            _workMode == 'Field' &&
                             _fieldTrackingEnabled &&
                             !checkedIn) ||
                         !(actions['can_clock_in'] == true ||

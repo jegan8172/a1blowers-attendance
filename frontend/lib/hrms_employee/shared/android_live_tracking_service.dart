@@ -9,6 +9,7 @@ import 'package:geolocator/geolocator.dart';
 
 import '../../services/hrms_tracking_api.dart';
 import '../../services/attendance_api.dart';
+import 'overlay_permission.dart';
 
 /// Android's visible foreground service. It owns scheduled GPS updates while
 /// the app is backgrounded, and is stopped explicitly with the session.
@@ -21,9 +22,27 @@ class AndroidLiveTrackingService {
     description: 'Alerts that require a field employee to enter a waiting reason.',
     importance: Importance.max,
     playSound: true,
+    sound: const RawResourceAndroidNotificationSound('a1_stationary_alert'),
     enableVibration: true,
   );
+  static const _liveTrackingChannel = AndroidNotificationChannel(
+    'live_tracking_service',
+    'Live tracking',
+    description: 'Persistent notification shown while live tracking is active.',
+    importance: Importance.low,
+    playSound: false,
+    enableVibration: false,
+  );
   static const _waitingAlertNotificationId = 71403;
+  static final ValueNotifier<int?> pendingWaitingReasonId = ValueNotifier<int?>(null);
+
+  static void _handleNotificationTap(NotificationResponse response) {
+    final payload = response.payload ?? '';
+    const prefix = 'field-waiting-reason:';
+    if (!payload.startsWith(prefix)) return;
+    final id = int.tryParse(payload.substring(prefix.length));
+    if (id != null) pendingWaitingReasonId.value = id;
+  }
 
   static Future<void> configure() async {
     if (kIsWeb || _configured) return;
@@ -34,16 +53,25 @@ class AndroidLiveTrackingService {
     const initializationSettings = InitializationSettings(
       android: AndroidInitializationSettings('@mipmap/ic_launcher'),
     );
-    await notifications.initialize(initializationSettings);
+    await notifications.initialize(
+      initializationSettings,
+      onDidReceiveNotificationResponse: _handleNotificationTap,
+    );
+    final launch = await notifications.getNotificationAppLaunchDetails();
+    if (launch?.didNotificationLaunchApp == true && launch?.notificationResponse != null) {
+      _handleNotificationTap(launch!.notificationResponse!);
+    }
     final androidNotifications = notifications
         .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
     await androidNotifications?.requestNotificationsPermission();
+    await androidNotifications?.createNotificationChannel(_liveTrackingChannel);
     await androidNotifications?.createNotificationChannel(_waitingAlertChannel);
     await _service.configure(
       androidConfiguration: AndroidConfiguration(
         onStart: _onStart,
         autoStart: false,
         isForegroundMode: true,
+        notificationChannelId: _liveTrackingChannel.id,
         initialNotificationTitle: 'Live tracking active',
         initialNotificationContent: 'Location updates are being saved',
         foregroundServiceNotificationId: 71402,
@@ -58,11 +86,13 @@ class AndroidLiveTrackingService {
     final running = await _service.isRunning();
     if (!running) await _service.startService();
     _service.invoke('start-live-tracking', {'employeeName': employeeName, 'pingMinutes': pingMinutes});
+    await OverlayPermission.showTrackingBubble();
   }
 
   static Future<void> stop() async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
     _service.invoke('stop-live-tracking');
+    await OverlayPermission.hideTrackingBubble();
   }
 
   @pragma('vm:entry-point')
@@ -76,6 +106,7 @@ class AndroidLiveTrackingService {
     final androidNotifications = notifications
         .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
     await androidNotifications?.createNotificationChannel(_waitingAlertChannel);
+    await androidNotifications?.createNotificationChannel(_liveTrackingChannel);
 
     Timer? pingTimer;
     Timer? reminderTimer;
@@ -141,6 +172,7 @@ class AndroidLiveTrackingService {
               importance: Importance.max,
               priority: Priority.high,
               playSound: true,
+              sound: const RawResourceAndroidNotificationSound('a1_stationary_alert'),
               enableVibration: true,
               onlyAlertOnce: false,
               vibrationPattern: Int64List.fromList([0, 180, 100, 180]),

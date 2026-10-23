@@ -89,11 +89,19 @@ async function getCheckInPolicy(db, employeeId, lock = false) {
   const settings = await settingsFor(db, lock);
   let center;
   if (workMode === 'Office' || workMode === 'Hybrid') {
+    let offices = [];
     try {
-      center = coordinates(settings.office_latitude, settings.office_longitude);
-    } catch (_) {
-      throw new LocationPolicyError(503, 'Admin must configure a valid office location.');
+      const [rows] = await db.query(`SELECT id,name,address,latitude,longitude,radius_meters FROM hrms_office_locations WHERE is_active=1 ORDER BY id`);
+      offices = rows.map((row) => ({ ...row, center: coordinates(row.latitude, row.longitude), radiusMeters: number(row.radius_meters) }));
+    } catch (error) {
+      if (error.code !== 'ER_NO_SUCH_TABLE') throw error;
     }
+    if (!offices.length) {
+      try { center = coordinates(settings.office_latitude, settings.office_longitude); }
+      catch (_) { throw new LocationPolicyError(503, 'Admin must configure a valid office location.'); }
+      offices = [{ id: null, name: settings.office_name, address: settings.office_address, center, radiusMeters: settings.radiusMeters }];
+    }
+    return { workMode, requiresLocation: true, radiusMeters: Math.max(...offices.map(o => o.radiusMeters)), center: offices[0].center, offices };
   } else {
     const [homes] = await db.query(
       `SELECT latitude, longitude, approval_status FROM hrms_employee_home_locations
@@ -119,13 +127,16 @@ async function getCheckInPolicy(db, employeeId, lock = false) {
 function validateCheckIn(locationPolicy, body, now) {
   if (!locationPolicy.requiresLocation) return null;
   const fix = validateFix(body, locationPolicy.radiusMeters, now);
-  const distance = distanceMeters(locationPolicy.center, fix);
-  // Accuracy never enlarges the allowed radius. The boundary itself is allowed.
-  if (distance > locationPolicy.radiusMeters + 0.000001) {
+  const matches = (locationPolicy.offices || [{ center: locationPolicy.center, radiusMeters: locationPolicy.radiusMeters }])
+    .map((office) => ({ office, distance: distanceMeters(office.center, fix) }))
+    .filter(({ office, distance }) => distance <= office.radiusMeters + 0.000001);
+  if (matches.length) return { ...fix, office: matches[0].office, distanceMeters: matches[0].distance };
+  const nearest = (locationPolicy.offices || []).map((office) => distanceMeters(office.center, fix)).sort((a,b) => a-b)[0] || Infinity;
+  if (!matches.length) {
     throw new LocationPolicyError(403,
-      `Clock In requires being within ${locationPolicy.radiusMeters} metres of your ${locationPolicy.workMode === 'Home' ? 'approved Home' : 'office'} location. You are about ${Math.round(distance)} metres away.`);
+      `Clock In requires being within an active office location. You are about ${Math.round(nearest)} metres away.`);
   }
-  return fix;
+  return { ...fix, distanceMeters: nearest };
 }
 
 module.exports = {

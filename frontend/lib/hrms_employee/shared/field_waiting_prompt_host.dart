@@ -11,6 +11,7 @@ import '../../services/auth_service.dart';
 import '../../services/hrms_tracking_api.dart';
 import '../../services/attendance_api.dart';
 import 'live_tracking_coordinator.dart';
+import 'android_live_tracking_service.dart';
 
 /// Keeps the mandatory field-waiting comment prompt active while an employee
 /// moves between pages. A prompt is only shown for a currently active field
@@ -57,6 +58,7 @@ class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with Wi
     widget.routeRevision.addListener(_onRouteChanged);
     _auth = context.read<AuthService>()..addListener(_onAuthChanged);
     _timer = Timer.periodic(_alertCheckInterval, (_) => _check());
+    AndroidLiveTrackingService.pendingWaitingReasonId.addListener(_onNotificationTap);
   }
 
   @override
@@ -68,7 +70,25 @@ class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with Wi
     _timer?.cancel();
     _stopPromptFeedback();
     _soundPlayer.dispose();
+    AndroidLiveTrackingService.pendingWaitingReasonId.removeListener(_onNotificationTap);
     super.dispose();
+  }
+
+  void _onNotificationTap() {
+    final id = AndroidLiveTrackingService.pendingWaitingReasonId.value;
+    if (id == null || !mounted) return;
+    AndroidLiveTrackingService.pendingWaitingReasonId.value = null;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || _dialogOpen) return;
+      final alert = await HrmsTrackingApi.waitingAlert();
+      if (alert == null || int.tryParse('${alert['id']}') != id) return;
+      _dialogOpen = true;
+      try {
+        await _showDialog(reasonId: id, waitingMinutes: alert['waiting_minutes'] ?? 0);
+      } finally {
+        _dialogOpen = false;
+      }
+    });
   }
 
   void _onAuthChanged() {
@@ -215,6 +235,7 @@ class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with Wi
 
     _checking = true;
     try {
+      await HrmsTrackingApi.flushQueuedWaitingReasons();
       await _checkClockOutReminder();
       if (_dialogOpen || !mounted) return;
       final session = await HrmsTrackingApi.fieldSession();
@@ -367,6 +388,15 @@ class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with Wi
     final controller = TextEditingController();
     var submitting = false;
     String? errorMessage;
+    String selectedReason = 'Other';
+    const reasons = <String>[
+      'Client/customer meeting',
+      'Traffic or travel delay',
+      'Vehicle or equipment issue',
+      'Work paused / waiting for instructions',
+      'Break',
+      'Other',
+    ];
     final repeatInterval = await _popupAlertRepeatInterval();
     if (!mounted || !rootContext.mounted) {
       controller.dispose();
@@ -388,9 +418,25 @@ class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with Wi
                   'Please enter the reason for waiting.',
                 ),
                 const SizedBox(height: 16),
+                DropdownButtonFormField<String>(
+                  value: selectedReason,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Reason type',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: reasons
+                      .map((value) => DropdownMenuItem(value: value, child: Text(value)))
+                      .toList(),
+                  onChanged: submitting ? null : (value) {
+                    if (value != null) setDialogState(() => selectedReason = value);
+                  },
+                ),
+                const SizedBox(height: 12),
                 TextField(
                   controller: controller,
                   maxLines: 3,
+                  maxLength: 500,
                   decoration: const InputDecoration(
                     labelText: 'Reason for waiting',
                     border: OutlineInputBorder(),
@@ -410,7 +456,10 @@ class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with Wi
                 onPressed: submitting
                     ? null
                     : () async {
-                        final reason = controller.text.trim();
+                        final details = controller.text.trim();
+                        final reason = selectedReason == 'Other'
+                            ? details
+                            : details.isEmpty ? selectedReason : '$selectedReason: $details';
                         if (reason.isEmpty) {
                           setDialogState(
                             () => errorMessage = 'Please enter a reason.',
@@ -422,6 +471,9 @@ class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with Wi
                           errorMessage = null;
                         });
                         try {
+                          if (reason.length > 500) {
+                            throw Exception('Reason must be 500 characters or less.');
+                          }
                           await HrmsTrackingApi.submitWaitingReason(
                             reasonId: reasonId,
                             reason: reason,
@@ -433,11 +485,15 @@ class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with Wi
                             ).pop();
                           }
                         } catch (_) {
+                          await HrmsTrackingApi.queueWaitingReason(
+                            reasonId: reasonId,
+                            reason: reason,
+                          );
                           if (dialogContext.mounted) {
                             setDialogState(() {
                               submitting = false;
                               errorMessage =
-                                  'Could not submit the reason. Please try again.';
+                                  'Saved on this device. It will retry automatically when online.';
                             });
                           }
                         }
@@ -450,7 +506,10 @@ class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with Wi
       );
     } finally {
       _stopPromptFeedback();
-      controller.dispose();
+      // The dialog route may still be completing its pop animation. Dispose
+      // after the next transition frame so TextField listeners are not torn
+      // down while Flutter is rebuilding the dialog.
+      Future<void>.delayed(const Duration(milliseconds: 350), controller.dispose);
     }
   }
 

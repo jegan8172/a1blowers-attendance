@@ -109,6 +109,9 @@ class _TrackingPageState extends State<TrackingPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (action == 'officeLocation') await _openOfficeLocation();
       if (action == 'trackingSettings') await _openFieldWaitingSettings();
+      if (action == 'otherTrackingSettings') {
+        await showDialog<void>(context: context, builder: (_) => const _FieldWaitingSettingsDialog());
+      }
       if (action == 'clockOutReminderSettings') {
         await _openClockOutReminderSettings();
       }
@@ -125,7 +128,7 @@ class _TrackingPageState extends State<TrackingPage> {
   Future<void> _openFieldWaitingSettings() async {
     await showDialog<void>(
       context: context,
-      builder: (_) => const _FieldWaitingSettingsDialog(),
+      builder: (_) => const _TrackingTemplatesDialog(),
     );
   }
 
@@ -156,7 +159,7 @@ class _TrackingPageState extends State<TrackingPage> {
     final saved = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const _OfficeLocationDialog(),
+      builder: (_) => const _OfficeLocationsDialog(),
     );
     if (saved == true && mounted) await _load(silent: true);
   }
@@ -268,6 +271,7 @@ class _TrackingPageState extends State<TrackingPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.inSettingsDialog) return const SizedBox.shrink();
     final mobile = MediaQuery.sizeOf(context).width < 600;
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
@@ -343,6 +347,110 @@ class _TrackingPageState extends State<TrackingPage> {
       ),
     );
   }
+}
+
+class _TrackingTemplatesDialog extends StatefulWidget {
+  const _TrackingTemplatesDialog();
+  @override State<_TrackingTemplatesDialog> createState() => _TrackingTemplatesDialogState();
+}
+
+class _TrackingTemplatesDialogState extends State<_TrackingTemplatesDialog> {
+  bool loading = true;
+  String? error;
+  List<Map<String, dynamic>> items = [];
+
+  @override void initState() { super.initState(); _load(); }
+  Future<void> _load() async {
+    try { items = await HrmsTrackingApi.trackingTemplates(); }
+    catch (e) { error = e.toString().replaceFirst('Exception: ', ''); }
+    if (mounted) setState(() => loading = false);
+  }
+
+  Future<void> _createTemplate() async {
+    final name = TextEditingController();
+    final waiting = TextEditingController(text: '60');
+    final radius = TextEditingController(text: '50');
+    final ping = TextEditingController(text: '15');
+    final repeat = TextEditingController(text: '5');
+    final form = GlobalKey<FormState>();
+    final save = await showDialog<bool>(context: context, builder: (_) => AlertDialog(
+      title: const Text('Create tracking template'),
+      content: SizedBox(width: 420, child: Form(key: form, child: Column(mainAxisSize: MainAxisSize.min, children: [
+        _templateField(name, 'Template name', text: true),
+        _templateField(waiting, 'Waiting time (minutes)'),
+        _templateField(radius, 'Stationary radius (metres)'),
+        _templateField(ping, 'GPS update interval (minutes)'),
+        _templateField(repeat, 'Popup alert repeat (seconds)'),
+      ]))),
+      actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')), FilledButton(onPressed: () { if (form.currentState!.validate()) Navigator.pop(context, true); }, child: const Text('Create'))],
+    ));
+    if (save != true) return;
+    try {
+      await HrmsTrackingApi.createTrackingTemplate({'name': name.text.trim(), 'fieldWaitingMinutes': int.parse(waiting.text), 'stationaryRadiusMeters': int.parse(radius.text), 'fieldPingIntervalMinutes': int.parse(ping.text), 'popupAlertRepeatSeconds': int.parse(repeat.text)});
+      setState(() => loading = true); await _load();
+    } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString().replaceFirst('Exception: ', '')))); }
+  }
+
+  Widget _templateField(TextEditingController controller, String label, {bool text = false}) => Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: TextFormField(controller: controller, keyboardType: text ? TextInputType.text : TextInputType.number,
+      decoration: InputDecoration(labelText: label, border: const OutlineInputBorder()),
+      validator: (value) {
+        if (value == null || value.trim().isEmpty) return 'Required';
+        if (text) return null;
+        final number = int.tryParse(value);
+        if (number == null) return 'Enter a number';
+        if (label.contains('radius') && (number < 1 || number > 10000)) return 'Use 1–10000 metres';
+        if (label.contains('repeat') && (number < 2 || number > 3600)) return 'Use 2–3600 seconds';
+        if (!label.contains('radius') && !label.contains('repeat') && (number < 1 || number > 1440)) return 'Use 1–1440 minutes';
+        return null;
+      }),
+  );
+
+  Widget _field(TextEditingController c, String label) => Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: TextFormField(controller: c, keyboardType: TextInputType.number,
+      decoration: InputDecoration(labelText: label, border: const OutlineInputBorder()),
+      validator: (v) { if (v == null || v.trim().isEmpty) return 'Required'; return null; }),
+  );
+
+  @override Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Live tracking templates'),
+    content: SizedBox(width: 650, height: 420,
+      child: loading ? const Center(child: CircularProgressIndicator()) :
+        error != null ? Text(error!) : ListView(children: [
+          for (final t in items) ListTile(
+            title: Text('${t['name']}'),
+            subtitle: Text('Waiting ${t['field_waiting_minutes']}m • Radius ${t['stationary_radius_meters']}m • GPS ${t['field_ping_interval_minutes']}m • Repeat ${t['popup_alert_repeat_seconds']}s • Assigned ${t['assigned_employee_count'] ?? 0}'),
+            trailing: (t['is_active'] == 1 || t['is_active'] == true) && t['name'] != 'Default'
+                ? IconButton(
+                    tooltip: 'Archive template',
+                    icon: const Icon(Icons.archive_outlined),
+                    onPressed: () async {
+                      await HrmsTrackingApi.archiveTrackingTemplate(int.parse('${t['id']}'));
+                      if (mounted) { setState(() => loading = true); await _load(); }
+                    },
+                  )
+                : (t['is_active'] == 1 || t['is_active'] == true)
+                    ? const Text('Default')
+                    : Wrap(children: [
+                        IconButton(tooltip: 'Unarchive template', icon: const Icon(Icons.unarchive_outlined), onPressed: () async {
+                          try { await HrmsTrackingApi.restoreTrackingTemplate(int.parse('${t['id']}')); if (mounted) { setState(() => loading = true); await _load(); } }
+                          catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString().replaceFirst('Exception: ', '')))); }
+                        }),
+                        IconButton(tooltip: 'Delete template', icon: const Icon(Icons.delete_outline), onPressed: () async {
+                          try { await HrmsTrackingApi.deleteTrackingTemplate(int.parse('${t['id']}')); if (mounted) { setState(() => loading = true); await _load(); } }
+                          catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString().replaceFirst('Exception: ', '')))); }
+                        }),
+                      ]),
+          ),
+        ]),
+    ),
+    actions: [
+      FilledButton.icon(onPressed: _createTemplate, icon: const Icon(Icons.add), label: const Text('Create template')),
+      TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
+    ],
+  );
 }
 
 class _TrackingMobileActions extends StatelessWidget {
@@ -3102,8 +3210,116 @@ class _RouteDialogState extends State<_RouteDialog> {
   );
 }
 
+class _OfficeLocationsDialog extends StatefulWidget {
+  const _OfficeLocationsDialog();
+  @override State<_OfficeLocationsDialog> createState() => _OfficeLocationsDialogState();
+}
+
+class _OfficeLocationsDialogState extends State<_OfficeLocationsDialog> {
+  bool _loading = true; String? _error; List<Map<String,dynamic>> _items = [];
+  @override void initState(){super.initState(); _load();}
+  Future<void> _load() async { try { final rows=await HrmsTrackingApi.officeLocations(); if(mounted)setState(()=>_items=rows); } catch(e){ if(mounted)setState(()=>_error=e.toString().replaceFirst('Exception: ','')); } finally { if(mounted)setState(()=>_loading=false); } }
+  Future<void> _edit([Map<String,dynamic>? item]) async {
+    final save=await showDialog<bool>(context:context,builder:(_)=>_OfficeLocationDialog(initial:item));
+    if(save==true && mounted) await _load();
+  }
+  @override
+  Widget build(BuildContext context) {
+    Widget content;
+    if (_loading) {
+      content = const Center(child: CircularProgressIndicator());
+    } else if (_error != null) {
+      content = Text(_error!);
+    } else {
+      content = ListView(
+        children: [
+          for (final item in _items)
+            ListTile(
+              title: Row(
+                children: [
+                  Expanded(child: Text('${item['name']}')),
+                  _OfficeStatusBadge(active: item['is_active'] == 1 || item['is_active'] == true),
+                ],
+              ),
+              subtitle: Text('${item['address']} • ${item['radius_meters']}m'),
+              trailing: Wrap(
+                spacing: 4,
+                children: [
+                  IconButton(tooltip: 'Edit office', onPressed: () => _edit(item), icon: const Icon(Icons.edit_outlined)),
+                  IconButton(
+                    onPressed: () async {
+                      final confirmed = await showDialog<bool>(
+                        context: context,
+                        builder: (dialogContext) => AlertDialog(
+                          title: const Text('Delete office location?'),
+                          content: Text('Delete ${item['name']} permanently? Archived offices can be restored; deletion cannot be undone.'),
+                          actions: [
+                            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+                            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Delete')),
+                          ],
+                        ),
+                      );
+                      if (confirmed != true) return;
+                      try {
+                        await HrmsTrackingApi.deleteOfficeLocation(int.parse('${item['id']}'));
+                        await _load();
+                      } catch (e) {
+                        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))));
+                      }
+                    },
+                    tooltip: 'Delete office',
+                    icon: const Icon(Icons.delete_outline),
+                  ),
+                  IconButton(
+                    onPressed: () async {
+                      final id = int.parse('${item['id']}');
+                      final active = item['is_active'] == 1 || item['is_active'] == true;
+                      if (active) {
+                        await HrmsTrackingApi.archiveOfficeLocation(id);
+                      } else {
+                        await HrmsTrackingApi.restoreOfficeLocation(id);
+                      }
+                      await _load();
+                    },
+                    tooltip: (item['is_active'] == 1 || item['is_active'] == true) ? 'Archive office' : 'Activate office',
+                    icon: Icon((item['is_active'] == 1 || item['is_active'] == true)
+                        ? Icons.archive_outlined
+                        : Icons.unarchive_outlined),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      );
+    }
+    return AlertDialog(
+      title: const Text('Office locations'),
+      content: SizedBox(width: 700, height: 420, child: content),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Close')),
+        FilledButton.icon(onPressed: () => _edit(), icon: const Icon(Icons.add), label: const Text('Add office')),
+      ],
+    );
+  }
+}
+
+class _OfficeStatusBadge extends StatelessWidget {
+  const _OfficeStatusBadge({required this.active});
+  final bool active;
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+    decoration: BoxDecoration(
+      color: active ? const Color(0xFFE8F7ED) : const Color(0xFFF0F1F4),
+      borderRadius: BorderRadius.circular(20),
+    ),
+    child: Text(active ? 'Active' : 'Archived', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: active ? const Color(0xFF16803C) : const Color(0xFF687080))),
+  );
+}
+
 class _OfficeLocationDialog extends StatefulWidget {
-  const _OfficeLocationDialog();
+  const _OfficeLocationDialog({this.initial});
+  final Map<String, dynamic>? initial;
 
   @override
   State<_OfficeLocationDialog> createState() => _OfficeLocationDialogState();
@@ -3154,14 +3370,14 @@ class _OfficeLocationDialogState extends State<_OfficeLocationDialog> {
       _error = null;
     });
     try {
-      final data = await HrmsTrackingApi.trackingSettings();
+      final data = widget.initial ?? await HrmsTrackingApi.trackingSettings();
       if (!mounted) return;
       setState(() {
-        _name.text = '${data['office_name'] ?? ''}';
-        _address.text = '${data['office_address'] ?? ''}';
-        _latitude.text = '${data['office_latitude'] ?? ''}';
-        _longitude.text = '${data['office_longitude'] ?? ''}';
-        _radius.text = '${data['office_radius_meters'] ?? 100}';
+        _name.text = '${data['name'] ?? data['office_name'] ?? ''}';
+        _address.text = '${data['address'] ?? data['office_address'] ?? ''}';
+        _latitude.text = '${data['latitude'] ?? data['office_latitude'] ?? ''}';
+        _longitude.text = '${data['longitude'] ?? data['office_longitude'] ?? ''}';
+        _radius.text = '${data['radius_meters'] ?? data['office_radius_meters'] ?? 100}';
         _outsideGrace.text = '${data['outside_radius_grace_minutes'] ?? 2}';
         final lat = double.tryParse(_latitude.text);
         final lng = double.tryParse(_longitude.text);
@@ -3345,14 +3561,21 @@ class _OfficeLocationDialogState extends State<_OfficeLocationDialog> {
       _error = null;
     });
     try {
-      await HrmsTrackingApi.updateOfficeLocation(
-        officeName: name,
-        officeAddress: address,
-        officeLatitude: latitude,
-        officeLongitude: longitude,
-        officeRadiusMeters: radius,
-        outsideRadiusGraceMinutes: outsideGrace,
-      );
+      if (widget.initial == null) {
+        await HrmsTrackingApi.createOfficeLocation({
+          'name': name, 'address': address, 'latitude': latitude,
+          'longitude': longitude, 'radiusMeters': radius,
+        });
+      } else {
+        final values = {
+          'name': name,
+          'address': address,
+          'latitude': latitude,
+          'longitude': longitude,
+          'radiusMeters': radius,
+        };
+        await HrmsTrackingApi.updateOfficeLocation(int.parse('${widget.initial!['id']}'), values);
+      }
       if (!mounted) return;
       Navigator.of(context).pop(true);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3734,33 +3957,10 @@ class _FieldWaitingSettingsDialogState
                 children: [
                 if (!widget.clockOutOnly) ...[
                 const Text(
-                  'Configure Field tracking and optional Home work functionality.',
+                  'Configure optional Home work functionality.',
                   style: TextStyle(color: Color(0xFF657087), fontSize: 12),
                 ),
                 const SizedBox(height: 18),
-                _numberField(
-                  controller: _waitingController,
-                  label: 'Waiting time (minutes)',
-                  hint: 'Example: 60',
-                ),
-                const SizedBox(height: 14),
-                _numberField(
-                  controller: _radiusController,
-                  label: 'Stationary radius (metres)',
-                  hint: 'Example: 50',
-                ),
-                const SizedBox(height: 14),
-                _numberField(
-                  controller: _pingController,
-                  label: 'GPS update interval (minutes)',
-                  hint: 'Example: 15',
-                ),
-                const SizedBox(height: 12),
-                _numberField(
-                  controller: _popupAlertRepeatController,
-                  label: 'Popup alert repeat (seconds)',
-                  hint: '1–30 (default: 5)',
-                ),
                 const SizedBox(height: 12),
                 SwitchListTile.adaptive(
                   contentPadding: EdgeInsets.zero,

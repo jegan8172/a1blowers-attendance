@@ -9,7 +9,8 @@ const _red = Color(0xFF1769E0);
 const _dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 class WeeklyOffTemplatesPage extends StatefulWidget {
-  const WeeklyOffTemplatesPage({super.key});
+  const WeeklyOffTemplatesPage({super.key, this.inSettingsDialog = false});
+  final bool inSettingsDialog;
   static Widget builder(BuildContext context) => const WeeklyOffTemplatesPage();
   @override
   State<WeeklyOffTemplatesPage> createState() => _WeeklyOffTemplatesPageState();
@@ -109,13 +110,13 @@ class _WeeklyOffTemplatesPageState extends State<WeeklyOffTemplatesPage> {
   @override
   Widget build(BuildContext context) {
     final mobile = MediaQuery.sizeOf(context).width < 700;
-    return Scaffold(backgroundColor: Colors.transparent, bottomNavigationBar: mobile ? const AdminMobileBottomNav(activeRoute: '/admin/settings') : null, body: Column(children: [
-      const AdminTopNav(activeRoute: '/admin/settings'), Expanded(child: RefreshIndicator(onRefresh: _load, child: ListView(padding: EdgeInsets.all(mobile ? 16 : 28), children: [
-        Row(children: [IconButton(onPressed: () => Navigator.pushReplacementNamed(context, '/admin/settings'), icon: const Icon(Icons.arrow_back)), const SizedBox(width: 8), const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Weekly Off Templates', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: _navy)), SizedBox(height: 4), Text('Set team schedules and assign them to employees with an effective date.', style: TextStyle(color: Color(0xFF61708C)))])), if (!mobile) FilledButton.icon(style: FilledButton.styleFrom(backgroundColor: _red), onPressed: _assignmentDialog, icon: const Icon(Icons.person_add_alt_1), label: const Text('Assign template'))]),
+    final content = RefreshIndicator(onRefresh: _load, child: ListView(padding: EdgeInsets.all(mobile ? 16 : 28), children: [
+        Row(children: [IconButton(onPressed: () => widget.inSettingsDialog ? Navigator.pop(context) : Navigator.pushReplacementNamed(context, '/admin/settings'), icon: const Icon(Icons.arrow_back)), const SizedBox(width: 8), const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Weekly Off Templates', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: _navy)), SizedBox(height: 4), Text('Set team schedules and assign them to employees with an effective date.', style: TextStyle(color: Color(0xFF61708C)))])), if (!mobile) FilledButton.icon(style: FilledButton.styleFrom(backgroundColor: _red), onPressed: _assignmentDialog, icon: const Icon(Icons.person_add_alt_1), label: const Text('Assign template'))]),
         if (mobile) Padding(padding: const EdgeInsets.only(top: 14), child: FilledButton.icon(style: FilledButton.styleFrom(backgroundColor: _red), onPressed: _assignmentDialog, icon: const Icon(Icons.person_add_alt_1), label: const Text('Assign template'))),
         const SizedBox(height: 22), if (_loading) const Center(child: Padding(padding: EdgeInsets.all(48), child: CircularProgressIndicator())) else if (_error != null) _errorCard() else ...[_templatesCard(mobile), const SizedBox(height: 20), _assignmentsCard(mobile)],
-      ])))
-    ]));
+      ]));
+    if (widget.inSettingsDialog) return Material(color: Colors.white, child: content);
+    return Scaffold(backgroundColor: Colors.transparent, bottomNavigationBar: mobile ? const AdminMobileBottomNav(activeRoute: '/admin/settings') : null, body: Column(children: [const AdminTopNav(activeRoute: '/admin/settings'), Expanded(child: content)]));
   }
 
   Widget _errorCard() => Card(child: Padding(padding: const EdgeInsets.all(20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(_error!, style: const TextStyle(color: _red)), TextButton(onPressed: _load, child: const Text('Retry'))])));
