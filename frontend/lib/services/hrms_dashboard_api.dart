@@ -50,15 +50,28 @@ class HrmsDashboardApi {
   }
 
   static Future<List<Map<String, dynamic>>> calendarOverrides() async {
-    final response = await http.get(
-      Uri.parse('${ApiConfig.baseUrl}/hrms/dashboard/calendar-overrides'),
-      headers: await _headers(),
-    );
-    final data = _decode(response);
+    final data = await calendarSettings();
     return (data['overrides'] as List? ?? [])
         .whereType<Map>()
         .map((item) => Map<String, dynamic>.from(item))
         .toList();
+  }
+
+  static Future<Map<String, dynamic>> calendarSettings() async {
+    final response = await http.get(
+      Uri.parse('${ApiConfig.baseUrl}/hrms/dashboard/calendar-overrides'),
+      headers: await _headers(),
+    );
+    return _decode(response);
+  }
+
+  static Future<void> saveWeeklyOff(int weekday) async {
+    final response = await http.put(
+      Uri.parse('${ApiConfig.baseUrl}/hrms/dashboard/calendar-weekly-off'),
+      headers: await _headers(),
+      body: jsonEncode({'weeklyOffDays': [weekday % 7]}),
+    );
+    _decode(response);
   }
 
   static Future<void> saveCalendarOverride(Map<String, dynamic> override) async {

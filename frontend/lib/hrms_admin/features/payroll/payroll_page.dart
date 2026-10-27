@@ -161,71 +161,86 @@ class _PayrollPageState extends State<PayrollPage> {
     }
   }
 
-  Future<void> _viewHistory(_PayrollRow row) async {
-    try {
-      final items = await HrmsPayrollApi.deductionHistory(
-        profileId: row.profileId,
-        year: year,
-        month: month,
-      );
-      if (!mounted) return;
-      await showDialog<void>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text('${row.name} — deduction history'),
-          content: SizedBox(
-            width: 520,
-            child: items.isEmpty
-                ? const Text(
-                    'No late or absent salary deductions were generated for this payroll period.',
-                  )
-                : SingleChildScrollView(
-                    child: DataTable(
-                      columns: const [
-                        DataColumn(label: Text('Date')),
-                        DataColumn(label: Text('Type')),
-                        DataColumn(label: Text('Late')),
-                        DataColumn(label: Text('Amount')),
-                      ],
-                      rows: items
-                          .map(
-                            (item) => DataRow(
-                              cells: [
-                                DataCell(Text('${item['attendance_date']}')),
-                                DataCell(
-                                  Text(
-                                    '${item['deduction_type']}' == 'late'
-                                        ? 'Late'
-                                        : 'Absent',
-                                  ),
-                                ),
-                                DataCell(
-                                  Text('${item['late_minutes'] ?? 0} min'),
-                                ),
-                                DataCell(Text('₹${item['amount']}')),
-                              ],
-                            ),
-                          )
-                          .toList(),
-                    ),
-                  ),
+  Future<void> _revertPaid(_PayrollRow row) async {
+    if (row.itemId == null) return;
+    final controller = TextEditingController();
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Revert paid payroll?'),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '${row.name} will be changed from Paid to Pending. No money is transferred or refunded by this action.',
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                minLines: 2,
+                maxLines: 4,
+                decoration: const InputDecoration(
+                  labelText: 'Reason for reverting paid payroll',
+                  hintText: 'Example: Correct an incorrect late deduction',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Close'),
-            ),
-          ],
         ),
-      );
-    } catch (error) {
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(error.toString().replaceFirst('Exception: ', '')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
           ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(dialogContext, controller.text.trim()),
+            icon: const Icon(Icons.undo_rounded),
+            label: const Text('Revert to pending'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (reason == null) return;
+    if (reason.length < 5) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Enter a reason with at least 5 characters.')),
         );
+      }
+      return;
     }
+    try {
+      await HrmsPayrollApi.revertPaid(row.itemId!, reason);
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Payroll reverted to pending. Generate payroll to recalculate it.')),
+      );
+    } catch (err) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(err.toString().replaceFirst('Exception: ', ''))),
+      );
+    }
+  }
+
+  Future<void> _viewHistory(_PayrollRow row) async {
+    await showDialog<void>(
+      context: context,
+      builder: (_) => _DeductionHistoryDialog(
+        profileId: row.profileId,
+        employeeName: row.name,
+        initialYear: year,
+        initialMonth: month,
+        months: months,
+      ),
+    );
   }
 
   Future<void> _overrideCycle(_PayrollRow row) async {
@@ -424,6 +439,7 @@ class _PayrollPageState extends State<PayrollPage> {
             row: selected,
             monthLabel: monthLabel,
             onMarkPaid: _markPaid,
+            onRevertPaid: _revertPaid,
             onHistory: _viewHistory,
             onCycleOverride: _overrideCycle,
           ),
@@ -635,6 +651,140 @@ class _MonthOption {
   }
 }
 
+class _DeductionHistoryDialog extends StatefulWidget {
+  const _DeductionHistoryDialog({
+    required this.profileId,
+    required this.employeeName,
+    required this.initialYear,
+    required this.initialMonth,
+    required this.months,
+  });
+
+  final int profileId, initialYear, initialMonth;
+  final String employeeName;
+  final List<_MonthOption> months;
+
+  @override
+  State<_DeductionHistoryDialog> createState() => _DeductionHistoryDialogState();
+}
+
+class _DeductionHistoryDialogState extends State<_DeductionHistoryDialog> {
+  late int selectedYear, selectedMonth;
+  late Future<List<Map<String, dynamic>>> history;
+
+  @override
+  void initState() {
+    super.initState();
+    selectedYear = widget.initialYear;
+    selectedMonth = widget.initialMonth;
+    history = _load();
+  }
+
+  Future<List<Map<String, dynamic>>> _load() => HrmsPayrollApi.deductionHistory(
+    profileId: widget.profileId, year: selectedYear, month: selectedMonth,
+  );
+
+  String _clock(dynamic value) {
+    if (value == null) return '—';
+    // The backend returns a stored local clock time; never apply toLocal().
+    final match = RegExp(r'(?:^|[ T])(\d{2}):(\d{2}):\d{2}').firstMatch('$value');
+    if (match == null) return '—';
+    final hour = int.parse(match.group(1)!);
+    return '${((hour + 11) % 12 + 1).toString().padLeft(2, '0')}:${match.group(2)} ${hour >= 12 ? 'PM' : 'AM'}';
+  }
+
+  String _duration(dynamic value) {
+    final minutes = int.tryParse('$value') ?? 0;
+    return '${minutes ~/ 60}h ${minutes % 60}m';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedKey = '$selectedYear-${selectedMonth.toString().padLeft(2, '0')}';
+    final options = <String, _MonthOption>{for (final item in widget.months) item.key: item};
+    options.putIfAbsent(selectedKey, () => _MonthOption(
+      year: selectedYear, month: selectedMonth, label: selectedKey,
+    ));
+    return AlertDialog(
+      title: Text('${widget.employeeName} — deduction history'),
+      content: SizedBox(
+        width: 850,
+        height: MediaQuery.sizeOf(context).height * .6,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            DropdownButtonFormField<String>(
+              initialValue: selectedKey,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Payroll month'),
+              items: options.values.map((option) => DropdownMenuItem(
+                value: option.key, child: Text(option.label),
+              )).toList(),
+              onChanged: (key) {
+                if (key == null) return;
+                final option = options[key]!;
+                setState(() {
+                  selectedYear = option.year;
+                  selectedMonth = option.month;
+                  history = _load();
+                });
+              },
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: FutureBuilder<List<Map<String, dynamic>>>(
+                future: history,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState != ConnectionState.done) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (snapshot.hasError) {
+                    return Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text('Unable to load deduction history: ${snapshot.error}'),
+                        TextButton(onPressed: () => setState(() => history = _load()), child: const Text('Retry')),
+                      ],
+                    );
+                  }
+                  final items = snapshot.data ?? [];
+                  if (items.isEmpty) {
+                    return const Text('No saved deductions for this payroll month.');
+                  }
+                  return SingleChildScrollView(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: DataTable(
+                        columns: const [
+                          DataColumn(label: Text('Date')),
+                          DataColumn(label: Text('Type')),
+                          DataColumn(label: Text('Check in')),
+                          DataColumn(label: Text('Check out')),
+                          DataColumn(label: Text('Late duration')),
+                          DataColumn(label: Text('Amount')),
+                        ],
+                        rows: items.map((item) => DataRow(cells: [
+                          DataCell(Text('${item['attendance_date']}')),
+                          DataCell(Text(item['deduction_type'] == 'late' ? 'Late' : 'Absent')),
+                          DataCell(Text(_clock(item['check_in_at']))),
+                          DataCell(Text(_clock(item['check_out_at']))),
+                          DataCell(Text(_duration(item['late_minutes']))),
+                          DataCell(Text('₹${item['amount']}')),
+                        ])).toList(),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))],
+    );
+  }
+}
+
 class _PayrollKpis extends StatelessWidget {
   const _PayrollKpis({
     required this.total,
@@ -652,7 +802,7 @@ class _PayrollKpis extends StatelessWidget {
       _PayrollKpi(
         'Working days',
         '$workingDays',
-        'For this payroll month',
+        'Shared calendar for this month',
         Icons.calendar_month_outlined,
         _PayrollColors.blue,
       ),
@@ -1370,6 +1520,7 @@ class _PayrollDetailsPanel extends StatelessWidget {
     required this.row,
     required this.monthLabel,
     required this.onMarkPaid,
+    required this.onRevertPaid,
     required this.onHistory,
     required this.onCycleOverride,
   });
@@ -1377,6 +1528,7 @@ class _PayrollDetailsPanel extends StatelessWidget {
   final _PayrollRow? row;
   final String monthLabel;
   final ValueChanged<_PayrollRow> onMarkPaid;
+  final ValueChanged<_PayrollRow> onRevertPaid;
   final ValueChanged<_PayrollRow> onHistory;
   final ValueChanged<_PayrollRow> onCycleOverride;
 
@@ -1545,6 +1697,23 @@ class _PayrollDetailsPanel extends StatelessWidget {
                       ),
                       icon: const Icon(Icons.check_circle_outline, size: 18),
                       label: const Text('Mark as paid'),
+                    ),
+                  ),
+                ],
+                if (selected.status == 'Paid') ...[
+                  const SizedBox(height: 6),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () => onRevertPaid(selected),
+                      icon: const Icon(Icons.undo_rounded, size: 18),
+                      label: const Text('Revert paid'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFFD65A00),
+                        side: const BorderSide(color: Color(0xFFD65A00)),
+                        minimumSize: const Size.fromHeight(38),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
                     ),
                   ),
                 ],

@@ -47,4 +47,8 @@ function countWorkingDays(start, end, weeklyOffDays, overrides) {
   return total;
 }
 
-module.exports = { ensureCalendarTables, overridesForPeriod, isWorkingDay, countWorkingDays };
+function isEmployeeWorkingDay(date, resolver, overrides) {
+  return isWorkingDay(date, resolver.forDate(date), overrides);
+}
+
+module.exports = { ensureCalendarTables, overridesForPeriod, isWorkingDay, countWorkingDays, isEmployeeWorkingDay };

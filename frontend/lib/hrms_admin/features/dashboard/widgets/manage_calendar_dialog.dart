@@ -114,23 +114,24 @@ class _ManageCalendarDialogState extends State<ManageCalendarDialog> {
   }
 
   Future<void> _loadCalendar() async {
-    final loadedWeeklyOff = await CalendarStore.loadWeeklyOff();
+    var loadedWeeklyOff = await CalendarStore.loadWeeklyOff();
     var loadedOverrides = await CalendarStore.loadOverrides();
     try {
-      final serverOverrides = await HrmsDashboardApi.calendarOverrides();
-      // Move existing browser-only calendar entries to the shared server
-      // calendar once, so older saved holidays become visible to employees.
-      for (final override in loadedOverrides) {
-        await HrmsDashboardApi.saveCalendarOverride(override);
-      }
-      final merged = <String, Map<String, dynamic>>{
-        for (final item in serverOverrides) item['date'].toString(): item,
-        for (final item in loadedOverrides) item['date'].toString(): item,
-      };
-      loadedOverrides = merged.values.toList();
+      final data = await HrmsDashboardApi.calendarSettings();
+      final days = (data['weeklyOffDays'] as List? ?? []).map((day) => int.parse('$day')).toList();
+      if (days.isNotEmpty) loadedWeeklyOff = days.first == 0 ? DateTime.sunday : days.first;
+      // The server is authoritative. Opening the calendar must not write old
+      // browser-cache entries back over newer production settings.
+      loadedOverrides = (data['overrides'] as List? ?? [])
+          .whereType<Map>().map((item) => Map<String, dynamic>.from(item)).toList();
       await CalendarStore.saveOverrides(loadedOverrides);
     } catch (_) {
-      // Retain local calendar data when the API is temporarily unavailable.
+      // Retain cached data, but do not present it as confirmed server state.
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Could not load the server calendar. Showing cached settings; totals may be outdated.'),
+        ));
+      }
     }
     if (!mounted) return;
     setState(() {
@@ -168,6 +169,33 @@ class _ManageCalendarDialogState extends State<ManageCalendarDialog> {
               _DefaultWeeklyOff(
                 day: _weekdayName(weeklyOffDay),
                 onEdit: _showEditDefault,
+              ),
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF2F7FF),
+                  border: Border.all(color: _line),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.calendar_month_outlined, color: _blue),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Total working days', style: TextStyle(color: _navy, fontWeight: FontWeight.w600)),
+                          Text('For the displayed month · saved calendar rules', style: TextStyle(color: _off, fontSize: 12)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text('$_totalWorkingDays', style: const TextStyle(color: _blue, fontSize: 26, fontWeight: FontWeight.w700)),
+                  ],
+                ),
               ),
               const SizedBox(height: 12),
               if (compact) ...[
@@ -260,6 +288,17 @@ class _ManageCalendarDialogState extends State<ManageCalendarDialog> {
   DateTime get _selectedDate =>
       DateTime(visibleMonth.year, visibleMonth.month, selectedDay);
 
+  int get _totalWorkingDays {
+    final days = DateTime(visibleMonth.year, visibleMonth.month + 1, 0).day;
+    var total = 0;
+    for (var day = 1; day <= days; day++) {
+      if (_statusFor(DateTime(visibleMonth.year, visibleMonth.month, day)) == 'Working Day') {
+        total++;
+      }
+    }
+    return total;
+  }
+
   String _statusFor(DateTime date) {
     final key = _dateKey(date);
     final existing = overrides.where((item) => item['date'] == key).toList();
@@ -326,6 +365,13 @@ class _ManageCalendarDialogState extends State<ManageCalendarDialog> {
       ),
     );
     if (changed == true) {
+      try {
+        await HrmsDashboardApi.saveWeeklyOff(chosenDay);
+      } catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Weekly off was not saved: $error')));
+        return;
+      }
       await CalendarStore.saveWeeklyOff(chosenDay);
       if (!mounted) return;
       setState(() => weeklyOffDay = chosenDay);

@@ -50,11 +50,7 @@ function utcWeekday(year, month, day) {
 }
 
 function employeeWorkingDay(date, resolver, overrides) {
-  if (!weeklyOffTemplates.hasAssignmentForDate(resolver, date)) return calendar.isWorkingDay(date, resolver.forDate(date), overrides);
-  const override = overrides.get(date);
-  if (override === 'Holiday' || override === 'Weekly Off') return false;
-  const [year, month, day] = date.split('-').map(Number);
-  return !resolver.forDate(date).has(utcWeekday(year, month, day));
+  return calendar.isEmployeeWorkingDay(date, resolver, overrides);
 }
 
 function jsWeeklyOff(weeklyOff) {
@@ -91,7 +87,8 @@ async function calendarOverrides(req, res) {
     const [rows] = await db.query(`SELECT DATE_FORMAT(calendar_date, '%Y-%m-%d') AS date,
       status, scope, reason, updated_at AS updatedAt
       FROM hrms_calendar_overrides ORDER BY calendar_date ASC`);
-    return ok(res, { overrides: rows });
+    const rules = await getPayrollPolicy();
+    return ok(res, { overrides: rows, weeklyOffDays: [...rules.weeklyOffDays] });
   } catch (error) {
     return fail(res, 500, error.message);
   }
@@ -142,9 +139,19 @@ async function getPayrollPolicy() {
   await db.query(`INSERT IGNORE INTO hrms_payroll_policy (id, weekly_off_days) VALUES (1, '[0]')`);
   const [rows] = await db.query('SELECT * FROM hrms_payroll_policy WHERE id = 1');
   const row = rows[0] || {};
-  let days = [0];
-  try { days = JSON.parse(row.weekly_off_days || '[0]'); } catch (_) {}
+  const days = weeklyOffTemplates.parseDays(row.weekly_off_days, [0]);
   return { weeklyOffDays: new Set(Array.isArray(days) ? days.map(Number) : [0]), deductLeave: Boolean(Number(row.deduct_approved_leave ?? 1)), deductAbsence: Boolean(Number(row.deduct_explicit_absence ?? 1)), missingIsAbsent: Boolean(Number(row.missing_attendance_is_absent ?? 0)) };
+}
+
+async function saveCalendarWeeklyOff(req, res) {
+  try {
+    const days = weeklyOffTemplates.normalizeDays(req.body.weeklyOffDays);
+    await getPayrollPolicy();
+    await db.query('UPDATE hrms_payroll_policy SET weekly_off_days = ? WHERE id = 1', [JSON.stringify(days)]);
+    return ok(res, { weeklyOffDays: days }, 'Default weekly off saved');
+  } catch (error) {
+    return fail(res, 400, error.message);
+  }
 }
 
 async function timeSettings(req, res) {
@@ -182,7 +189,7 @@ async function monthView(req, res) {
     }
 
     const payrollRules = await getPayrollPolicy();
-    const weeklyOff = req.query.weeklyOff ? new Set([jsWeeklyOff(req.query.weeklyOff)]) : payrollRules.weeklyOffDays;
+    const weeklyOff = payrollRules.weeklyOffDays;
     const totalDays = daysInMonth(year, month);
     const start = ymd(year, month, 1);
     const end = ymd(year, month, totalDays);
@@ -485,6 +492,7 @@ async function monthView(req, res) {
       month: month,
       daysInMonth: totalDays,
       totalWorkingDays: globalWorkingDays,
+      calendarOverrides: [...calendarOverrides].map(([date, status]) => ({ date, status })),
       enabledLeaveTypes: enabledLeaveTypes,
       timezone: policy.TIME_ZONE,
       payrollPolicy: { weeklyOffDays: [...payrollRules.weeklyOffDays], deductApprovedLeave: payrollRules.deductLeave, deductExplicitAbsence: payrollRules.deductAbsence, missingAttendanceIsAbsent: payrollRules.missingIsAbsent },
@@ -509,4 +517,5 @@ module.exports = {
   updateTimeSettings,
   calendarOverrides,
   saveCalendarOverride,
+  saveCalendarWeeklyOff,
 };

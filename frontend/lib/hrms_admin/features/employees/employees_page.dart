@@ -650,7 +650,22 @@ class _EmployeesPageState extends State<EmployeesPage> {
             ? availableDepartments.first
             : 'Engineering');
     var selectedMode = employee?.workMode ?? 'Office';
-    final templates = await HrmsTrackingApi.trackingTemplates();
+    late final List<Map<String, dynamic>> templates;
+    try {
+      templates = await HrmsTrackingApi.trackingTemplates();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Unable to open the employee form: tracking templates could not '
+            'be loaded. Deploy the matching backend and try again. $error',
+          ),
+        ),
+      );
+      return;
+    }
+    if (!mounted) return;
     var selectedTrackingTemplateId = employee?.trackingTemplateId;
     var selectedEmployeeType = employee?.employeeType ?? 'Employee';
     var overtimeEligible = employee?.overtimeEligible ?? false;
@@ -2972,9 +2987,18 @@ class _EmployeeDetailPageState extends State<_EmployeeDetailPage> {
         final payrollHistory = _rows(data['payrollHistory']);
         return LayoutBuilder(
           builder: (context, constraints) {
-            final metricWidth = constraints.maxWidth < 760
-                ? (constraints.maxWidth - 64) / 2
-                : 190.0;
+            // Keep the summary balanced: the old fixed-width cards left a
+            // large empty area on wide employee-profile screens.
+            final metricColumns = constraints.maxWidth >= 1450
+                ? 4
+                : constraints.maxWidth >= 980
+                ? 3
+                : constraints.maxWidth >= 620
+                ? 2
+                : 1;
+            final metricWidth =
+                (constraints.maxWidth - ((metricColumns - 1) * 12)) /
+                metricColumns;
             final tabContent = _selectedTab == 0
                 ? _detailTable(
                     headers: const [
@@ -3097,69 +3121,7 @@ class _EmployeeDetailPageState extends State<_EmployeeDetailPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          CircleAvatar(
-                            radius: 22,
-                            backgroundColor: const Color(0xFFEAF0FA),
-                            child: Text(
-                              widget.employee.name.isEmpty
-                                  ? '?'
-                                  : widget.employee.name
-                                        .substring(0, 1)
-                                        .toUpperCase(),
-                              style: const TextStyle(
-                                color: HrmsColors.blue,
-                                fontWeight: FontWeight.w800,
-                                fontSize: 18,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  widget.employee.name,
-                                  style: const TextStyle(
-                                    color: HrmsColors.navy,
-                                    fontSize: 21,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                Wrap(
-                                  spacing: 9,
-                                  children: [
-                                    Text(
-                                      'Employee ID ${widget.employee.id}',
-                                      style: const TextStyle(
-                                        color: Color(0xFF657087),
-                                      ),
-                                    ),
-                                    Text(
-                                      widget.employee.department,
-                                      style: const TextStyle(
-                                        color: Color(0xFF657087),
-                                      ),
-                                    ),
-                                    Text(
-                                      widget.employee.workMode,
-                                      style: const TextStyle(
-                                        color: Color(0xFF657087),
-                                      ),
-                                    ),
-                                    _StatusBadge(
-                                      status: widget.employee.status,
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
+                      _EmployeeDetailHero(employee: widget.employee),
                       const SizedBox(height: 16),
                       Wrap(
                         spacing: 8,
@@ -3318,18 +3280,29 @@ class _EmployeeDetailMetric extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SizedBox(
     width: width,
-    height: 72,
+    height: 88,
     child: Container(
-      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: const Color(0xFFDCE4F1)),
+        boxShadow: const [
+          BoxShadow(color: Color(0x080D254A), blurRadius: 10, offset: Offset(0, 3)),
+        ],
       ),
       child: Row(
         children: [
-          Icon(icon, color: color, size: 19),
-          const SizedBox(width: 9),
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: .10),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: color, size: 21),
+          ),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -3349,7 +3322,7 @@ class _EmployeeDetailMetric extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: color,
-                    fontSize: 18,
+                    fontSize: 20,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -3358,6 +3331,101 @@ class _EmployeeDetailMetric extends StatelessWidget {
           ),
         ],
       ),
+    ),
+  );
+}
+
+class _EmployeeDetailHero extends StatelessWidget {
+  const _EmployeeDetailHero({required this.employee});
+
+  final _Employee employee;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(20),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: const Color(0xFFDCE4F1)),
+      boxShadow: const [
+        BoxShadow(color: Color(0x080D254A), blurRadius: 14, offset: Offset(0, 4)),
+      ],
+    ),
+    child: Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      runSpacing: 14,
+      spacing: 18,
+      children: [
+        CircleAvatar(
+          radius: 30,
+          backgroundColor: const Color(0xFFEAF0FA),
+          child: Text(
+            employee.name.isEmpty ? '?' : employee.name.substring(0, 1).toUpperCase(),
+            style: const TextStyle(
+              color: HrmsColors.blue,
+              fontWeight: FontWeight.w800,
+              fontSize: 25,
+            ),
+          ),
+        ),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 340),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                employee.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: HrmsColors.navy, fontSize: 24, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 5),
+              Text(employee.designation, style: const TextStyle(color: Color(0xFF657087), fontSize: 14)),
+            ],
+          ),
+        ),
+        _EmployeeDetailFact(Icons.badge_outlined, 'Employee ID', employee.id),
+        _EmployeeDetailFact(Icons.apartment_outlined, 'Department', employee.department),
+        _EmployeeDetailFact(Icons.location_on_outlined, 'Work mode', employee.workMode),
+        _StatusBadge(status: employee.status),
+      ],
+    ),
+  );
+}
+
+class _EmployeeDetailFact extends StatelessWidget {
+  const _EmployeeDetailFact(this.icon, this.label, this.value);
+
+  final IconData icon;
+  final String label, value;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    constraints: const BoxConstraints(minWidth: 130, maxWidth: 190),
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+    decoration: BoxDecoration(
+      color: const Color(0xFFF7F9FD),
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, color: HrmsColors.blue, size: 17),
+        const SizedBox(width: 7),
+        Flexible(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: const TextStyle(color: Color(0xFF71819C), fontSize: 11)),
+              Text(value.isEmpty ? '–' : value, maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: HrmsColors.navy, fontSize: 13, fontWeight: FontWeight.w700)),
+            ],
+          ),
+        ),
+      ],
     ),
   );
 }

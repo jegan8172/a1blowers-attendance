@@ -2119,6 +2119,7 @@ class _ClockWorkspaceState extends State<_ClockWorkspace> {
                                             width: tableConstraints.maxWidth
                                                 .clamp(850.0, double.infinity),
                                             child: DataTable(
+                                              showCheckboxColumn: false,
                                               headingRowColor:
                                                   WidgetStateProperty.all(
                                                     const Color(0xFFF3F6FA),
@@ -2129,6 +2130,7 @@ class _ClockWorkspaceState extends State<_ClockWorkspace> {
                                               dataRowMinHeight: 42,
                                               dataRowMaxHeight: 48,
                                               columns: const [
+                                                DataColumn(label: Text('S.No.')),
                                                 DataColumn(
                                                   label: Text('Employee'),
                                                 ),
@@ -2149,9 +2151,11 @@ class _ClockWorkspaceState extends State<_ClockWorkspace> {
                                                   label: Text('Status'),
                                                 ),
                                               ],
-                                              rows: shown
+                                              rows: shown.asMap().entries
                                                   .map(
-                                                    (log) => DataRow(
+                                                    (entry) {
+                                                      final log = entry.value;
+                                                      return DataRow(
                                                       selected:
                                                           '${log['id']}' ==
                                                           selectedId,
@@ -2200,6 +2204,7 @@ class _ClockWorkspaceState extends State<_ClockWorkspace> {
                                                         }
                                                       },
                                                       cells: [
+                                                        DataCell(Text('${current * perPage + entry.key + 1}')),
                                                         DataCell(
                                                           Text(
                                                             '${log['employeeName'] ?? '-'}',
@@ -2239,7 +2244,8 @@ class _ClockWorkspaceState extends State<_ClockWorkspace> {
                                                           ),
                                                         ),
                                                       ],
-                                                    ),
+                                                    );
+                                                    },
                                                   )
                                                   .toList(),
                                             ),

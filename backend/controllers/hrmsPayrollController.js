@@ -60,6 +60,21 @@ async function ensureDeductionStorage() {
   }
 }
 
+async function ensurePayrollStatusAudit() {
+  await db.query(`CREATE TABLE IF NOT EXISTS hrms_payroll_status_audit (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    payroll_item_id BIGINT UNSIGNED NOT NULL,
+    profile_id BIGINT UNSIGNED NOT NULL,
+    employee_user_id BIGINT UNSIGNED NOT NULL,
+    previous_status VARCHAR(20) NOT NULL,
+    new_status VARCHAR(20) NOT NULL,
+    reason TEXT NULL,
+    changed_by BIGINT UNSIGNED NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_payroll_status_audit_item (payroll_item_id, created_at)
+  )`);
+}
+
 async function ensurePolicyTable() {
   await db.query(`CREATE TABLE IF NOT EXISTS hrms_payroll_policy (
     id TINYINT UNSIGNED NOT NULL PRIMARY KEY,
@@ -85,8 +100,7 @@ async function payrollPolicy() {
   await ensurePolicyTable();
   const [rows] = await db.query('SELECT * FROM hrms_payroll_policy WHERE id = 1');
   const row = rows[0] || {};
-  let weeklyOffDays = DEFAULT_POLICY.weeklyOffDays;
-  try { weeklyOffDays = JSON.parse(row.weekly_off_days || '[0]'); } catch (_) {}
+  const weeklyOffDays = weeklyOffTemplates.parseDays(row.weekly_off_days, DEFAULT_POLICY.weeklyOffDays);
   return {
     weeklyOffDays: Array.isArray(weeklyOffDays) ? weeklyOffDays.map(Number).filter((day) => day >= 0 && day <= 6) : [0],
     deductApprovedLeave: Boolean(Number(row.deduct_approved_leave ?? 1)),
@@ -117,11 +131,7 @@ function utcWeekday(year, month, day) {
 }
 
 function employeeWorkingDay(date, resolver, overrides) {
-  if (!weeklyOffTemplates.hasAssignmentForDate(resolver, date)) return calendar.isWorkingDay(date, resolver.forDate(date), overrides);
-  const override = overrides.get(date);
-  if (override === 'Holiday' || override === 'Weekly Off') return false;
-  const [year, month, day] = date.split('-').map(Number);
-  return !resolver.forDate(date).has(utcWeekday(year, month, day));
+  return calendar.isEmployeeWorkingDay(date, resolver, overrides);
 }
 
 function daysInMonth(year, month) {
@@ -322,10 +332,14 @@ async function computeRows(year, month, today, options) {
 
   const userIds = profiles.map(function (row) { return row.employee_user_id; }).filter(Boolean);
 
+  // Attendance DATETIME values already contain India-local clock time. Return
+  // text so mysql2 cannot interpret them in the host timezone as JS Dates and
+  // attendanceTimeSeconds cannot apply the India offset a second time.
   const [records] = userIds.length
     ? await db.query(
         `SELECT employee_id, DATE_FORMAT(attendance_date, '%Y-%m-%d') AS attendance_date,
-                check_in_at, is_late, attendance_status
+                DATE_FORMAT(check_in_at, '%Y-%m-%d %H:%i:%s') AS check_in_at,
+                is_late, attendance_status
          FROM attendance_records
          WHERE attendance_date BETWEEN ? AND ?
            AND employee_id IN (?)`,
@@ -605,6 +619,14 @@ async function list(req, res) {
       items = items.filter(function (item) { return item.status === status; });
     }
     const names = [...new Set(allItems.map(function (item) { return item.name; }))];
+    const configuredPolicy = await payrollPolicy();
+    const start = ymd(parsed.year, parsed.month, 1);
+    const end = ymd(parsed.year, parsed.month, daysInMonth(parsed.year, parsed.month));
+    const overrides = await calendar.overridesForPeriod(start, end);
+    const kpis = toKpis(items);
+    // Monthly reference uses the shared calendar, not the maximum of saved
+    // paid rows or employee-specific Flexible cycles/templates.
+    kpis.totalWorkingDays = calendar.countWorkingDays(start, end, new Set(configuredPolicy.weeklyOffDays), overrides);
     return ok(res, {
       year: parsed.year,
       month: parsed.month,
@@ -614,7 +636,7 @@ async function list(req, res) {
       policy: await payrollPolicy(),
       items: items,
       employees: names,
-      kpis: toKpis(items),
+      kpis: kpis,
     });
   } catch (error) {
     console.error('GET /hrms/payroll', error);
@@ -758,15 +780,22 @@ async function markPaid(req, res) {
   try {
     const id = Number(req.params.id);
     const status = String((req.body && req.body.status) || 'paid').toLowerCase();
+    const reason = String((req.body && req.body.reason) || '').trim();
     if (status !== 'paid' && status !== 'pending') {
       return fail(res, 400, 'status must be paid or pending');
     }
     const at = status === 'paid' ? policy.nowIstDateTime() : null;
-    const [[payroll]] = await db.query(`SELECT p.id, p.monthly_salary FROM hrms_payroll_items p
+    const [[payroll]] = await db.query(`SELECT p.id, p.profile_id, p.employee_user_id, p.monthly_salary, p.status FROM hrms_payroll_items p
       JOIN hrms_employee_profiles e ON e.id = p.profile_id AND e.employee_user_id = p.employee_user_id
       JOIN employee_users u ON u.id = e.employee_user_id WHERE p.id = ?`, [id]);
     if (!payroll) return fail(res, 404, 'Payroll row not found. Generate payroll for this month first.');
     if (Number(payroll.monthly_salary) <= 0) return fail(res, 400, 'Compensation must be configured before payroll can be paid.');
+    const previousStatus = String(payroll.status || '').toLowerCase();
+    if (status === 'pending') {
+      if (previousStatus !== 'paid') return fail(res, 400, 'Only a paid payroll can be reverted.');
+      if (reason.length < 5) return fail(res, 400, 'Provide a reason of at least 5 characters before reverting paid payroll.');
+      await ensurePayrollStatusAudit();
+    }
     const [result] = await db.query(
       `UPDATE hrms_payroll_items
        SET status = ?, paid_at = ?
@@ -776,8 +805,16 @@ async function markPaid(req, res) {
     if (!result.affectedRows) {
       return fail(res, 404, 'Payroll row not found. Generate payroll for this month first.');
     }
+    if (status === 'pending') {
+      await db.query(
+        `INSERT INTO hrms_payroll_status_audit
+          (payroll_item_id, profile_id, employee_user_id, previous_status, new_status, reason, changed_by)
+         VALUES (?, ?, ?, ?, 'pending', ?, ?)`,
+        [payroll.id, payroll.profile_id, payroll.employee_user_id, previousStatus, reason, req.user && req.user.id ? req.user.id : null]
+      );
+    }
     const [rows] = await db.query('SELECT * FROM hrms_payroll_items WHERE id = ?', [id]);
-    return ok(res, rows[0] || {}, 'Marked ' + status);
+    return ok(res, rows[0] || {}, status === 'pending' ? 'Payroll reverted to pending. Regenerate it to apply current attendance rules.' : 'Marked paid');
   } catch (error) {
     console.error('PATCH /hrms/payroll/:id', error);
     return fail(res, 500, error.message);
@@ -828,14 +865,26 @@ async function deductionHistory(req, res) {
     const profileId = Number(req.params.profileId);
     const year = Number(req.query.year);
     const month = Number(req.query.month);
-    if (!profileId || !year || month < 1 || month > 12) return fail(res, 400, 'profile, year, and month are required');
-    await ensureDeductionStorage();
+    if (!Number.isInteger(profileId) || profileId < 1 || !Number.isInteger(year) || year < 1 ||
+        !Number.isInteger(month) || month < 1 || month > 12) {
+      return fail(res, 400, 'profile, year, and month are required');
+    }
+    // History is read-only: changing the selected month must not regenerate
+    // payroll, alter tables, or replace saved deduction entries.
     const [rows] = await db.query(
-      `SELECT DATE_FORMAT(attendance_date, '%Y-%m-%d') AS attendance_date,
-              deduction_type, late_minutes, amount
-       FROM hrms_payroll_deduction_entries
-       WHERE profile_id = ? AND pay_year = ? AND pay_month = ?
-       ORDER BY attendance_date DESC, deduction_type ASC`,
+      `SELECT DATE_FORMAT(d.attendance_date, '%Y-%m-%d') AS attendance_date,
+              d.deduction_type, d.late_minutes, d.amount,
+              (SELECT DATE_FORMAT(MIN(a.check_in_at), '%Y-%m-%d %H:%i:%s')
+               FROM attendance_records a
+               WHERE a.employee_id = d.employee_user_id
+                 AND a.attendance_date = d.attendance_date) AS check_in_at,
+              (SELECT DATE_FORMAT(MAX(a.check_out_at), '%Y-%m-%d %H:%i:%s')
+               FROM attendance_records a
+               WHERE a.employee_id = d.employee_user_id
+                 AND a.attendance_date = d.attendance_date) AS check_out_at
+       FROM hrms_payroll_deduction_entries d
+       WHERE d.profile_id = ? AND d.pay_year = ? AND d.pay_month = ?
+       ORDER BY d.attendance_date DESC, d.deduction_type ASC`,
       [profileId, year, month]
     );
     return ok(res, rows);

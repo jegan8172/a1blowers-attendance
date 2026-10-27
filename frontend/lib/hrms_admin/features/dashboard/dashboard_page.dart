@@ -73,6 +73,7 @@ class _DashboardPageState extends State<DashboardPage> {
   late String _month;
   late int _year;
   int _weeklyOffDay = DateTime.sunday;
+  int _serverWorkingDays = 0;
   List<Map<String, dynamic>> _calendarOverrides = [];
   List<_EmployeeAttendance> _employees = [];
   int _kpiTotal = 0;
@@ -215,6 +216,15 @@ class _DashboardPageState extends State<DashboardPage> {
         _kpiPresent = _asInt(kpis['present']);
         _kpiAbsent = _asInt(kpis['absent']);
         _kpiLate = _asInt(kpis['late']);
+        _serverWorkingDays = _asInt(data['totalWorkingDays']);
+        final rules = Map<String, dynamic>.from(data['payrollPolicy'] as Map? ?? {});
+        final offDays = rules['weeklyOffDays'] as List? ?? [];
+        if (offDays.isNotEmpty) {
+          final day = _asInt(offDays.first);
+          _weeklyOffDay = day == 0 ? DateTime.sunday : day;
+        }
+        _calendarOverrides = (data['calendarOverrides'] as List? ?? [])
+            .whereType<Map>().map((item) => Map<String, dynamic>.from(item)).toList();
         _loading = false;
       });
     } catch (err) {
@@ -420,13 +430,7 @@ class _DashboardPageState extends State<DashboardPage> {
   );
 
   int get _monthlyWorkingDays {
-    final monthNumber = _monthCodes.indexOf(_month) + 1;
-    final days = DateTime(_year, monthNumber + 1, 0).day;
-    var count = 0;
-    for (var day = 1; day <= days; day++) {
-      if (DateTime(_year, monthNumber, day).weekday != _weeklyOffDay) count++;
-    }
-    return count;
+    return _serverWorkingDays;
   }
 
   Widget _attendancePanel({required bool expanded}) {

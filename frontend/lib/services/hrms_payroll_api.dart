@@ -82,6 +82,15 @@ class HrmsPayrollApi {
     return _decode(response);
   }
 
+  static Future<Map<String, dynamic>> revertPaid(int id, String reason) async {
+    final response = await http.patch(
+      Uri.parse('${ApiConfig.baseUrl}/hrms/payroll/$id'),
+      headers: await _headers(),
+      body: jsonEncode({'status': 'pending', 'reason': reason}),
+    );
+    return _decode(response);
+  }
+
   static Future<List<Map<String, dynamic>>> deductionHistory({required int profileId, required int year, required int month}) async {
     final response = await http.get(Uri.parse('${ApiConfig.baseUrl}/hrms/payroll/$profileId/deduction-history?year=$year&month=$month'), headers: await _headers());
     final data = _decode(response);
