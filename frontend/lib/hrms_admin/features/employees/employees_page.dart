@@ -3728,8 +3728,10 @@ class _EmployeeDetailPageState extends State<_EmployeeDetailPage> {
                 : constraints.maxWidth >= 620
                 ? 2
                 : 1;
+            // Keep a small safety gap so all eight cards remain on one line
+            // even when the page has a scrollbar or a fractional layout width.
             final metricWidth =
-                (constraints.maxWidth - ((metricColumns - 1) * 12)) /
+                (constraints.maxWidth - ((metricColumns - 1) * 20)) /
                 metricColumns;
             final tabContent = _selectedTab == 0
                 ? _detailTable(
@@ -4012,7 +4014,7 @@ class _EmployeeDetailMetric extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SizedBox(
     width: width,
-    height: 94,
+    height: 106,
     child: Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
