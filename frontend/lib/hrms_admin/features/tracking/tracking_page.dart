@@ -2374,6 +2374,7 @@ class _EmployeeTrackingDetailsDialogState
   String? _invalidationReason;
   List<Map<String, dynamic>> _waitingReasons = const [];
   List<Map<String, dynamic>> _comments = const [];
+  bool _sessionStoppedOnSelectedDate = false;
 
   List<LatLng> get _route => _routePoints;
 
@@ -2416,6 +2417,9 @@ class _EmployeeTrackingDetailsDialogState
           .where((point) => point.latitude != null && point.longitude != null)
           .map((point) => LatLng(point.latitude!, point.longitude!))
           .toList(growable: false);
+      final session = data['trackingSession'] is Map
+          ? Map<String, dynamic>.from(data['trackingSession'] as Map)
+          : null;
       setState(() {
         _mapPoints = mapPoints;
         _routePoints = routePoints;
@@ -2426,6 +2430,10 @@ class _EmployeeTrackingDetailsDialogState
         _invalidationReason = data['invalidationReason']?.toString();
         _waitingReasons = entriesFor('waitingReasons');
         _comments = entriesFor('comments');
+        _sessionStoppedOnSelectedDate =
+            session != null &&
+            session['isActive'] != true &&
+            session['stoppedAt'] != null;
         _loading = false;
       });
     } catch (error) {
@@ -2835,7 +2843,7 @@ class _EmployeeTrackingDetailsDialogState
                 ),
                 infoWindow: const InfoWindow(title: 'Start'),
               ),
-              if (_route.length > 1)
+              if (_route.length > 1 && _sessionStoppedOnSelectedDate)
                 Marker(
                   markerId: const MarkerId('details-end'),
                   position: _route.last,
@@ -2843,6 +2851,15 @@ class _EmployeeTrackingDetailsDialogState
                     BitmapDescriptor.hueRed,
                   ),
                   infoWindow: const InfoWindow(title: 'End'),
+                ),
+              if (_route.length > 1 && !_sessionStoppedOnSelectedDate)
+                Marker(
+                  markerId: const MarkerId('details-latest'),
+                  position: _route.last,
+                  icon: BitmapDescriptor.defaultMarkerWithHue(
+                    BitmapDescriptor.hueAzure,
+                  ),
+                  infoWindow: const InfoWindow(title: 'Latest location update'),
                 ),
             },
           ),
@@ -2988,29 +3005,33 @@ class _EmployeeTrackingDetailsDialogState
     ],
   );
 
-  List<Widget> _routeHistoryRows() => _activityPoints
-      .map(
-        (point) => _historyRow(
+  List<Widget> _routeHistoryRows() =>
+      _activityPoints.asMap().entries.map((entry) {
+        final point = entry.value;
+        final isStart = entry.key == 0;
+        final isEnd =
+            _sessionStoppedOnSelectedDate &&
+            entry.key == _activityPoints.length - 1;
+        return _historyRow(
           time: point.time,
-          title: point == _activityPoints.first
+          title: isStart
               ? 'Start'
-              : point == _activityPoints.last
+              : isEnd
               ? 'End'
               : 'Location update',
           detail: point.location,
-          icon: point == _activityPoints.first
+          icon: isStart
               ? Icons.play_circle_fill
-              : point == _activityPoints.last
+              : isEnd
               ? Icons.stop_circle
               : Icons.location_on_outlined,
-          color: point == _activityPoints.first
+          color: isStart
               ? const Color(0xFF00A878)
-              : point == _activityPoints.last
+              : isEnd
               ? Colors.red
               : HrmsColors.blue,
-        ),
-      )
-      .toList();
+        );
+      }).toList();
 
   List<Widget> _waitingReasonRows() => _waitingReasons
       .map(

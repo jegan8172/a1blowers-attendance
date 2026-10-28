@@ -962,6 +962,22 @@ async function routeHistory(req, res) {
       [employeeUserId, date]
     );
 
+    // A GPS ping is only a location update.  It is not proof that field
+    // tracking ended.  Return the explicit field-session stop state so the
+    // admin UI can render an End marker only after the employee stops.
+    const [sessions] = await db.query(
+      `SELECT is_active, started_at, stopped_at, stop_latitude, stop_longitude,
+              stop_reason
+       FROM hrms_field_tracking_sessions
+       WHERE employee_user_id = ?
+         AND (DATE(started_at) = ? OR DATE(stopped_at) = ?)
+       ORDER BY CASE WHEN DATE(stopped_at) = ? THEN 0 ELSE 1 END,
+                started_at DESC
+       LIMIT 1`,
+      [employeeUserId, date, date, date]
+    );
+    const session = sessions[0] || null;
+
     // Keep the admin detail view self-contained: route points, resolved
     // waiting-popup reasons, and permanent comments all come from the same
     // date-scoped request. Previously `/route/:employeeUserId` returned only
@@ -1006,6 +1022,16 @@ async function routeHistory(req, res) {
       waitingReasons: waitingRows[0],
       comments: commentRows[0],
       activityPoints: rawRoutePoints(pings),
+      trackingSession: session
+        ? {
+            isActive: Number(session.is_active) === 1,
+            startedAt: session.started_at,
+            stoppedAt: session.stopped_at,
+            stopLatitude: session.stop_latitude,
+            stopLongitude: session.stop_longitude,
+            stopReason: session.stop_reason,
+          }
+        : null,
     });
   } catch (error) {
     console.error('GET /hrms/tracking/route/:employeeUserId', error);
