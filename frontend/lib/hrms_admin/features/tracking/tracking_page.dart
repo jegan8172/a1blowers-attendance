@@ -57,7 +57,11 @@ Future<BitmapDescriptor> _adminRouteMarkerIcon(
 }
 
 class TrackingPage extends StatefulWidget {
-  const TrackingPage({super.key, this.settingsAction, this.inSettingsDialog = false});
+  const TrackingPage({
+    super.key,
+    this.settingsAction,
+    this.inSettingsDialog = false,
+  });
 
   final String? settingsAction;
   final bool inSettingsDialog;
@@ -102,7 +106,8 @@ class _TrackingPageState extends State<TrackingPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final action = widget.settingsAction ??
+    final action =
+        widget.settingsAction ??
         (ModalRoute.of(context)?.settings.arguments as Map?)?['settingsAction'];
     if (_openedSettingsAction || action == null) return;
     _openedSettingsAction = true;
@@ -110,7 +115,10 @@ class _TrackingPageState extends State<TrackingPage> {
       if (action == 'officeLocation') await _openOfficeLocation();
       if (action == 'trackingSettings') await _openFieldWaitingSettings();
       if (action == 'otherTrackingSettings') {
-        await showDialog<void>(context: context, builder: (_) => const _FieldWaitingSettingsDialog());
+        await showDialog<void>(
+          context: context,
+          builder: (_) => const _FieldWaitingSettingsDialog(),
+        );
       }
       if (action == 'clockOutReminderSettings') {
         await _openClockOutReminderSettings();
@@ -351,7 +359,9 @@ class _TrackingPageState extends State<TrackingPage> {
 
 class _TrackingTemplatesDialog extends StatefulWidget {
   const _TrackingTemplatesDialog();
-  @override State<_TrackingTemplatesDialog> createState() => _TrackingTemplatesDialogState();
+  @override
+  State<_TrackingTemplatesDialog> createState() =>
+      _TrackingTemplatesDialogState();
 }
 
 class _TrackingTemplatesDialogState extends State<_TrackingTemplatesDialog> {
@@ -359,10 +369,18 @@ class _TrackingTemplatesDialogState extends State<_TrackingTemplatesDialog> {
   String? error;
   List<Map<String, dynamic>> items = [];
 
-  @override void initState() { super.initState(); _load(); }
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
   Future<void> _load() async {
-    try { items = await HrmsTrackingApi.trackingTemplates(); }
-    catch (e) { error = e.toString().replaceFirst('Exception: ', ''); }
+    try {
+      items = await HrmsTrackingApi.trackingTemplates();
+    } catch (e) {
+      error = e.toString().replaceFirst('Exception: ', '');
+    }
     if (mounted) setState(() => loading = false);
   }
 
@@ -373,82 +391,218 @@ class _TrackingTemplatesDialogState extends State<_TrackingTemplatesDialog> {
     final ping = TextEditingController(text: '15');
     final repeat = TextEditingController(text: '5');
     final form = GlobalKey<FormState>();
-    final save = await showDialog<bool>(context: context, builder: (_) => AlertDialog(
-      title: const Text('Create tracking template'),
-      content: SizedBox(width: 420, child: Form(key: form, child: Column(mainAxisSize: MainAxisSize.min, children: [
-        _templateField(name, 'Template name', text: true),
-        _templateField(waiting, 'Waiting time (minutes)'),
-        _templateField(radius, 'Stationary radius (metres)'),
-        _templateField(ping, 'GPS update interval (minutes)'),
-        _templateField(repeat, 'Popup alert repeat (seconds)'),
-      ]))),
-      actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')), FilledButton(onPressed: () { if (form.currentState!.validate()) Navigator.pop(context, true); }, child: const Text('Create'))],
-    ));
+    final save = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Create tracking template'),
+        content: SizedBox(
+          width: 420,
+          child: Form(
+            key: form,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _templateField(name, 'Template name', text: true),
+                _templateField(waiting, 'Waiting time (minutes)'),
+                _templateField(radius, 'Stationary radius (metres)'),
+                _templateField(ping, 'GPS update interval (minutes)'),
+                _templateField(repeat, 'Popup alert repeat (seconds)'),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (form.currentState!.validate()) Navigator.pop(context, true);
+            },
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    );
     if (save != true) return;
     try {
-      await HrmsTrackingApi.createTrackingTemplate({'name': name.text.trim(), 'fieldWaitingMinutes': int.parse(waiting.text), 'stationaryRadiusMeters': int.parse(radius.text), 'fieldPingIntervalMinutes': int.parse(ping.text), 'popupAlertRepeatSeconds': int.parse(repeat.text)});
-      setState(() => loading = true); await _load();
-    } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString().replaceFirst('Exception: ', '')))); }
+      await HrmsTrackingApi.createTrackingTemplate({
+        'name': name.text.trim(),
+        'fieldWaitingMinutes': int.parse(waiting.text),
+        'stationaryRadiusMeters': int.parse(radius.text),
+        'fieldPingIntervalMinutes': int.parse(ping.text),
+        'popupAlertRepeatSeconds': int.parse(repeat.text),
+      });
+      setState(() => loading = true);
+      await _load();
+    } catch (e) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+        );
+    }
   }
 
-  Widget _templateField(TextEditingController controller, String label, {bool text = false}) => Padding(
+  Widget _templateField(
+    TextEditingController controller,
+    String label, {
+    bool text = false,
+  }) => Padding(
     padding: const EdgeInsets.only(bottom: 12),
-    child: TextFormField(controller: controller, keyboardType: text ? TextInputType.text : TextInputType.number,
-      decoration: InputDecoration(labelText: label, border: const OutlineInputBorder()),
+    child: TextFormField(
+      controller: controller,
+      keyboardType: text ? TextInputType.text : TextInputType.number,
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+      ),
       validator: (value) {
         if (value == null || value.trim().isEmpty) return 'Required';
         if (text) return null;
         final number = int.tryParse(value);
         if (number == null) return 'Enter a number';
-        if (label.contains('radius') && (number < 1 || number > 10000)) return 'Use 1–10000 metres';
-        if (label.contains('repeat') && (number < 2 || number > 3600)) return 'Use 2–3600 seconds';
-        if (!label.contains('radius') && !label.contains('repeat') && (number < 1 || number > 1440)) return 'Use 1–1440 minutes';
+        if (label.contains('radius') && (number < 1 || number > 10000))
+          return 'Use 1–10000 metres';
+        if (label.contains('repeat') && (number < 2 || number > 3600))
+          return 'Use 2–3600 seconds';
+        if (!label.contains('radius') &&
+            !label.contains('repeat') &&
+            (number < 1 || number > 1440))
+          return 'Use 1–1440 minutes';
         return null;
-      }),
+      },
+    ),
   );
 
   Widget _field(TextEditingController c, String label) => Padding(
     padding: const EdgeInsets.only(bottom: 12),
-    child: TextFormField(controller: c, keyboardType: TextInputType.number,
-      decoration: InputDecoration(labelText: label, border: const OutlineInputBorder()),
-      validator: (v) { if (v == null || v.trim().isEmpty) return 'Required'; return null; }),
+    child: TextFormField(
+      controller: c,
+      keyboardType: TextInputType.number,
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+      ),
+      validator: (v) {
+        if (v == null || v.trim().isEmpty) return 'Required';
+        return null;
+      },
+    ),
   );
 
-  @override Widget build(BuildContext context) => AlertDialog(
+  @override
+  Widget build(BuildContext context) => AlertDialog(
     title: const Text('Live tracking templates'),
-    content: SizedBox(width: 650, height: 420,
-      child: loading ? const Center(child: CircularProgressIndicator()) :
-        error != null ? Text(error!) : ListView(children: [
-          for (final t in items) ListTile(
-            title: Text('${t['name']}'),
-            subtitle: Text('Waiting ${t['field_waiting_minutes']}m • Radius ${t['stationary_radius_meters']}m • GPS ${t['field_ping_interval_minutes']}m • Repeat ${t['popup_alert_repeat_seconds']}s • Assigned ${t['assigned_employee_count'] ?? 0}'),
-            trailing: (t['is_active'] == 1 || t['is_active'] == true) && t['name'] != 'Default'
-                ? IconButton(
-                    tooltip: 'Archive template',
-                    icon: const Icon(Icons.archive_outlined),
-                    onPressed: () async {
-                      await HrmsTrackingApi.archiveTrackingTemplate(int.parse('${t['id']}'));
-                      if (mounted) { setState(() => loading = true); await _load(); }
-                    },
-                  )
-                : (t['is_active'] == 1 || t['is_active'] == true)
-                    ? const Text('Default')
-                    : Wrap(children: [
-                        IconButton(tooltip: 'Unarchive template', icon: const Icon(Icons.unarchive_outlined), onPressed: () async {
-                          try { await HrmsTrackingApi.restoreTrackingTemplate(int.parse('${t['id']}')); if (mounted) { setState(() => loading = true); await _load(); } }
-                          catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString().replaceFirst('Exception: ', '')))); }
-                        }),
-                        IconButton(tooltip: 'Delete template', icon: const Icon(Icons.delete_outline), onPressed: () async {
-                          try { await HrmsTrackingApi.deleteTrackingTemplate(int.parse('${t['id']}')); if (mounted) { setState(() => loading = true); await _load(); } }
-                          catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString().replaceFirst('Exception: ', '')))); }
-                        }),
-                      ]),
-          ),
-        ]),
+    content: SizedBox(
+      width: 650,
+      height: 420,
+      child: loading
+          ? const Center(child: CircularProgressIndicator())
+          : error != null
+          ? Text(error!)
+          : ListView(
+              children: [
+                for (final t in items)
+                  ListTile(
+                    title: Text('${t['name']}'),
+                    subtitle: Text(
+                      'Waiting ${t['field_waiting_minutes']}m • Radius ${t['stationary_radius_meters']}m • GPS ${t['field_ping_interval_minutes']}m • Repeat ${t['popup_alert_repeat_seconds']}s • Assigned ${t['assigned_employee_count'] ?? 0}',
+                    ),
+                    trailing:
+                        (t['is_active'] == 1 || t['is_active'] == true) &&
+                            t['name'] != 'Default'
+                        ? IconButton(
+                            tooltip: 'Archive template',
+                            icon: const Icon(Icons.archive_outlined),
+                            onPressed: () async {
+                              await HrmsTrackingApi.archiveTrackingTemplate(
+                                int.parse('${t['id']}'),
+                              );
+                              if (mounted) {
+                                setState(() => loading = true);
+                                await _load();
+                              }
+                            },
+                          )
+                        : (t['is_active'] == 1 || t['is_active'] == true)
+                        ? const Text('Default')
+                        : Wrap(
+                            children: [
+                              IconButton(
+                                tooltip: 'Unarchive template',
+                                icon: const Icon(Icons.unarchive_outlined),
+                                onPressed: () async {
+                                  try {
+                                    await HrmsTrackingApi.restoreTrackingTemplate(
+                                      int.parse('${t['id']}'),
+                                    );
+                                    if (mounted) {
+                                      setState(() => loading = true);
+                                      await _load();
+                                    }
+                                  } catch (e) {
+                                    if (mounted)
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            e.toString().replaceFirst(
+                                              'Exception: ',
+                                              '',
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                  }
+                                },
+                              ),
+                              IconButton(
+                                tooltip: 'Delete template',
+                                icon: const Icon(Icons.delete_outline),
+                                onPressed: () async {
+                                  try {
+                                    await HrmsTrackingApi.deleteTrackingTemplate(
+                                      int.parse('${t['id']}'),
+                                    );
+                                    if (mounted) {
+                                      setState(() => loading = true);
+                                      await _load();
+                                    }
+                                  } catch (e) {
+                                    if (mounted)
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            e.toString().replaceFirst(
+                                              'Exception: ',
+                                              '',
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                  }
+                                },
+                              ),
+                            ],
+                          ),
+                  ),
+              ],
+            ),
     ),
     actions: [
-      FilledButton.icon(onPressed: _createTemplate, icon: const Icon(Icons.add), label: const Text('Create template')),
-      TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
+      FilledButton.icon(
+        onPressed: _createTemplate,
+        icon: const Icon(Icons.add),
+        label: const Text('Create template'),
+      ),
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Close'),
+      ),
     ],
   );
 }
@@ -690,138 +844,135 @@ class _TrackingKpi extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = AdminSurfacePalette.of(context);
     return LayoutBuilder(
-    builder: (_, constraints) {
-      final compact = constraints.maxWidth < 220;
-      return Container(
-        height: 116,
-        padding: EdgeInsets.fromLTRB(
-          compact ? 12 : 16,
-          14,
-          compact ? 12 : 16,
-          9,
-        ),
-        decoration: BoxDecoration(
-          color: palette.surface,
-          border: Border.all(color: palette.border),
-          borderRadius: BorderRadius.circular(14),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x08071A72),
-              blurRadius: 14,
-              offset: Offset(0, 5),
-            ),
-          ],
-        ),
-        child: compact
-            ? Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 39,
-                        height: 39,
-                        decoration: BoxDecoration(
-                          color: color.withValues(alpha: .10),
-                          borderRadius: BorderRadius.circular(11),
-                        ),
-                        child: Icon(icon, color: color, size: 23),
-                      ),
-                      const Spacer(),
-                      Text(
-                        value,
-                        style: TextStyle(
-                          color: palette.text,
-                          fontSize: 25,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const Spacer(),
-                  Text(
-                    label,
-                    style: TextStyle(
-                      color: palette.text,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 11,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    caption,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: palette.mutedText,
-                      fontSize: 9,
-                    ),
-                  ),
-                ],
-              )
-            : Column(
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 54,
-                        height: 54,
-                        decoration: BoxDecoration(
-                          color: color.withValues(alpha: .09),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(icon, color: color, size: 29),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              label,
-                              style: TextStyle(
-                                color: palette.text,
-                                fontSize: 13,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              value,
-                              style: TextStyle(
-                                color: palette.text,
-                                fontSize: 27,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              caption,
-                              style: TextStyle(
-                                color: palette.mutedText,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const Spacer(),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Container(
-                      width: 55,
-                      height: 3,
-                      decoration: BoxDecoration(
-                        color: HrmsColors.blue,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                    ),
-                  ),
-                ],
+      builder: (_, constraints) {
+        final compact = constraints.maxWidth < 220;
+        return Container(
+          height: 116,
+          padding: EdgeInsets.fromLTRB(
+            compact ? 12 : 16,
+            14,
+            compact ? 12 : 16,
+            9,
+          ),
+          decoration: BoxDecoration(
+            color: palette.surface,
+            border: Border.all(color: palette.border),
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x08071A72),
+                blurRadius: 14,
+                offset: Offset(0, 5),
               ),
-      );
-    },
-  );
+            ],
+          ),
+          child: compact
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 39,
+                          height: 39,
+                          decoration: BoxDecoration(
+                            color: color.withValues(alpha: .10),
+                            borderRadius: BorderRadius.circular(11),
+                          ),
+                          child: Icon(icon, color: color, size: 23),
+                        ),
+                        const Spacer(),
+                        Text(
+                          value,
+                          style: TextStyle(
+                            color: palette.text,
+                            fontSize: 25,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const Spacer(),
+                    Text(
+                      label,
+                      style: TextStyle(
+                        color: palette.text,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 11,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      caption,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: palette.mutedText, fontSize: 9),
+                    ),
+                  ],
+                )
+              : Column(
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 54,
+                          height: 54,
+                          decoration: BoxDecoration(
+                            color: color.withValues(alpha: .09),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(icon, color: color, size: 29),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                label,
+                                style: TextStyle(
+                                  color: palette.text,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                value,
+                                style: TextStyle(
+                                  color: palette.text,
+                                  fontSize: 27,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                caption,
+                                style: TextStyle(
+                                  color: palette.mutedText,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const Spacer(),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Container(
+                        width: 55,
+                        height: 3,
+                        decoration: BoxDecoration(
+                          color: HrmsColors.blue,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+        );
+      },
+    );
   }
 }
 
@@ -1539,9 +1690,13 @@ class _ModeButton extends StatelessWidget {
       height: 38,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: active ? HrmsColors.blue : AdminSurfacePalette.of(context).subtleSurface,
+        color: active
+            ? HrmsColors.blue
+            : AdminSurfacePalette.of(context).subtleSurface,
         border: Border.all(
-          color: active ? HrmsColors.blue : AdminSurfacePalette.of(context).border,
+          color: active
+              ? HrmsColors.blue
+              : AdminSurfacePalette.of(context).border,
         ),
         borderRadius: BorderRadius.circular(22),
       ),
@@ -1609,7 +1764,10 @@ class _TrackedEmployeesPanel extends StatelessWidget {
             const SizedBox(width: 10),
             Text(
               _updatedLabel,
-              style: TextStyle(color: AdminSurfacePalette.of(context).mutedText, fontSize: 12),
+              style: TextStyle(
+                color: AdminSurfacePalette.of(context).mutedText,
+                fontSize: 12,
+              ),
             ),
           ],
         ),
@@ -1627,7 +1785,9 @@ class _TrackedEmployeesPanel extends StatelessWidget {
             height: 510,
             child: Container(
               decoration: BoxDecoration(
-                border: Border.all(color: AdminSurfacePalette.of(context).border),
+                border: Border.all(
+                  color: AdminSurfacePalette.of(context).border,
+                ),
                 borderRadius: BorderRadius.circular(10),
               ),
               clipBehavior: Clip.antiAlias,
@@ -1789,13 +1949,50 @@ class _TrackingTableHeader extends StatelessWidget {
     color: AdminSurfacePalette.of(context).subtleSurface,
     child: Row(
       children: [
-        _TrackingCell(width: 220, child: Text('Employee', style: TextStyle(color: AdminSurfacePalette.of(context).text, fontSize: 12, fontWeight: FontWeight.w700))),
         _TrackingCell(
           width: 220,
-          child: Text('Current Location', style: TextStyle(color: AdminSurfacePalette.of(context).text, fontSize: 12, fontWeight: FontWeight.w700)),
+          child: Text(
+            'Employee',
+            style: TextStyle(
+              color: AdminSurfacePalette.of(context).text,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
         ),
-        _TrackingCell(width: 110, child: Text('Status', style: TextStyle(color: AdminSurfacePalette.of(context).text, fontSize: 12, fontWeight: FontWeight.w700))),
-        _TrackingCell(width: 120, child: Text('Actions', style: TextStyle(color: AdminSurfacePalette.of(context).text, fontSize: 12, fontWeight: FontWeight.w700))),
+        _TrackingCell(
+          width: 220,
+          child: Text(
+            'Current Location',
+            style: TextStyle(
+              color: AdminSurfacePalette.of(context).text,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        _TrackingCell(
+          width: 110,
+          child: Text(
+            'Status',
+            style: TextStyle(
+              color: AdminSurfacePalette.of(context).text,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        _TrackingCell(
+          width: 120,
+          child: Text(
+            'Actions',
+            style: TextStyle(
+              color: AdminSurfacePalette.of(context).text,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
       ],
     ),
   );
@@ -2266,10 +2463,18 @@ class _EmployeeTrackingDetailsDialogState
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Invalidate this route?'),
-        content: const Text('This hides the selected day from route views. The original GPS pings remain available for audit.'),
+        content: const Text(
+          'This hides the selected day from route views. The original GPS pings remain available for audit.',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Invalidate route')),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Invalidate route'),
+          ),
         ],
       ),
     );
@@ -2283,9 +2488,21 @@ class _EmployeeTrackingDetailsDialogState
       );
       if (!mounted) return;
       await _load();
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Route invalidated. Original GPS data was retained for audit.')));
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Route invalidated. Original GPS data was retained for audit.',
+            ),
+          ),
+        );
     } catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))));
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(error.toString().replaceFirst('Exception: ', '')),
+          ),
+        );
     } finally {
       if (mounted) setState(() => _invalidating = false);
     }
@@ -2435,37 +2652,87 @@ class _EmployeeTrackingDetailsDialogState
     }
     return Column(
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            IconButton(
-              tooltip: 'Previous day',
-              onPressed: () => _shiftDate(-1),
-              icon: const Icon(Icons.chevron_left),
-            ),
-            OutlinedButton.icon(
-              onPressed: _pickDate,
-              icon: const Icon(Icons.calendar_today_outlined, size: 16),
-              label: Text(DateFormat('dd MMM yyyy').format(_selectedDate)),
-            ),
-            IconButton(
-              tooltip: 'Next day',
-              onPressed: _selectedDate.isBefore(DateTime.now())
-                  ? () => _shiftDate(1)
-                  : null,
-              icon: const Icon(Icons.chevron_right),
-            ),
-            if (!_invalidated) ...[
-              const SizedBox(width: 8),
-              OutlinedButton.icon(
-                onPressed: _loading || _invalidating ? null : _invalidateSelectedRoute,
-                icon: _invalidating
-                    ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.block_outlined, size: 16),
-                label: const Text('Invalidate route'),
+        LayoutBuilder(
+          builder: (context, constraints) => Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            alignment: constraints.maxWidth < 800
+                ? WrapAlignment.end
+                : WrapAlignment.start,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              _trackingDataButton(
+                label: 'Route history',
+                icon: Icons.route_outlined,
+                count: _activityPoints.length,
+                onPressed: () => _showTrackingDataPopup(
+                  title: 'Route history',
+                  icon: Icons.route_outlined,
+                  color: HrmsColors.blue,
+                  rows: _routeHistoryRows(),
+                  emptyText: 'No location updates were recorded on this date.',
+                ),
               ),
+              _trackingDataButton(
+                label: 'Waiting comments',
+                icon: Icons.chat_bubble_outline,
+                count: _waitingReasons.length,
+                onPressed: () => _showTrackingDataPopup(
+                  title: 'Waiting popup comments',
+                  icon: Icons.pause_circle_outline,
+                  color: const Color(0xFFFF8400),
+                  rows: _waitingReasonRows(),
+                  emptyText:
+                      'No waiting popup comments were submitted on this date.',
+                ),
+              ),
+              _trackingDataButton(
+                label: 'Permanent comments',
+                icon: Icons.comment_outlined,
+                count: _comments.length,
+                onPressed: () => _showTrackingDataPopup(
+                  title: 'Permanent comments',
+                  icon: Icons.comment_outlined,
+                  color: const Color(0xFF6B52D7),
+                  rows: _commentRows(),
+                  emptyText:
+                      'No permanent comments were submitted on this date.',
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                tooltip: 'Previous day',
+                onPressed: () => _shiftDate(-1),
+                icon: const Icon(Icons.chevron_left),
+              ),
+              OutlinedButton.icon(
+                onPressed: _pickDate,
+                icon: const Icon(Icons.calendar_today_outlined, size: 16),
+                label: Text(DateFormat('dd MMM yyyy').format(_selectedDate)),
+              ),
+              IconButton(
+                tooltip: 'Next day',
+                onPressed: _selectedDate.isBefore(DateTime.now())
+                    ? () => _shiftDate(1)
+                    : null,
+                icon: const Icon(Icons.chevron_right),
+              ),
+              if (!_invalidated)
+                OutlinedButton.icon(
+                  onPressed: _loading || _invalidating
+                      ? null
+                      : _invalidateSelectedRoute,
+                  icon: _invalidating
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.block_outlined, size: 16),
+                  label: const Text('Invalidate route'),
+                ),
             ],
-          ],
+          ),
         ),
         const SizedBox(height: 10),
         Expanded(
@@ -2493,10 +2760,6 @@ class _EmployeeTrackingDetailsDialogState
             },
           ),
         ),
-        const SizedBox(height: 13),
-        _tabs(),
-        const SizedBox(height: 8),
-        Expanded(flex: 3, child: _tabContent()),
       ],
     );
   }
@@ -2517,7 +2780,10 @@ class _EmployeeTrackingDetailsDialogState
                 ? 'This route has been invalidated and is hidden from route views.'
                 : 'This route has been invalidated.\n$_invalidationReason',
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Color(0xFF9B1C1C), fontWeight: FontWeight.w600),
+            style: const TextStyle(
+              color: Color(0xFF9B1C1C),
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ),
       );
@@ -2683,6 +2949,155 @@ class _EmployeeTrackingDetailsDialogState
           ),
         ],
       );
+
+  Widget _trackingDataButton({
+    required String label,
+    required IconData icon,
+    required int count,
+    required VoidCallback onPressed,
+  }) => Stack(
+    clipBehavior: Clip.none,
+    children: [
+      OutlinedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 16),
+        label: Text(label),
+      ),
+      if (count > 0)
+        Positioned(
+          top: -7,
+          right: -6,
+          child: Container(
+            constraints: const BoxConstraints(minWidth: 19, minHeight: 19),
+            padding: const EdgeInsets.symmetric(horizontal: 5),
+            alignment: Alignment.center,
+            decoration: const BoxDecoration(
+              color: HrmsColors.blue,
+              shape: BoxShape.circle,
+            ),
+            child: Text(
+              count > 99 ? '99+' : '$count',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ),
+    ],
+  );
+
+  List<Widget> _routeHistoryRows() => _activityPoints
+      .map(
+        (point) => _historyRow(
+          time: point.time,
+          title: point == _activityPoints.first
+              ? 'Start'
+              : point == _activityPoints.last
+              ? 'End'
+              : 'Location update',
+          detail: point.location,
+          icon: point == _activityPoints.first
+              ? Icons.play_circle_fill
+              : point == _activityPoints.last
+              ? Icons.stop_circle
+              : Icons.location_on_outlined,
+          color: point == _activityPoints.first
+              ? const Color(0xFF00A878)
+              : point == _activityPoints.last
+              ? Colors.red
+              : HrmsColors.blue,
+        ),
+      )
+      .toList();
+
+  List<Widget> _waitingReasonRows() => _waitingReasons
+      .map(
+        (item) => _historyRow(
+          time: _time(
+            item['reason_submitted_at'] ?? item['waiting_detected_at'],
+          ),
+          title: 'Waiting ${item['waiting_minutes'] ?? 0} min',
+          detail: '${item['reason'] ?? 'No reason submitted'}',
+          icon: Icons.pause_circle_outline,
+          color: const Color(0xFFFF8400),
+        ),
+      )
+      .toList();
+
+  List<Widget> _commentRows() => _comments
+      .map(
+        (item) => _historyRow(
+          time: _time(item['createdAt']),
+          title: '${item['comment'] ?? 'Comment'}',
+          detail: _location(item),
+          icon: Icons.comment_outlined,
+          color: const Color(0xFF6B52D7),
+        ),
+      )
+      .toList();
+
+  Future<void> _showTrackingDataPopup({
+    required String title,
+    required IconData icon,
+    required Color color,
+    required List<Widget> rows,
+    required String emptyText,
+  }) => showDialog<void>(
+    context: context,
+    builder: (dialogContext) => Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 720, maxHeight: 560),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(22, 20, 22, 16),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  CircleAvatar(
+                    radius: 18,
+                    backgroundColor: color.withValues(alpha: .10),
+                    child: Icon(icon, color: color, size: 20),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: const TextStyle(
+                        color: HrmsColors.navy,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Close',
+                    onPressed: () => Navigator.pop(dialogContext),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  DateFormat('dd MMM yyyy').format(_selectedDate),
+                  style: const TextStyle(
+                    color: Color(0xFF657087),
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Expanded(child: _historyList(rows, emptyText)),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
 
   Widget _tabs() {
     const labels = [
@@ -3212,17 +3627,40 @@ class _RouteDialogState extends State<_RouteDialog> {
 
 class _OfficeLocationsDialog extends StatefulWidget {
   const _OfficeLocationsDialog();
-  @override State<_OfficeLocationsDialog> createState() => _OfficeLocationsDialogState();
+  @override
+  State<_OfficeLocationsDialog> createState() => _OfficeLocationsDialogState();
 }
 
 class _OfficeLocationsDialogState extends State<_OfficeLocationsDialog> {
-  bool _loading = true; String? _error; List<Map<String,dynamic>> _items = [];
-  @override void initState(){super.initState(); _load();}
-  Future<void> _load() async { try { final rows=await HrmsTrackingApi.officeLocations(); if(mounted)setState(()=>_items=rows); } catch(e){ if(mounted)setState(()=>_error=e.toString().replaceFirst('Exception: ','')); } finally { if(mounted)setState(()=>_loading=false); } }
-  Future<void> _edit([Map<String,dynamic>? item]) async {
-    final save=await showDialog<bool>(context:context,builder:(_)=>_OfficeLocationDialog(initial:item));
-    if(save==true && mounted) await _load();
+  bool _loading = true;
+  String? _error;
+  List<Map<String, dynamic>> _items = [];
+  @override
+  void initState() {
+    super.initState();
+    _load();
   }
+
+  Future<void> _load() async {
+    try {
+      final rows = await HrmsTrackingApi.officeLocations();
+      if (mounted) setState(() => _items = rows);
+    } catch (e) {
+      if (mounted)
+        setState(() => _error = e.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _edit([Map<String, dynamic>? item]) async {
+    final save = await showDialog<bool>(
+      context: context,
+      builder: (_) => _OfficeLocationDialog(initial: item),
+    );
+    if (save == true && mounted) await _load();
+  }
+
   @override
   Widget build(BuildContext context) {
     Widget content;
@@ -3238,33 +3676,58 @@ class _OfficeLocationsDialogState extends State<_OfficeLocationsDialog> {
               title: Row(
                 children: [
                   Expanded(child: Text('${item['name']}')),
-                  _OfficeStatusBadge(active: item['is_active'] == 1 || item['is_active'] == true),
+                  _OfficeStatusBadge(
+                    active: item['is_active'] == 1 || item['is_active'] == true,
+                  ),
                 ],
               ),
               subtitle: Text('${item['address']} • ${item['radius_meters']}m'),
               trailing: Wrap(
                 spacing: 4,
                 children: [
-                  IconButton(tooltip: 'Edit office', onPressed: () => _edit(item), icon: const Icon(Icons.edit_outlined)),
+                  IconButton(
+                    tooltip: 'Edit office',
+                    onPressed: () => _edit(item),
+                    icon: const Icon(Icons.edit_outlined),
+                  ),
                   IconButton(
                     onPressed: () async {
                       final confirmed = await showDialog<bool>(
                         context: context,
                         builder: (dialogContext) => AlertDialog(
                           title: const Text('Delete office location?'),
-                          content: Text('Delete ${item['name']} permanently? Archived offices can be restored; deletion cannot be undone.'),
+                          content: Text(
+                            'Delete ${item['name']} permanently? Archived offices can be restored; deletion cannot be undone.',
+                          ),
                           actions: [
-                            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
-                            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Delete')),
+                            TextButton(
+                              onPressed: () =>
+                                  Navigator.pop(dialogContext, false),
+                              child: const Text('Cancel'),
+                            ),
+                            FilledButton(
+                              onPressed: () =>
+                                  Navigator.pop(dialogContext, true),
+                              child: const Text('Delete'),
+                            ),
                           ],
                         ),
                       );
                       if (confirmed != true) return;
                       try {
-                        await HrmsTrackingApi.deleteOfficeLocation(int.parse('${item['id']}'));
+                        await HrmsTrackingApi.deleteOfficeLocation(
+                          int.parse('${item['id']}'),
+                        );
                         await _load();
                       } catch (e) {
-                        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))));
+                        if (mounted)
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                e.toString().replaceFirst('Exception: ', ''),
+                              ),
+                            ),
+                          );
                       }
                     },
                     tooltip: 'Delete office',
@@ -3273,7 +3736,8 @@ class _OfficeLocationsDialogState extends State<_OfficeLocationsDialog> {
                   IconButton(
                     onPressed: () async {
                       final id = int.parse('${item['id']}');
-                      final active = item['is_active'] == 1 || item['is_active'] == true;
+                      final active =
+                          item['is_active'] == 1 || item['is_active'] == true;
                       if (active) {
                         await HrmsTrackingApi.archiveOfficeLocation(id);
                       } else {
@@ -3281,10 +3745,15 @@ class _OfficeLocationsDialogState extends State<_OfficeLocationsDialog> {
                       }
                       await _load();
                     },
-                    tooltip: (item['is_active'] == 1 || item['is_active'] == true) ? 'Archive office' : 'Activate office',
-                    icon: Icon((item['is_active'] == 1 || item['is_active'] == true)
-                        ? Icons.archive_outlined
-                        : Icons.unarchive_outlined),
+                    tooltip:
+                        (item['is_active'] == 1 || item['is_active'] == true)
+                        ? 'Archive office'
+                        : 'Activate office',
+                    icon: Icon(
+                      (item['is_active'] == 1 || item['is_active'] == true)
+                          ? Icons.archive_outlined
+                          : Icons.unarchive_outlined,
+                    ),
                   ),
                 ],
               ),
@@ -3296,8 +3765,15 @@ class _OfficeLocationsDialogState extends State<_OfficeLocationsDialog> {
       title: const Text('Office locations'),
       content: SizedBox(width: 700, height: 420, child: content),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Close')),
-        FilledButton.icon(onPressed: () => _edit(), icon: const Icon(Icons.add), label: const Text('Add office')),
+        TextButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('Close'),
+        ),
+        FilledButton.icon(
+          onPressed: () => _edit(),
+          icon: const Icon(Icons.add),
+          label: const Text('Add office'),
+        ),
       ],
     );
   }
@@ -3313,7 +3789,14 @@ class _OfficeStatusBadge extends StatelessWidget {
       color: active ? const Color(0xFFE8F7ED) : const Color(0xFFF0F1F4),
       borderRadius: BorderRadius.circular(20),
     ),
-    child: Text(active ? 'Active' : 'Archived', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: active ? const Color(0xFF16803C) : const Color(0xFF687080))),
+    child: Text(
+      active ? 'Active' : 'Archived',
+      style: TextStyle(
+        fontSize: 12,
+        fontWeight: FontWeight.w700,
+        color: active ? const Color(0xFF16803C) : const Color(0xFF687080),
+      ),
+    ),
   );
 }
 
@@ -3376,8 +3859,10 @@ class _OfficeLocationDialogState extends State<_OfficeLocationDialog> {
         _name.text = '${data['name'] ?? data['office_name'] ?? ''}';
         _address.text = '${data['address'] ?? data['office_address'] ?? ''}';
         _latitude.text = '${data['latitude'] ?? data['office_latitude'] ?? ''}';
-        _longitude.text = '${data['longitude'] ?? data['office_longitude'] ?? ''}';
-        _radius.text = '${data['radius_meters'] ?? data['office_radius_meters'] ?? 100}';
+        _longitude.text =
+            '${data['longitude'] ?? data['office_longitude'] ?? ''}';
+        _radius.text =
+            '${data['radius_meters'] ?? data['office_radius_meters'] ?? 100}';
         _outsideGrace.text = '${data['outside_radius_grace_minutes'] ?? 2}';
         final lat = double.tryParse(_latitude.text);
         final lng = double.tryParse(_longitude.text);
@@ -3563,8 +4048,11 @@ class _OfficeLocationDialogState extends State<_OfficeLocationDialog> {
     try {
       if (widget.initial == null) {
         await HrmsTrackingApi.createOfficeLocation({
-          'name': name, 'address': address, 'latitude': latitude,
-          'longitude': longitude, 'radiusMeters': radius,
+          'name': name,
+          'address': address,
+          'latitude': latitude,
+          'longitude': longitude,
+          'radiusMeters': radius,
         });
       } else {
         final values = {
@@ -3574,7 +4062,10 @@ class _OfficeLocationDialogState extends State<_OfficeLocationDialog> {
           'longitude': longitude,
           'radiusMeters': radius,
         };
-        await HrmsTrackingApi.updateOfficeLocation(int.parse('${widget.initial!['id']}'), values);
+        await HrmsTrackingApi.updateOfficeLocation(
+          int.parse('${widget.initial!['id']}'),
+          values,
+        );
       }
       if (!mounted) return;
       Navigator.of(context).pop(true);
@@ -3803,7 +4294,8 @@ class _FieldWaitingSettingsDialogState
             '${data['auto_clock_out_boundary_buffer_meters'] ?? 50}';
         _autoSnoozeController.text =
             '${data['auto_clock_out_snooze_minutes'] ?? 15}';
-        _clockOutReminderEnabled = data['clock_out_reminder_enabled'] == true ||
+        _clockOutReminderEnabled =
+            data['clock_out_reminder_enabled'] == true ||
             data['clock_out_reminder_enabled'] == 1 ||
             data['clock_out_reminder_enabled'] == '1';
         _reminderThresholdController.text =
@@ -3837,7 +4329,9 @@ class _FieldWaitingSettingsDialogState
     final autoWarning = int.tryParse(_autoWarningController.text.trim());
     final autoBuffer = int.tryParse(_autoBufferController.text.trim());
     final autoSnooze = int.tryParse(_autoSnoozeController.text.trim());
-    final reminderThreshold = int.tryParse(_reminderThresholdController.text.trim());
+    final reminderThreshold = int.tryParse(
+      _reminderThresholdController.text.trim(),
+    );
     final reminderRepeat = int.tryParse(_reminderRepeatController.text.trim());
 
     if (waitingMinutes == null ||
@@ -3857,8 +4351,10 @@ class _FieldWaitingSettingsDialogState
         autoBuffer < 0 ||
         autoSnooze == null ||
         autoSnooze < 1 ||
-        reminderThreshold == null || reminderThreshold < 1 ||
-        reminderRepeat == null || reminderRepeat < 1) {
+        reminderThreshold == null ||
+        reminderThreshold < 1 ||
+        reminderRepeat == null ||
+        reminderRepeat < 1) {
       setState(() {
         _error = 'Use valid values. Popup alert repeat must be 1–30 seconds.';
       });
@@ -3926,9 +4422,7 @@ class _FieldWaitingSettingsDialogState
     title: Row(
       children: [
         Icon(
-          widget.clockOutOnly
-              ? Icons.alarm_outlined
-              : Icons.timer_outlined,
+          widget.clockOutOnly ? Icons.alarm_outlined : Icons.timer_outlined,
           color: HrmsColors.blue,
         ),
         const SizedBox(width: 10),
@@ -3946,143 +4440,160 @@ class _FieldWaitingSettingsDialogState
           maxHeight: MediaQuery.sizeOf(context).height * .62,
         ),
         child: _loading
-          ? const SizedBox(
-              height: 180,
-              child: Center(child: CircularProgressIndicator()),
-            )
-          : SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                if (!widget.clockOutOnly) ...[
-                const Text(
-                  'Configure optional Home work functionality.',
-                  style: TextStyle(color: Color(0xFF657087), fontSize: 12),
-                ),
-                const SizedBox(height: 18),
-                const SizedBox(height: 12),
-                SwitchListTile.adaptive(
-                  contentPadding: EdgeInsets.zero,
-                  value: _homeTrackingEnabled,
-                  onChanged: _saving
-                      ? null
-                      : (value) => setState(() => _homeTrackingEnabled = value),
-                  title: const Text('Enable Home work functionality'),
-                  subtitle: Text(
-                    _homeTrackingEnabled
-                        ? 'Home location registration and approvals are available.'
-                        : 'Home location registration and approvals are hidden.',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                ),
-                ],
-                if (widget.clockOutOnly) ...[
-                const Text(
-                  'Choose when employees should be reminded to clock out after their shift.',
-                  style: TextStyle(color: Color(0xFF657087), fontSize: 12),
-                ),
-                const SizedBox(height: 14),
-                SwitchListTile.adaptive(
-                  contentPadding: EdgeInsets.zero,
-                  value: _clockOutReminderEnabled,
-                  onChanged: _saving ? null : (value) => setState(() => _clockOutReminderEnabled = value),
-                  title: const Text('Send clock-out reminders'),
-                  subtitle: const Text(
-                    'Alert employees when their shift has ended but they are still checked in.',
-                  ),
-                ),
-                if (_clockOutReminderEnabled) ...[
-                  _numberField(
-                    controller: _reminderThresholdController,
-                    label: 'Send first reminder after shift (minutes)',
-                    hint: '15',
-                  ),
-                  const SizedBox(height: 10),
-                  _numberField(
-                    controller: _reminderRepeatController,
-                    label: 'Send another reminder every (minutes)',
-                    hint: '15',
-                  ),
-                  const SizedBox(height: 10),
-                  DropdownButtonFormField<String>(
-                    value: _clockOutReminderSound,
-                    decoration: const InputDecoration(
-                      labelText: 'Reminder sound',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'notification.mp3',
-                        child: Text('Standard alert'),
+            ? const SizedBox(
+                height: 180,
+                child: Center(child: CircularProgressIndicator()),
+              )
+            : SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (!widget.clockOutOnly) ...[
+                      const Text(
+                        'Configure optional Home work functionality.',
+                        style: TextStyle(
+                          color: Color(0xFF657087),
+                          fontSize: 12,
+                        ),
                       ),
-                      DropdownMenuItem(
-                        value: 'notifications.mp3',
-                        child: Text('Short alert'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'notificationss.mp3',
-                        child: Text('Loud alert'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'notification_ai voice.mp3',
-                        child: Text('Voice alert'),
+                      const SizedBox(height: 18),
+                      const SizedBox(height: 12),
+                      SwitchListTile.adaptive(
+                        contentPadding: EdgeInsets.zero,
+                        value: _homeTrackingEnabled,
+                        onChanged: _saving
+                            ? null
+                            : (value) =>
+                                  setState(() => _homeTrackingEnabled = value),
+                        title: const Text('Enable Home work functionality'),
+                        subtitle: Text(
+                          _homeTrackingEnabled
+                              ? 'Home location registration and approvals are available.'
+                              : 'Home location registration and approvals are hidden.',
+                          style: const TextStyle(fontSize: 12),
+                        ),
                       ),
                     ],
-                    onChanged: _saving ? null : (value) => setState(() => _clockOutReminderSound = value ?? 'notification.mp3'),
-                  ),
-                ],
-                ],
-                if (!widget.clockOutOnly) ...[
-                const Divider(height: 24),
-                SwitchListTile.adaptive(
-                  contentPadding: EdgeInsets.zero,
-                  value: _autoClockOutEnabled,
-                  onChanged: _saving
-                      ? null
-                      : (value) => setState(() => _autoClockOutEnabled = value),
-                  title: const Text('Enable Safe Auto Clock-out'),
-                  subtitle: const Text(
-                    'Office + Home only; disabled by default. Breaks and invalid GPS are always protected.',
-                    style: TextStyle(fontSize: 12),
-                  ),
+                    if (widget.clockOutOnly) ...[
+                      const Text(
+                        'Choose when employees should be reminded to clock out after their shift.',
+                        style: TextStyle(
+                          color: Color(0xFF657087),
+                          fontSize: 12,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      SwitchListTile.adaptive(
+                        contentPadding: EdgeInsets.zero,
+                        value: _clockOutReminderEnabled,
+                        onChanged: _saving
+                            ? null
+                            : (value) => setState(
+                                () => _clockOutReminderEnabled = value,
+                              ),
+                        title: const Text('Send clock-out reminders'),
+                        subtitle: const Text(
+                          'Alert employees when their shift has ended but they are still checked in.',
+                        ),
+                      ),
+                      if (_clockOutReminderEnabled) ...[
+                        _numberField(
+                          controller: _reminderThresholdController,
+                          label: 'Send first reminder after shift (minutes)',
+                          hint: '15',
+                        ),
+                        const SizedBox(height: 10),
+                        _numberField(
+                          controller: _reminderRepeatController,
+                          label: 'Send another reminder every (minutes)',
+                          hint: '15',
+                        ),
+                        const SizedBox(height: 10),
+                        DropdownButtonFormField<String>(
+                          value: _clockOutReminderSound,
+                          decoration: const InputDecoration(
+                            labelText: 'Reminder sound',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'notification.mp3',
+                              child: Text('Standard alert'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'notifications.mp3',
+                              child: Text('Short alert'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'notificationss.mp3',
+                              child: Text('Loud alert'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'notification_ai voice.mp3',
+                              child: Text('Voice alert'),
+                            ),
+                          ],
+                          onChanged: _saving
+                              ? null
+                              : (value) => setState(
+                                  () => _clockOutReminderSound =
+                                      value ?? 'notification.mp3',
+                                ),
+                        ),
+                      ],
+                    ],
+                    if (!widget.clockOutOnly) ...[
+                      const Divider(height: 24),
+                      SwitchListTile.adaptive(
+                        contentPadding: EdgeInsets.zero,
+                        value: _autoClockOutEnabled,
+                        onChanged: _saving
+                            ? null
+                            : (value) =>
+                                  setState(() => _autoClockOutEnabled = value),
+                        title: const Text('Enable Safe Auto Clock-out'),
+                        subtitle: const Text(
+                          'Office + Home only; disabled by default. Breaks and invalid GPS are always protected.',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ),
+                      if (_autoClockOutEnabled) ...[
+                        _numberField(
+                          controller: _autoConfirmationController,
+                          label: 'Outside confirmation (minutes)',
+                          hint: '3',
+                        ),
+                        const SizedBox(height: 10),
+                        _numberField(
+                          controller: _autoWarningController,
+                          label: 'Warning countdown (seconds)',
+                          hint: '60',
+                        ),
+                        const SizedBox(height: 10),
+                        _numberField(
+                          controller: _autoBufferController,
+                          label: 'Boundary safety buffer (metres)',
+                          hint: '50',
+                        ),
+                        const SizedBox(height: 10),
+                        _numberField(
+                          controller: _autoSnoozeController,
+                          label: 'Still working snooze (minutes)',
+                          hint: '15',
+                        ),
+                      ],
+                    ],
+                    if (_error != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        _error!,
+                        style: const TextStyle(color: Colors.red, fontSize: 12),
+                      ),
+                    ],
+                  ],
                 ),
-                if (_autoClockOutEnabled) ...[
-                  _numberField(
-                    controller: _autoConfirmationController,
-                    label: 'Outside confirmation (minutes)',
-                    hint: '3',
-                  ),
-                  const SizedBox(height: 10),
-                  _numberField(
-                    controller: _autoWarningController,
-                    label: 'Warning countdown (seconds)',
-                    hint: '60',
-                  ),
-                  const SizedBox(height: 10),
-                  _numberField(
-                    controller: _autoBufferController,
-                    label: 'Boundary safety buffer (metres)',
-                    hint: '50',
-                  ),
-                  const SizedBox(height: 10),
-                  _numberField(
-                    controller: _autoSnoozeController,
-                    label: 'Still working snooze (minutes)',
-                    hint: '15',
-                  ),
-                ],
-                ],
-                if (_error != null) ...[
-                  const SizedBox(height: 12),
-                  Text(
-                    _error!,
-                    style: const TextStyle(color: Colors.red, fontSize: 12),
-                  ),
-                ],
-                ],
               ),
-            ),
       ),
     ),
     actions: [

@@ -25,7 +25,11 @@ abstract final class HrmsColors {
 }
 
 class EmployeesPage extends StatefulWidget {
-  const EmployeesPage({super.key, this.settingsAction, this.inSettingsDialog = false});
+  const EmployeesPage({
+    super.key,
+    this.settingsAction,
+    this.inSettingsDialog = false,
+  });
 
   final String? settingsAction;
   final bool inSettingsDialog;
@@ -70,8 +74,12 @@ class _EmployeesPageState extends State<EmployeesPage> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     final arguments = ModalRoute.of(context)?.settings.arguments;
-    final requestedCode = arguments is Map ? arguments['employeeCode']?.toString() : null;
-    if (!_openedSettingsAction && requestedCode != null && requestedCode.isNotEmpty) {
+    final requestedCode = arguments is Map
+        ? arguments['employeeCode']?.toString()
+        : null;
+    if (!_openedSettingsAction &&
+        requestedCode != null &&
+        requestedCode.isNotEmpty) {
       _openedSettingsAction = true;
       searchController.text = requestedCode;
       query = requestedCode;
@@ -87,7 +95,8 @@ class _EmployeesPageState extends State<EmployeesPage> {
       });
       return;
     }
-    final action = widget.settingsAction ??
+    final action =
+        widget.settingsAction ??
         (ModalRoute.of(context)?.settings.arguments as Map?)?['settingsAction'];
     if (_openedSettingsAction || action == null) return;
     _openedSettingsAction = true;
@@ -148,7 +157,9 @@ class _EmployeesPageState extends State<EmployeesPage> {
         employees = items;
         // Keep the drawer in sync with the API response after an edit. Without
         // this, reopening Edit Employee uses its old Gender/Salary Type values.
-        _selectedEmployee = refreshedSelectedEmployee ?? (preserveSelection ? _selectedEmployee : null);
+        _selectedEmployee =
+            refreshedSelectedEmployee ??
+            (preserveSelection ? _selectedEmployee : null);
         departmentOptions = departments;
         filteredTotal = data['total'] is int
             ? data['total'] as int
@@ -197,7 +208,9 @@ class _EmployeesPageState extends State<EmployeesPage> {
     final mobile = MediaQuery.sizeOf(context).width < 600;
     final drawerWidth = MediaQuery.sizeOf(context).width < 1500 ? 390.0 : 450.0;
     final selected = _selectedEmployee;
-    final motionDuration = MediaQuery.disableAnimationsOf(context) ? Duration.zero : const Duration(milliseconds: 240);
+    final motionDuration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 240);
     Widget fill(Widget child) => mobile ? child : Expanded(child: child);
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
@@ -238,161 +251,353 @@ class _EmployeesPageState extends State<EmployeesPage> {
                     child: Center(
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(maxWidth: 1860),
-                        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                          _EmployeeKpis(mobile: mobile, total: kpiTotal, active: kpiActive, onLeave: kpiOnLeave, inactive: kpiInactive),
-                          const SizedBox(height: 12),
-                          fill(Row(
-                          crossAxisAlignment: mobile ? CrossAxisAlignment.start : CrossAxisAlignment.stretch,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Expanded(
-                              child: Container(
-                                padding: EdgeInsets.all(mobile ? 12 : 16),
-                                decoration: BoxDecoration(color: palette.surface, border: Border.all(color: palette.border), borderRadius: BorderRadius.circular(14)),
-                                child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                            _EmployeeKpis(
+                              mobile: mobile,
+                              total: kpiTotal,
+                              active: kpiActive,
+                              onLeave: kpiOnLeave,
+                              inactive: kpiInactive,
+                            ),
+                            const SizedBox(height: 12),
+                            fill(
+                              Row(
+                                crossAxisAlignment: mobile
+                                    ? CrossAxisAlignment.start
+                                    : CrossAxisAlignment.stretch,
                                 children: [
-                            LayoutBuilder(builder: (context, box) {
-                              final inline = !mobile;
-                              final condensed = inline && box.maxWidth < 1200;
-                              final actions = Row(mainAxisSize: MainAxisSize.min, children: [
-                              if (mobile)
-                                IconButton.filled(tooltip: 'Add employee', onPressed: _showEmployeeForm, icon: const Icon(Icons.add))
-                              else
-                                FilledButton.icon(onPressed: _showEmployeeForm, icon: const Icon(Icons.add, size: 20), label: Text(box.maxWidth < 650 ? 'Add' : 'Add Employee'), style: FilledButton.styleFrom(backgroundColor: HrmsColors.blue, padding: EdgeInsets.symmetric(horizontal: condensed ? 12 : 20, vertical: 12), minimumSize: const Size(0, 48), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)))),
-                              const SizedBox(width: 10),
-                              IconButton(tooltip: 'Export employees', onPressed: _exportEmployees, icon: const Icon(Icons.download_outlined, color: HrmsColors.blue)),
-                            ]);
-                            final filters = _Filters(
-                              compact: inline,
-                              condensed: condensed,
-                              searchController: searchController,
-                              department: department,
-                              departmentOptions: departmentOptions,
-                              status: status,
-                              workMode: workMode,
-                              onSearch: _onSearchChanged,
-                              onDepartment: (value) {
-                                department = value!;
-                                _resetPageAndLoad();
-                              },
-                              onStatus: (value) {
-                                status = value!;
-                                _resetPageAndLoad();
-                              },
-                              onMode: (value) {
-                                workMode = value!;
-                                _resetPageAndLoad();
-                              },
-                              onReset: _resetFilters,
-                            );
-                            return inline ? Row(children: [Expanded(child: filters), const SizedBox(width: 12), actions]) : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [Align(alignment: Alignment.centerRight, child: actions), const SizedBox(height: 10), filters]);
-                            }),
-                            const SizedBox(height: 10),
-                            if (error != null)
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 10),
-                                child: Row(children: [
-                                  Expanded(child: Text('Could not refresh employees: $error', style: const TextStyle(color: Colors.red))),
-                                  TextButton(onPressed: _loadEmployees, child: const Text('Retry')),
-                                ]),
-                              ),
-                            SizedBox(
-                              height: 2,
-                              child: loading ? const LinearProgressIndicator(minHeight: 2) : null,
-                            ),
-                            if (mobile)
-                              _EmployeeTable(
-                                employees: employees,
-                                selectedProfileId: _selectedEmployee?.profileId,
-                                total: filteredTotal,
-                                currentPage: currentPage
-                                    .clamp(1, totalPages)
-                                    .toInt(),
-                                totalPages: totalPages,
-                                pageSize: pageSize,
-                                mobile: true,
-                                onPageChanged: (page) {
-                                  currentPage = page
-                                      .clamp(1, totalPages)
-                                      .toInt();
-                                  _loadEmployees();
-                                },
-                                onView: (employee) =>
-                                    _showEmployeeDetails(employee),
-                                onOpenDetails: (employee) =>
-                                    _openFullEmployeeDetails(employee),
-                                onEdit: (employee) =>
-                                    _showEmployeeForm(employee: employee),
-                                onToggle: _toggleEmployee,
-                                onDelete: _confirmDelete,
-                              )
-                            else
-                              fill(_EmployeeTable(
-                                      employees: employees,
-                                      selectedProfileId: _selectedEmployee?.profileId,
-                                      total: filteredTotal,
-                                      currentPage: currentPage
-                                          .clamp(1, totalPages)
-                                          .toInt(),
-                                      totalPages: totalPages,
-                                      pageSize: pageSize,
-                                      mobile: false,
-                                      onPageChanged: (page) {
-                                        currentPage = page
-                                            .clamp(1, totalPages)
-                                            .toInt();
-                                        _loadEmployees();
-                                      },
-                                      onView: _showEmployeeDetails,
-                                      onOpenDetails: _openFullEmployeeDetails,
-                                      onEdit: (employee) =>
-                                          _showEmployeeForm(employee: employee),
-                                      onToggle: _toggleEmployee,
-                                      onDelete: _confirmDelete,
-                                    )),
+                                  Expanded(
+                                    child: Container(
+                                      padding: EdgeInsets.all(mobile ? 12 : 16),
+                                      decoration: BoxDecoration(
+                                        color: palette.surface,
+                                        border: Border.all(
+                                          color: palette.border,
+                                        ),
+                                        borderRadius: BorderRadius.circular(14),
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          LayoutBuilder(
+                                            builder: (context, box) {
+                                              final inline = !mobile;
+                                              final condensed =
+                                                  inline && box.maxWidth < 1200;
+                                              final actions = Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  if (mobile)
+                                                    IconButton.filled(
+                                                      tooltip: 'Add employee',
+                                                      onPressed:
+                                                          _showEmployeeForm,
+                                                      icon: const Icon(
+                                                        Icons.add,
+                                                      ),
+                                                    )
+                                                  else
+                                                    FilledButton.icon(
+                                                      onPressed:
+                                                          _showEmployeeForm,
+                                                      icon: const Icon(
+                                                        Icons.add,
+                                                        size: 20,
+                                                      ),
+                                                      label: Text(
+                                                        box.maxWidth < 650
+                                                            ? 'Add'
+                                                            : 'Add Employee',
+                                                      ),
+                                                      style: FilledButton.styleFrom(
+                                                        backgroundColor:
+                                                            HrmsColors.blue,
+                                                        padding:
+                                                            EdgeInsets.symmetric(
+                                                              horizontal:
+                                                                  condensed
+                                                                  ? 12
+                                                                  : 20,
+                                                              vertical: 12,
+                                                            ),
+                                                        minimumSize: const Size(
+                                                          0,
+                                                          48,
+                                                        ),
+                                                        shape: RoundedRectangleBorder(
+                                                          borderRadius:
+                                                              BorderRadius.circular(
+                                                                8,
+                                                              ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  const SizedBox(width: 10),
+                                                  IconButton(
+                                                    tooltip: 'Export employees',
+                                                    onPressed: _exportEmployees,
+                                                    icon: const Icon(
+                                                      Icons.download_outlined,
+                                                      color: HrmsColors.blue,
+                                                    ),
+                                                  ),
+                                                ],
+                                              );
+                                              final filters = _Filters(
+                                                compact: inline,
+                                                condensed: condensed,
+                                                searchController:
+                                                    searchController,
+                                                department: department,
+                                                departmentOptions:
+                                                    departmentOptions,
+                                                status: status,
+                                                workMode: workMode,
+                                                onSearch: _onSearchChanged,
+                                                onDepartment: (value) {
+                                                  department = value!;
+                                                  _resetPageAndLoad();
+                                                },
+                                                onStatus: (value) {
+                                                  status = value!;
+                                                  _resetPageAndLoad();
+                                                },
+                                                onMode: (value) {
+                                                  workMode = value!;
+                                                  _resetPageAndLoad();
+                                                },
+                                                onReset: _resetFilters,
+                                              );
+                                              return inline
+                                                  ? Row(
+                                                      children: [
+                                                        Expanded(
+                                                          child: filters,
+                                                        ),
+                                                        const SizedBox(
+                                                          width: 12,
+                                                        ),
+                                                        actions,
+                                                      ],
+                                                    )
+                                                  : Column(
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .stretch,
+                                                      children: [
+                                                        Align(
+                                                          alignment: Alignment
+                                                              .centerRight,
+                                                          child: actions,
+                                                        ),
+                                                        const SizedBox(
+                                                          height: 10,
+                                                        ),
+                                                        filters,
+                                                      ],
+                                                    );
+                                            },
+                                          ),
+                                          const SizedBox(height: 10),
+                                          if (error != null)
+                                            Padding(
+                                              padding: const EdgeInsets.only(
+                                                bottom: 10,
+                                              ),
+                                              child: Row(
+                                                children: [
+                                                  Expanded(
+                                                    child: Text(
+                                                      'Could not refresh employees: $error',
+                                                      style: const TextStyle(
+                                                        color: Colors.red,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                  TextButton(
+                                                    onPressed: _loadEmployees,
+                                                    child: const Text('Retry'),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          SizedBox(
+                                            height: 2,
+                                            child: loading
+                                                ? const LinearProgressIndicator(
+                                                    minHeight: 2,
+                                                  )
+                                                : null,
+                                          ),
+                                          if (mobile)
+                                            _EmployeeTable(
+                                              employees: employees,
+                                              selectedProfileId:
+                                                  _selectedEmployee?.profileId,
+                                              total: filteredTotal,
+                                              currentPage: currentPage
+                                                  .clamp(1, totalPages)
+                                                  .toInt(),
+                                              totalPages: totalPages,
+                                              pageSize: pageSize,
+                                              mobile: true,
+                                              onPageChanged: (page) {
+                                                currentPage = page
+                                                    .clamp(1, totalPages)
+                                                    .toInt();
+                                                _loadEmployees();
+                                              },
+                                              onView: (employee) =>
+                                                  _showEmployeeDetails(
+                                                    employee,
+                                                  ),
+                                              onOpenDetails: (employee) =>
+                                                  _openFullEmployeeDetails(
+                                                    employee,
+                                                  ),
+                                              onEdit: (employee) =>
+                                                  _showEmployeeForm(
+                                                    employee: employee,
+                                                  ),
+                                              onToggle: _toggleEmployee,
+                                              onDelete: _confirmDelete,
+                                            )
+                                          else
+                                            fill(
+                                              _EmployeeTable(
+                                                employees: employees,
+                                                selectedProfileId:
+                                                    _selectedEmployee
+                                                        ?.profileId,
+                                                total: filteredTotal,
+                                                currentPage: currentPage
+                                                    .clamp(1, totalPages)
+                                                    .toInt(),
+                                                totalPages: totalPages,
+                                                pageSize: pageSize,
+                                                mobile: false,
+                                                onPageChanged: (page) {
+                                                  currentPage = page
+                                                      .clamp(1, totalPages)
+                                                      .toInt();
+                                                  _loadEmployees();
+                                                },
+                                                onView: _showEmployeeDetails,
+                                                onOpenDetails:
+                                                    _openFullEmployeeDetails,
+                                                onEdit: (employee) =>
+                                                    _showEmployeeForm(
+                                                      employee: employee,
+                                                    ),
+                                                onToggle: _toggleEmployee,
+                                                onDelete: _confirmDelete,
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  if (!mobile)
+                                    AnimatedSize(
+                                      duration: motionDuration,
+                                      curve: Curves.easeInOut,
+                                      alignment: Alignment.centerRight,
+                                      child: SizedBox(
+                                        width: selected == null
+                                            ? 0
+                                            : drawerWidth + 16,
+                                        child: ClipRect(
+                                          child: OverflowBox(
+                                            alignment: Alignment.centerRight,
+                                            minWidth: drawerWidth + 16,
+                                            maxWidth: drawerWidth + 16,
+                                            child: AnimatedSwitcher(
+                                              duration:
+                                                  MediaQuery.disableAnimationsOf(
+                                                    context,
+                                                  )
+                                                  ? Duration.zero
+                                                  : const Duration(
+                                                      milliseconds: 420,
+                                                    ),
+                                              transitionBuilder:
+                                                  (
+                                                    child,
+                                                    animation,
+                                                  ) => FadeTransition(
+                                                    opacity: animation,
+                                                    child: SlideTransition(
+                                                      position:
+                                                          Tween<Offset>(
+                                                            begin: const Offset(
+                                                              .18,
+                                                              0,
+                                                            ),
+                                                            end: Offset.zero,
+                                                          ).animate(
+                                                            CurvedAnimation(
+                                                              parent: animation,
+                                                              curve: Curves
+                                                                  .easeOut,
+                                                            ),
+                                                          ),
+                                                      child: child,
+                                                    ),
+                                                  ),
+                                              child: selected == null
+                                                  ? const SizedBox.shrink(
+                                                      key: ValueKey('closed'),
+                                                    )
+                                                  : Padding(
+                                                      key: ValueKey(
+                                                        selected.profileId,
+                                                      ),
+                                                      padding:
+                                                          const EdgeInsets.only(
+                                                            left: 16,
+                                                          ),
+                                                      child: _EmployeeSidePanel(
+                                                        employee: selected,
+                                                        onClose:
+                                                            _closeEmployeeDetails,
+                                                        onOpenDetails: () =>
+                                                            _openFullEmployeeDetails(
+                                                              selected,
+                                                            ),
+                                                        onOpenPayroll: () =>
+                                                            _openFullEmployeeDetails(
+                                                              selected,
+                                                              initialTab: 2,
+                                                            ),
+                                                        onResetPassword: () =>
+                                                            _resetEmployeePassword(
+                                                              context,
+                                                              selected,
+                                                            ),
+                                                        onEdit: () =>
+                                                            _showEmployeeForm(
+                                                              employee:
+                                                                  selected,
+                                                            ),
+                                                        onDelete: () =>
+                                                            _confirmDelete(
+                                                              selected,
+                                                            ),
+                                                      ),
+                                                    ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
                                 ],
-                              )),
-                            ),
-                            if (!mobile)
-                              AnimatedSize(
-                                duration: motionDuration,
-                                curve: Curves.easeInOut,
-                                alignment: Alignment.centerRight,
-                                child: SizedBox(
-                                  width: selected == null ? 0 : drawerWidth + 16,
-                                  child: ClipRect(child: OverflowBox(
-                                    alignment: Alignment.centerRight,
-                                    minWidth: drawerWidth + 16,
-                                    maxWidth: drawerWidth + 16,
-                                    child: AnimatedSwitcher(
-                                    duration: MediaQuery.disableAnimationsOf(context) ? Duration.zero : const Duration(milliseconds: 420),
-                                    transitionBuilder: (child, animation) => FadeTransition(
-                                      opacity: animation,
-                                      child: SlideTransition(position: Tween<Offset>(begin: const Offset(.18, 0), end: Offset.zero).animate(CurvedAnimation(parent: animation, curve: Curves.easeOut)), child: child),
-                                    ),
-                                    child: selected == null ? const SizedBox.shrink(key: ValueKey('closed')) : Padding(
-                                      key: ValueKey(selected.profileId),
-                                      padding: const EdgeInsets.only(left: 16),
-                                      child: _EmployeeSidePanel(
-                                    employee: selected,
-                                    onClose: _closeEmployeeDetails,
-                                    onOpenDetails: () => _openFullEmployeeDetails(selected),
-                                    onOpenPayroll: () => _openFullEmployeeDetails(selected, initialTab: 2),
-                                    onResetPassword: () => _resetEmployeePassword(
-                                      context,
-                                      selected,
-                                    ),
-                                    onEdit: () => _showEmployeeForm(
-                                      employee: selected,
-                                    ),
-                                    onDelete: () => _confirmDelete(selected),
-                                  ))),
-                                  )),
-                                ),
                               ),
+                            ),
                           ],
-                        )),
-                        ]),
+                        ),
                       ),
                     ),
                   ),
@@ -625,16 +830,31 @@ class _EmployeesPageState extends State<EmployeesPage> {
           : employee?.salary.replaceAll(RegExp(r'[^0-9]'), '') ?? '',
     );
     final cycleToday = DateTime.now();
-    DateTime joiningDate = DateTime.tryParse(employee?.joiningDate ?? '') ?? cycleToday;
+    DateTime joiningDate =
+        DateTime.tryParse(employee?.joiningDate ?? '') ?? cycleToday;
     DateTimeRange? flexibleCycleRange;
     if (employee?.flexibleCycleStartDay != null &&
         employee?.flexibleCycleEndDay != null) {
-      final start = DateTime.tryParse(employee?.flexibleCycleStartDate ?? '') ??
-          DateTime(cycleToday.year, cycleToday.month, employee!.flexibleCycleStartDay!);
-      var end = DateTime.tryParse(employee?.flexibleCycleEndDate ?? '') ??
-          DateTime(cycleToday.year, cycleToday.month, employee!.flexibleCycleEndDay!);
+      final start =
+          DateTime.tryParse(employee?.flexibleCycleStartDate ?? '') ??
+          DateTime(
+            cycleToday.year,
+            cycleToday.month,
+            employee!.flexibleCycleStartDay!,
+          );
+      var end =
+          DateTime.tryParse(employee?.flexibleCycleEndDate ?? '') ??
+          DateTime(
+            cycleToday.year,
+            cycleToday.month,
+            employee!.flexibleCycleEndDay!,
+          );
       if (end.isBefore(start)) {
-        end = DateTime(cycleToday.year, cycleToday.month + 1, employee!.flexibleCycleEndDay!);
+        end = DateTime(
+          cycleToday.year,
+          cycleToday.month + 1,
+          employee!.flexibleCycleEndDay!,
+        );
       }
       flexibleCycleRange = DateTimeRange(start: start, end: end);
     }
@@ -689,14 +909,16 @@ class _EmployeesPageState extends State<EmployeesPage> {
       'employeeCode': id.text.trim(),
       'department': selectedDepartment,
       'workMode': selectedMode,
-      if (selectedMode == 'Field' || selectedMode == 'Hybrid') 'trackingTemplateId': selectedTrackingTemplateId,
+      if (selectedMode == 'Field' || selectedMode == 'Hybrid')
+        'trackingTemplateId': selectedTrackingTemplateId,
       'employeeType': selectedEmployeeType,
       'overtimeEligible': overtimeEligible,
       'gender': selectedGender,
       'status': selectedStatus,
       'salary': salary.text.trim(),
       'salaryType': selectedSalaryType,
-      'joiningDate': '${joiningDate.year.toString().padLeft(4, '0')}-${joiningDate.month.toString().padLeft(2, '0')}-${joiningDate.day.toString().padLeft(2, '0')}',
+      'joiningDate':
+          '${joiningDate.year.toString().padLeft(4, '0')}-${joiningDate.month.toString().padLeft(2, '0')}-${joiningDate.day.toString().padLeft(2, '0')}',
       if (selectedSalaryType == 'Flexible')
         'flexibleCycleStartDay': flexibleCycleRange?.start.day,
       if (selectedSalaryType == 'Flexible')
@@ -711,7 +933,8 @@ class _EmployeesPageState extends State<EmployeesPage> {
             .substring(0, 10),
       'username': username.text.trim(),
       if (employee == null) 'email': email.text.trim(),
-      if (employee == null || password.text.isNotEmpty) 'password': password.text,
+      if (employee == null || password.text.isNotEmpty)
+        'password': password.text,
     };
 
     final saved = await showDialog<bool>(
@@ -756,7 +979,8 @@ class _EmployeesPageState extends State<EmployeesPage> {
                           initialDate: joiningDate,
                           helpText: 'Select joining date',
                         );
-                        if (picked != null) setDialogState(() => joiningDate = picked);
+                        if (picked != null)
+                          setDialogState(() => joiningDate = picked);
                       },
                       child: InputDecorator(
                         decoration: const InputDecoration(
@@ -764,7 +988,9 @@ class _EmployeesPageState extends State<EmployeesPage> {
                           border: OutlineInputBorder(),
                           suffixIcon: Icon(Icons.calendar_month_outlined),
                         ),
-                        child: Text(DateFormat('d MMM yyyy').format(joiningDate)),
+                        child: Text(
+                          DateFormat('d MMM yyyy').format(joiningDate),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -775,10 +1001,15 @@ class _EmployeesPageState extends State<EmployeesPage> {
                       validator: (value) {
                         final number = (value ?? '').trim();
                         if (number.isEmpty) return null;
-                        return RegExp(r'^[0-9+(). -]+$').hasMatch(number) && RegExp(r'[0-9]').hasMatch(number)
-                            ? null : 'Enter a valid phone number';
+                        return RegExp(r'^[0-9+(). -]+$').hasMatch(number) &&
+                                RegExp(r'[0-9]').hasMatch(number)
+                            ? null
+                            : 'Enter a valid phone number';
                       },
-                      decoration: const InputDecoration(labelText: 'Phone number', border: OutlineInputBorder()),
+                      decoration: const InputDecoration(
+                        labelText: 'Phone number',
+                        border: OutlineInputBorder(),
+                      ),
                     ),
                     const SizedBox(height: 12),
                     if (employee == null) ...[
@@ -870,19 +1101,49 @@ class _EmployeesPageState extends State<EmployeesPage> {
                       },
                     ),
                     const SizedBox(height: 12),
-                    _formDropdown('Work mode', selectedMode, const [
-                      'Office',
-                      'Hybrid',
-                      'Field',
-                    ], (value) => setDialogState(() { selectedMode = value!; if (selectedMode == 'Office' || selectedMode == 'Home') selectedTrackingTemplateId = null; })),
-                    if (selectedMode == 'Field' || selectedMode == 'Hybrid') ...[
+                    _formDropdown(
+                      'Work mode',
+                      selectedMode,
+                      const ['Office', 'Hybrid', 'Field'],
+                      (value) => setDialogState(() {
+                        selectedMode = value!;
+                        if (selectedMode == 'Office' || selectedMode == 'Home')
+                          selectedTrackingTemplateId = null;
+                      }),
+                    ),
+                    if (selectedMode == 'Field' ||
+                        selectedMode == 'Hybrid') ...[
                       const SizedBox(height: 12),
                       DropdownButtonFormField<int>(
-                        value: templates.any((t) => int.tryParse('${t['id']}') == selectedTrackingTemplateId) ? selectedTrackingTemplateId : null,
-                        decoration: const InputDecoration(labelText: 'Live tracking template', border: OutlineInputBorder()),
-                        items: templates.where((t) => t['is_active'] == 1 || t['is_active'] == true).map((t) => DropdownMenuItem<int>(value: int.parse('${t['id']}'), child: Text('${t['name']}'))).toList(),
-                        onChanged: (value) => setDialogState(() => selectedTrackingTemplateId = value),
-                        validator: (value) => value == null ? 'Select a tracking template' : null,
+                        value:
+                            templates.any(
+                              (t) =>
+                                  int.tryParse('${t['id']}') ==
+                                  selectedTrackingTemplateId,
+                            )
+                            ? selectedTrackingTemplateId
+                            : null,
+                        decoration: const InputDecoration(
+                          labelText: 'Live tracking template',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: templates
+                            .where(
+                              (t) =>
+                                  t['is_active'] == 1 || t['is_active'] == true,
+                            )
+                            .map(
+                              (t) => DropdownMenuItem<int>(
+                                value: int.parse('${t['id']}'),
+                                child: Text('${t['name']}'),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (value) => setDialogState(
+                          () => selectedTrackingTemplateId = value,
+                        ),
+                        validator: (value) =>
+                            value == null ? 'Select a tracking template' : null,
                       ),
                     ],
                     const SizedBox(height: 12),
@@ -993,7 +1254,10 @@ class _EmployeesPageState extends State<EmployeesPage> {
                         if (employee == null) {
                           createdEmployee = await HrmsEmployeesApi.create(body);
                         } else {
-                          await HrmsEmployeesApi.update(employee.profileId, body);
+                          await HrmsEmployeesApi.update(
+                            employee.profileId,
+                            body,
+                          );
                         }
                         if (dialogContext.mounted) {
                           Navigator.pop(dialogContext, true);
@@ -1143,10 +1407,14 @@ class _EmployeesPageState extends State<EmployeesPage> {
     setState(() => _selectedEmployee = null);
   }
 
-  Future<void> _openFullEmployeeDetails(_Employee employee, {int initialTab = 0}) async {
+  Future<void> _openFullEmployeeDetails(
+    _Employee employee, {
+    int initialTab = 0,
+  }) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => _EmployeeDetailPage(employee: employee, initialTab: initialTab),
+        builder: (_) =>
+            _EmployeeDetailPage(employee: employee, initialTab: initialTab),
       ),
     );
   }
@@ -1288,13 +1556,21 @@ class _EmployeesPageState extends State<EmployeesPage> {
 }
 
 class _EmployeeFrame extends StatelessWidget {
-  const _EmployeeFrame({required this.mobile, required this.padding, required this.child});
+  const _EmployeeFrame({
+    required this.mobile,
+    required this.padding,
+    required this.child,
+  });
   final bool mobile;
   final EdgeInsets padding;
   final Widget child;
   @override
   Widget build(BuildContext context) => mobile
-      ? SingleChildScrollView(physics: const BouncingScrollPhysics(), padding: padding, child: child)
+      ? SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          padding: padding,
+          child: child,
+        )
       : Padding(padding: padding, child: child);
 }
 
@@ -1490,11 +1766,32 @@ class _EmployeeKpi extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: palette.mutedText, fontSize: compact ? 11 : 13)),
+                    Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: palette.mutedText,
+                        fontSize: compact ? 11 : 13,
+                      ),
+                    ),
                     const SizedBox(height: 3),
-                    Text(value, style: TextStyle(color: palette.text, fontSize: compact ? 22 : 25, height: 1, fontWeight: FontWeight.w800)),
+                    Text(
+                      value,
+                      style: TextStyle(
+                        color: palette.text,
+                        fontSize: compact ? 22 : 25,
+                        height: 1,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
                     const SizedBox(height: 4),
-                    Text(caption, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: palette.mutedText, fontSize: 11)),
+                    Text(
+                      caption,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: palette.mutedText, fontSize: 11),
+                    ),
                   ],
                 ),
               ),
@@ -1535,191 +1832,214 @@ class _Filters extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = AdminSurfacePalette.of(context);
     return Container(
-    padding: EdgeInsets.all(compact || MediaQuery.sizeOf(context).width < 600 ? 0 : 8),
-    decoration: BoxDecoration(
-      color: compact || MediaQuery.sizeOf(context).width < 600
-          ? Colors.transparent
-          : palette.surface,
-      borderRadius: BorderRadius.circular(14),
-      boxShadow: compact || MediaQuery.sizeOf(context).width < 600
-          ? const []
-          : const [
-              BoxShadow(
-                color: Color(0x0C071A72),
-                blurRadius: 18,
-                offset: Offset(0, 6),
-              ),
-            ],
-    ),
-    child: LayoutBuilder(
-      builder: (_, constraints) {
-        final narrow = constraints.maxWidth < 850;
-        final search = TextField(
-          controller: searchController,
-          onChanged: onSearch,
-          decoration: _inputDecoration(
-            'Search by name, employee ID or email',
-            Icons.search_rounded,
-          ).copyWith(
-            isDense: true,
-            contentPadding: const EdgeInsets.symmetric(vertical: 9),
-          ),
-        );
-        final departmentField = _FilterDropdown(
-          label: 'Department',
-          value: department,
-          values: ['All Departments', ...departmentOptions],
-          onChanged: onDepartment,
-        );
-        final statusField = _FilterDropdown(
-          label: 'Status',
-          value: status,
-          values: const ['All Status', 'Active', 'On Leave', 'Inactive'],
-          onChanged: onStatus,
-        );
-        final modeField = _FilterDropdown(
-          label: 'Work Mode',
-          value: workMode,
-          values: const ['All Work Modes', 'Office', 'Field', 'Hybrid'],
-          onChanged: onMode,
-        );
-        final reset = Tooltip(
-          message: 'Clear filters',
-          child: OutlinedButton(
-            onPressed: onReset,
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(48, 40),
-              side: const BorderSide(color: Color(0xFFFFA9B3)),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(9),
-              ),
-            ),
-            child: const Text('Clear'),
-          ),
-        );
-        final mobile = MediaQuery.sizeOf(context).width < 600;
-        if (condensed) {
-          final activeCount = (department != 'All Departments' ? 1 : 0) +
-              (status != 'All Status' ? 1 : 0) +
-              (workMode != 'All Work Modes' ? 1 : 0);
-          return Row(children: [
-            Flexible(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 340), child: search)),
-            const SizedBox(width: 8),
-            OutlinedButton.icon(
-              onPressed: () => _openMobileFilters(context),
-              icon: const Icon(Icons.tune_rounded, size: 18),
-              label: Text(activeCount == 0 ? 'Filters' : 'Filters ($activeCount)'),
-              style: OutlinedButton.styleFrom(minimumSize: const Size(0, 48), padding: const EdgeInsets.symmetric(horizontal: 10)),
-            ),
-            const Spacer(),
-          ]);
-        }
-        if (compact) {
-          return Row(children: [
-            Expanded(flex: 3, child: search), const SizedBox(width: 14),
-            Expanded(flex: 2, child: departmentField), const SizedBox(width: 14),
-            Expanded(flex: 2, child: statusField), const SizedBox(width: 14),
-            Expanded(flex: 2, child: modeField), const SizedBox(width: 14), reset,
-          ]);
-        }
-        if (mobile) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              search,
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: () => _openMobileFilters(context),
-                    icon: const Icon(Icons.tune_rounded, size: 20),
-                    label: const Text('Filters'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: HrmsColors.blue,
-                      side: const BorderSide(color: HrmsColors.blue),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 14,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  TextButton.icon(
-                    onPressed: onReset,
-                    icon: const Icon(Icons.restart_alt_rounded, size: 18),
-                    label: const Text('Reset'),
-                  ),
-                ],
-              ),
-            ],
+      padding: EdgeInsets.all(
+        compact || MediaQuery.sizeOf(context).width < 600 ? 0 : 8,
+      ),
+      decoration: BoxDecoration(
+        color: compact || MediaQuery.sizeOf(context).width < 600
+            ? Colors.transparent
+            : palette.surface,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: compact || MediaQuery.sizeOf(context).width < 600
+            ? const []
+            : const [
+                BoxShadow(
+                  color: Color(0x0C071A72),
+                  blurRadius: 18,
+                  offset: Offset(0, 6),
+                ),
+              ],
+      ),
+      child: LayoutBuilder(
+        builder: (_, constraints) {
+          final narrow = constraints.maxWidth < 850;
+          final search = TextField(
+            controller: searchController,
+            onChanged: onSearch,
+            decoration:
+                _inputDecoration(
+                  'Search by name, employee ID or email',
+                  Icons.search_rounded,
+                ).copyWith(
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 9),
+                ),
           );
-        }
-        if (constraints.maxWidth >= 760) {
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Expanded(flex: 3, child: search),
-              const SizedBox(width: 14),
-              Expanded(flex: 3, child: departmentField),
-              const SizedBox(width: 14),
-              Expanded(flex: 3, child: statusField),
-              const SizedBox(width: 14),
-              Expanded(flex: 3, child: modeField),
-              const SizedBox(width: 14),
-              reset,
-            ],
+          final departmentField = _FilterDropdown(
+            label: 'Department',
+            value: department,
+            values: ['All Departments', ...departmentOptions],
+            onChanged: onDepartment,
           );
-        }
-        if (narrow) {
-          final stackFilters = constraints.maxWidth < 410;
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              search,
-              const SizedBox(height: 14),
-              if (stackFilters) ...[
-                departmentField,
+          final statusField = _FilterDropdown(
+            label: 'Status',
+            value: status,
+            values: const ['All Status', 'Active', 'On Leave', 'Inactive'],
+            onChanged: onStatus,
+          );
+          final modeField = _FilterDropdown(
+            label: 'Work Mode',
+            value: workMode,
+            values: const ['All Work Modes', 'Office', 'Field', 'Hybrid'],
+            onChanged: onMode,
+          );
+          final reset = Tooltip(
+            message: 'Clear filters',
+            child: OutlinedButton(
+              onPressed: onReset,
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(48, 40),
+                side: const BorderSide(color: Color(0xFFFFA9B3)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(9),
+                ),
+              ),
+              child: const Text('Clear'),
+            ),
+          );
+          final mobile = MediaQuery.sizeOf(context).width < 600;
+          if (condensed) {
+            final activeCount =
+                (department != 'All Departments' ? 1 : 0) +
+                (status != 'All Status' ? 1 : 0) +
+                (workMode != 'All Work Modes' ? 1 : 0);
+            return Row(
+              children: [
+                Flexible(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 340),
+                    child: search,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: () => _openMobileFilters(context),
+                  icon: const Icon(Icons.tune_rounded, size: 18),
+                  label: Text(
+                    activeCount == 0 ? 'Filters' : 'Filters ($activeCount)',
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(0, 48),
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                  ),
+                ),
+                const Spacer(),
+              ],
+            );
+          }
+          if (compact) {
+            return Row(
+              children: [
+                Expanded(flex: 3, child: search),
+                const SizedBox(width: 14),
+                Expanded(flex: 2, child: departmentField),
+                const SizedBox(width: 14),
+                Expanded(flex: 2, child: statusField),
+                const SizedBox(width: 14),
+                Expanded(flex: 2, child: modeField),
+                const SizedBox(width: 14),
+                reset,
+              ],
+            );
+          }
+          if (mobile) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                search,
                 const SizedBox(height: 12),
-                statusField,
-              ] else
                 Row(
                   children: [
-                    Expanded(child: departmentField),
-                    const SizedBox(width: 12),
-                    Expanded(child: statusField),
+                    OutlinedButton.icon(
+                      onPressed: () => _openMobileFilters(context),
+                      icon: const Icon(Icons.tune_rounded, size: 20),
+                      label: const Text('Filters'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: HrmsColors.blue,
+                        side: const BorderSide(color: HrmsColors.blue),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 14,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton.icon(
+                      onPressed: onReset,
+                      icon: const Icon(Icons.restart_alt_rounded, size: 18),
+                      label: const Text('Reset'),
+                    ),
                   ],
                 ),
-              const SizedBox(height: 12),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(child: modeField),
-                  const SizedBox(width: 12),
-                  reset,
-                ],
-              ),
-            ],
+              ],
+            );
+          }
+          if (constraints.maxWidth >= 760) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(flex: 3, child: search),
+                const SizedBox(width: 14),
+                Expanded(flex: 3, child: departmentField),
+                const SizedBox(width: 14),
+                Expanded(flex: 3, child: statusField),
+                const SizedBox(width: 14),
+                Expanded(flex: 3, child: modeField),
+                const SizedBox(width: 14),
+                reset,
+              ],
+            );
+          }
+          if (narrow) {
+            final stackFilters = constraints.maxWidth < 410;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                search,
+                const SizedBox(height: 14),
+                if (stackFilters) ...[
+                  departmentField,
+                  const SizedBox(height: 12),
+                  statusField,
+                ] else
+                  Row(
+                    children: [
+                      Expanded(child: departmentField),
+                      const SizedBox(width: 12),
+                      Expanded(child: statusField),
+                    ],
+                  ),
+                const SizedBox(height: 12),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(child: modeField),
+                    const SizedBox(width: 12),
+                    reset,
+                  ],
+                ),
+              ],
+            );
+          }
+          final fields = [
+            SizedBox(width: 430, child: search),
+            departmentField,
+            statusField,
+            modeField,
+            reset,
+          ];
+          return Wrap(
+            spacing: 26,
+            runSpacing: 16,
+            crossAxisAlignment: WrapCrossAlignment.end,
+            children: fields,
           );
-        }
-        final fields = [
-          SizedBox(width: 430, child: search),
-          departmentField,
-          statusField,
-          modeField,
-          reset,
-        ];
-        return Wrap(
-          spacing: 26,
-          runSpacing: 16,
-          crossAxisAlignment: WrapCrossAlignment.end,
-          children: fields,
-        );
-      },
-    ),
-  );
+        },
+      ),
+    );
   }
 
   void _openMobileFilters(BuildContext context) {
@@ -1730,83 +2050,102 @@ class _Filters extends StatelessWidget {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (sheetContext) => StatefulBuilder(builder: (sheetContext, setSheetState) => SafeArea(
-        top: false,
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Center(
-                child: Container(
-                  width: 42,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFD8E1F0),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 18),
-              const Text(
-                'Filter employees',
-                style: TextStyle(
-                  color: HrmsColors.navy,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 16),
-              _FilterDropdown(
-                label: 'Department',
-                value: selectedDepartment,
-                values: ['All Departments', ...departmentOptions],
-                onChanged: (value) { if (value == null) return; setSheetState(() => selectedDepartment = value); onDepartment(value); },
-              ),
-              const SizedBox(height: 12),
-              _FilterDropdown(
-                label: 'Status',
-                value: selectedStatus,
-                values: const ['All Status', 'Active', 'On Leave', 'Inactive'],
-                onChanged: (value) { if (value == null) return; setSheetState(() => selectedStatus = value); onStatus(value); },
-              ),
-              const SizedBox(height: 12),
-              _FilterDropdown(
-                label: 'Work Mode',
-                value: selectedMode,
-                values: const ['All Work Modes', 'Office', 'Field', 'Hybrid'],
-                onChanged: (value) { if (value == null) return; setSheetState(() => selectedMode = value); onMode(value); },
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () {
-                        onReset();
-                        Navigator.pop(sheetContext);
-                      },
-                      child: const Text('Reset'),
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) => SafeArea(
+          top: false,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 42,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFD8E1F0),
+                      borderRadius: BorderRadius.circular(4),
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: FilledButton(
-                      onPressed: () => Navigator.pop(sheetContext),
-                      child: const Text('Apply filters'),
-                    ),
+                ),
+                const SizedBox(height: 18),
+                const Text(
+                  'Filter employees',
+                  style: TextStyle(
+                    color: HrmsColors.navy,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
                   ),
-                ],
-              ),
-            ],
+                ),
+                const SizedBox(height: 16),
+                _FilterDropdown(
+                  label: 'Department',
+                  value: selectedDepartment,
+                  values: ['All Departments', ...departmentOptions],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setSheetState(() => selectedDepartment = value);
+                    onDepartment(value);
+                  },
+                ),
+                const SizedBox(height: 12),
+                _FilterDropdown(
+                  label: 'Status',
+                  value: selectedStatus,
+                  values: const [
+                    'All Status',
+                    'Active',
+                    'On Leave',
+                    'Inactive',
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setSheetState(() => selectedStatus = value);
+                    onStatus(value);
+                  },
+                ),
+                const SizedBox(height: 12),
+                _FilterDropdown(
+                  label: 'Work Mode',
+                  value: selectedMode,
+                  values: const ['All Work Modes', 'Office', 'Field', 'Hybrid'],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setSheetState(() => selectedMode = value);
+                    onMode(value);
+                  },
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () {
+                          onReset();
+                          Navigator.pop(sheetContext);
+                        },
+                        child: const Text('Reset'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () => Navigator.pop(sheetContext),
+                        child: const Text('Apply filters'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
-      )),
+      ),
     );
   }
 }
@@ -1905,7 +2244,11 @@ class _EmployeeTable extends StatelessWidget {
   final int total, currentPage, totalPages, pageSize;
   final bool mobile;
   final ValueChanged<int> onPageChanged;
-  final ValueChanged<_Employee> onView, onOpenDetails, onEdit, onToggle, onDelete;
+  final ValueChanged<_Employee> onView,
+      onOpenDetails,
+      onEdit,
+      onToggle,
+      onDelete;
 
   @override
   Widget build(BuildContext context) => mobile
@@ -1943,100 +2286,148 @@ class _EmployeeTable extends StatelessWidget {
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-              Expanded(child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: SizedBox(
-                  width: tableWidth,
-                  child: Column(
-                    children: [
-                      _TableHeader(scale: tableScale),
-                      Expanded(child: LayoutBuilder(builder: (context, bodyConstraints) {
-                        final rowHeight = (bodyConstraints.maxHeight / pageSize).clamp(38.0, double.infinity);
-                        return AnimatedSwitcher(
-                          duration: MediaQuery.disableAnimationsOf(context) ? Duration.zero : const Duration(milliseconds: 300),
-                          layoutBuilder: (currentChild, previousChildren) => Stack(
-                            alignment: Alignment.topCenter,
-                            children: [
-                              ...previousChildren,
-                              if (currentChild != null) currentChild,
-                            ],
-                          ),
-                          transitionBuilder: (child, animation) => FadeTransition(
-                            opacity: animation,
-                            child: SlideTransition(position: Tween<Offset>(begin: const Offset(0.02, 0), end: Offset.zero).animate(CurvedAnimation(parent: animation, curve: Curves.easeOut)), child: child),
-                          ),
-                          child: SingleChildScrollView(
-                            key: ValueKey(employees.map((employee) => employee.profileId).join(',')),
-                            child: Column(children: [
-                      if (employees.isEmpty)
-                        const SizedBox(
-                          height: 170,
-                          child: Center(
-                            child: Text('No employees match these filters.'),
-                          ),
-                        )
-                      else
-                        ...employees.indexed.map(
-                          (entry) => _EmployeeRow(
-                            number: (currentPage - 1) * pageSize + entry.$1 + 1,
-                            employee: entry.$2,
-                            selected: entry.$2.profileId == selectedProfileId,
-                            onView: () => onView(entry.$2),
-                            onOpenDetails: () => onOpenDetails(entry.$2),
-                            onEdit: () => onEdit(entry.$2),
-                            onToggle: () => onToggle(entry.$2),
-                            onDelete: () => onDelete(entry.$2),
-                            scale: tableScale,
-                            height: rowHeight,
-                          ),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: SizedBox(
+                        width: tableWidth,
+                        child: Column(
+                          children: [
+                            _TableHeader(scale: tableScale),
+                            Expanded(
+                              child: LayoutBuilder(
+                                builder: (context, bodyConstraints) {
+                                  final rowHeight =
+                                      (bodyConstraints.maxHeight / pageSize)
+                                          .clamp(38.0, double.infinity);
+                                  return AnimatedSwitcher(
+                                    duration:
+                                        MediaQuery.disableAnimationsOf(context)
+                                        ? Duration.zero
+                                        : const Duration(milliseconds: 300),
+                                    layoutBuilder:
+                                        (currentChild, previousChildren) =>
+                                            Stack(
+                                              alignment: Alignment.topCenter,
+                                              children: [
+                                                ...previousChildren,
+                                                if (currentChild != null)
+                                                  currentChild,
+                                              ],
+                                            ),
+                                    transitionBuilder: (child, animation) =>
+                                        FadeTransition(
+                                          opacity: animation,
+                                          child: SlideTransition(
+                                            position:
+                                                Tween<Offset>(
+                                                  begin: const Offset(0.02, 0),
+                                                  end: Offset.zero,
+                                                ).animate(
+                                                  CurvedAnimation(
+                                                    parent: animation,
+                                                    curve: Curves.easeOut,
+                                                  ),
+                                                ),
+                                            child: child,
+                                          ),
+                                        ),
+                                    child: SingleChildScrollView(
+                                      key: ValueKey(
+                                        employees
+                                            .map(
+                                              (employee) => employee.profileId,
+                                            )
+                                            .join(','),
+                                      ),
+                                      child: Column(
+                                        children: [
+                                          if (employees.isEmpty)
+                                            const SizedBox(
+                                              height: 170,
+                                              child: Center(
+                                                child: Text(
+                                                  'No employees match these filters.',
+                                                ),
+                                              ),
+                                            )
+                                          else
+                                            ...employees.indexed.map(
+                                              (entry) => _EmployeeRow(
+                                                number:
+                                                    (currentPage - 1) *
+                                                        pageSize +
+                                                    entry.$1 +
+                                                    1,
+                                                employee: entry.$2,
+                                                selected:
+                                                    entry.$2.profileId ==
+                                                    selectedProfileId,
+                                                onView: () => onView(entry.$2),
+                                                onOpenDetails: () =>
+                                                    onOpenDetails(entry.$2),
+                                                onEdit: () => onEdit(entry.$2),
+                                                onToggle: () =>
+                                                    onToggle(entry.$2),
+                                                onDelete: () =>
+                                                    onDelete(entry.$2),
+                                                scale: tableScale,
+                                                height: rowHeight,
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                          ],
                         ),
-                      ])));
-                      })),
-                    ],
-                  ),
-                ),
-              )),
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 18,
-                  vertical: 8,
-                ),
-                child: Row(
-                  children: [
-                    Text(
-                      _showingText(),
-                      style: const TextStyle(
-                        color: Color(0xFF50649E),
-                        fontSize: 13,
                       ),
                     ),
-                    const Spacer(),
-                    _PageButton(
-                      icon: Icons.chevron_left_rounded,
-                      enabled: currentPage > 1,
-                      onTap: () => onPageChanged(currentPage - 1),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 18,
+                      vertical: 8,
                     ),
-                    ..._visiblePages().map(
-                      (page) => page == 0
-                          ? const Padding(
-                              padding: EdgeInsets.symmetric(horizontal: 10),
-                              child: Text('...'),
-                            )
-                          : _PageButton(
-                              text: '$page',
-                              active: page == currentPage,
-                              onTap: () => onPageChanged(page),
-                            ),
+                    child: Row(
+                      children: [
+                        Text(
+                          _showingText(),
+                          style: const TextStyle(
+                            color: Color(0xFF50649E),
+                            fontSize: 13,
+                          ),
+                        ),
+                        const Spacer(),
+                        _PageButton(
+                          icon: Icons.chevron_left_rounded,
+                          enabled: currentPage > 1,
+                          onTap: () => onPageChanged(currentPage - 1),
+                        ),
+                        ..._visiblePages().map(
+                          (page) => page == 0
+                              ? const Padding(
+                                  padding: EdgeInsets.symmetric(horizontal: 10),
+                                  child: Text('...'),
+                                )
+                              : _PageButton(
+                                  text: '$page',
+                                  active: page == currentPage,
+                                  onTap: () => onPageChanged(page),
+                                ),
+                        ),
+                        _PageButton(
+                          icon: Icons.chevron_right_rounded,
+                          enabled: currentPage < totalPages,
+                          onTap: () => onPageChanged(currentPage + 1),
+                        ),
+                      ],
                     ),
-                    _PageButton(
-                      icon: Icons.chevron_right_rounded,
-                      enabled: currentPage < totalPages,
-                      onTap: () => onPageChanged(currentPage + 1),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+                  ),
+                ],
               );
             },
           ),
@@ -2132,11 +2523,30 @@ class _MobileEmployeeList extends StatelessWidget {
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: Row(children: [
-              Expanded(child: Text('Page $currentPage of $totalPages', style: const TextStyle(color: Color(0xFF50649E)))),
-              IconButton(tooltip: 'Previous page', onPressed: currentPage > 1 ? () => onPageChanged(currentPage - 1) : null, icon: const Icon(Icons.chevron_left)),
-              IconButton(tooltip: 'Next page', onPressed: currentPage < totalPages ? () => onPageChanged(currentPage + 1) : null, icon: const Icon(Icons.chevron_right)),
-            ]),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Page $currentPage of $totalPages',
+                    style: const TextStyle(color: Color(0xFF50649E)),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Previous page',
+                  onPressed: currentPage > 1
+                      ? () => onPageChanged(currentPage - 1)
+                      : null,
+                  icon: const Icon(Icons.chevron_left),
+                ),
+                IconButton(
+                  tooltip: 'Next page',
+                  onPressed: currentPage < totalPages
+                      ? () => onPageChanged(currentPage + 1)
+                      : null,
+                  icon: const Icon(Icons.chevron_right),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -2361,14 +2771,40 @@ class _TableHeader extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     color: AdminSurfacePalette.of(context).subtleSurface,
     child: SizedBox(
-    height: 38,
-    child: Row(
-      children: [
-        for (final col in <(String, double)>[('#', 40), ('Employee Name', 155), ('Designation', 105), ('Department', 95), ('Contact', 75), ('Work Mode', 100), ('Status', 70), ('Joining Date', 85), ('Actions', 120)])
-          _TableCell(width: col.$2 * scale, child: Center(child: Text(col.$1, textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: AdminSurfacePalette.of(context).text, fontSize: 12, fontWeight: FontWeight.w600)))),
-      ],
+      height: 38,
+      child: Row(
+        children: [
+          for (final col in <(String, double)>[
+            ('#', 40),
+            ('Employee Name', 155),
+            ('Designation', 105),
+            ('Department', 95),
+            ('Contact', 75),
+            ('Work Mode', 100),
+            ('Status', 70),
+            ('Joining Date', 85),
+            ('Actions', 120),
+          ])
+            _TableCell(
+              width: col.$2 * scale,
+              child: Center(
+                child: Text(
+                  col.$1,
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: AdminSurfacePalette.of(context).text,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
     ),
-  ));
+  );
 }
 
 class _EmployeeRow extends StatelessWidget {
@@ -2393,7 +2829,9 @@ class _EmployeeRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Material(
-    color: selected ? const Color(0xFFE8F3FF) : AdminSurfacePalette.of(context).surface,
+    color: selected
+        ? const Color(0xFFE8F3FF)
+        : AdminSurfacePalette.of(context).surface,
     child: InkWell(
       onTap: onView,
       child: Container(
@@ -2403,80 +2841,178 @@ class _EmployeeRow extends StatelessWidget {
         ),
         child: Row(
           children: [
-        _TableCell(width: 40 * scale, child: Text('$number', textAlign: TextAlign.center, style: _cellStyle)),
-        _TableCell(
-          width: 155 * scale,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.start,
-            children: [
-              CircleAvatar(
-                radius: 17,
-                backgroundColor: const Color(0xFFEAF0FA),
-                child: Text(
-                  employee.name.isEmpty ? '?' : employee.name.substring(0, 1).toUpperCase(),
-                  style: const TextStyle(color: HrmsColors.navy, fontWeight: FontWeight.bold),
-                ),
+            _TableCell(
+              width: 40 * scale,
+              child: Text(
+                '$number',
+                textAlign: TextAlign.center,
+                style: _cellStyle,
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    InkWell(
-                      onTap: onOpenDetails,
-                      borderRadius: BorderRadius.circular(4),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 2),
-                        child: Text(
-                          employee.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: HrmsColors.blue,
-                            fontWeight: FontWeight.w700,
-                            decoration: TextDecoration.underline,
-                            decorationColor: HrmsColors.blue,
-                          ),
-                        ),
+            ),
+            _TableCell(
+              width: 155 * scale,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.start,
+                children: [
+                  CircleAvatar(
+                    radius: 17,
+                    backgroundColor: const Color(0xFFEAF0FA),
+                    child: Text(
+                      employee.name.isEmpty
+                          ? '?'
+                          : employee.name.substring(0, 1).toUpperCase(),
+                      style: const TextStyle(
+                        color: HrmsColors.navy,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
-                    if (employee.username.isNotEmpty)
-                      Text(
-                        employee.username,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Color(0xFF657087), fontSize: 11),
-                      ),
-                  ],
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        InkWell(
+                          onTap: onOpenDetails,
+                          borderRadius: BorderRadius.circular(4),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 2),
+                            child: Text(
+                              employee.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: HrmsColors.blue,
+                                fontWeight: FontWeight.w700,
+                                decoration: TextDecoration.underline,
+                                decorationColor: HrmsColors.blue,
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (employee.username.isNotEmpty)
+                          Text(
+                            employee.username,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFF657087),
+                              fontSize: 11,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            _TableCell(
+              width: 105 * scale,
+              child: Text(
+                employee.designation,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: _cellStyle,
+              ),
+            ),
+            _TableCell(
+              width: 95 * scale,
+              child: Text(
+                employee.department,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: _cellStyle,
+              ),
+            ),
+            _TableCell(
+              width: 75 * scale,
+              child: Text(
+                employee.phone.isEmpty ? '—' : employee.phone,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: _cellStyle,
+              ),
+            ),
+            _TableCell(
+              width: 100 * scale,
+              child: Text(
+                employee.workMode,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: _cellStyle,
+              ),
+            ),
+            _TableCell(
+              width: 70 * scale,
+              child: Align(
+                alignment: Alignment.center,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: _StatusBadge(status: employee.status),
                 ),
               ),
-            ],
-          ),
-        ),
-        _TableCell(width: 105 * scale, child: Text(employee.designation, textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis, style: _cellStyle)),
-        _TableCell(width: 95 * scale, child: Text(employee.department, textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis, style: _cellStyle)),
-        _TableCell(width: 75 * scale, child: Text(employee.phone.isEmpty ? '—' : employee.phone, textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis, style: _cellStyle)),
-        _TableCell(width: 100 * scale, child: Text(employee.workMode, textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis, style: _cellStyle)),
-        _TableCell(
-          width: 70 * scale,
-          child: Align(
-            alignment: Alignment.center,
-            child: FittedBox(fit: BoxFit.scaleDown, child: _StatusBadge(status: employee.status)),
-          ),
-        ),
-        _TableCell(width: 85 * scale, child: Text(employee.joiningDate, textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis, style: _cellStyle)),
-        SizedBox(width: 120 * scale, child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          IconButton(tooltip: 'Edit employee', constraints: const BoxConstraints(), padding: const EdgeInsets.all(4), onPressed: onEdit, icon: const Icon(Icons.edit_outlined, size: 17)),
-          PopupMenuButton<String>(tooltip: 'Employee actions', padding: EdgeInsets.zero, iconSize: 18, onSelected: (value) { if (value == 'toggle') onToggle(); if (value == 'delete') onDelete(); }, itemBuilder: (_) => [PopupMenuItem(value: 'toggle', child: Text(employee.status == 'Active' ? 'Mark inactive' : 'Mark active')), const PopupMenuItem(value: 'delete', child: Text('Delete employee'))]),
-        ])),
+            ),
+            _TableCell(
+              width: 85 * scale,
+              child: Text(
+                employee.joiningDate,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: _cellStyle,
+              ),
+            ),
+            SizedBox(
+              width: 120 * scale,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton(
+                    tooltip: 'Edit employee',
+                    constraints: const BoxConstraints(),
+                    padding: const EdgeInsets.all(4),
+                    onPressed: onEdit,
+                    icon: const Icon(Icons.edit_outlined, size: 17),
+                  ),
+                  PopupMenuButton<String>(
+                    tooltip: 'Employee actions',
+                    padding: EdgeInsets.zero,
+                    iconSize: 18,
+                    onSelected: (value) {
+                      if (value == 'toggle') onToggle();
+                      if (value == 'delete') onDelete();
+                    },
+                    itemBuilder: (_) => [
+                      PopupMenuItem(
+                        value: 'toggle',
+                        child: Text(
+                          employee.status == 'Active'
+                              ? 'Mark inactive'
+                              : 'Mark active',
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'delete',
+                        child: Text('Delete employee'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),
     ),
   );
 }
+
 class _TableCell extends StatelessWidget {
   const _TableCell({required this.width, required this.child});
   final double width;
@@ -2501,7 +3037,11 @@ class _StatusBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
       decoration: BoxDecoration(
-        color: active ? const Color(0xFFEAF6E6) : inactive ? const Color(0xFFFFE4E6) : const Color(0xFFFFF0E4),
+        color: active
+            ? const Color(0xFFEAF6E6)
+            : inactive
+            ? const Color(0xFFFFE4E6)
+            : const Color(0xFFFFF0E4),
         border: Border.all(
           color: active ? const Color(0xFFD2EACB) : const Color(0xFFFFCFA9),
         ),
@@ -2510,7 +3050,11 @@ class _StatusBadge extends StatelessWidget {
       child: Text(
         status,
         style: TextStyle(
-          color: active ? const Color(0xFF177020) : inactive ? const Color(0xFFD00019) : const Color(0xFFFF6500),
+          color: active
+              ? const Color(0xFF177020)
+              : inactive
+              ? const Color(0xFFD00019)
+              : const Color(0xFFFF6500),
           fontSize: 13,
         ),
       ),
@@ -2660,7 +3204,8 @@ class _EmployeeSidePanelState extends State<_EmployeeSidePanel> {
   @override
   void didUpdateWidget(covariant _EmployeeSidePanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.employee.profileId != widget.employee.profileId) selectedTab = 0;
+    if (oldWidget.employee.profileId != widget.employee.profileId)
+      selectedTab = 0;
   }
 
   @override
@@ -2679,148 +3224,317 @@ class _EmployeeSidePanelState extends State<_EmployeeSidePanel> {
       child: Column(
         children: [
           Expanded(
-            child: LayoutBuilder(builder: (context, constraints) => SingleChildScrollView(child: ConstrainedBox(
-              constraints: BoxConstraints(minHeight: constraints.maxHeight),
-              child: IntrinsicHeight(child: Padding(
-              padding: const EdgeInsets.fromLTRB(18, 8, 18, 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(children: [
-                    const Expanded(child: Text('Employee Details', style: TextStyle(color: HrmsColors.navy, fontSize: 20, fontWeight: FontWeight.w800))),
-                    IconButton(
-                      tooltip: 'Close profile',
-                      onPressed: onClose,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints.tightFor(width: 32, height: 32),
-                      icon: const Icon(Icons.close, color: HrmsColors.navy),
-                    ),
-                  ]),
-                  const SizedBox(height: 4),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      CircleAvatar(
-                        radius: 25,
-                        backgroundColor: const Color(0xFFE8EEF7),
-                        child: Text(initials, style: const TextStyle(color: HrmsColors.navy, fontSize: 22, fontWeight: FontWeight.w800)),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(child: Column(
+            child: LayoutBuilder(
+              builder: (context, constraints) => SingleChildScrollView(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                  child: IntrinsicHeight(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 8, 18, 8),
+                      child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Wrap(
-                            spacing: 4,
-                            runSpacing: 2,
-                            crossAxisAlignment: WrapCrossAlignment.center,
+                          Row(
                             children: [
-                              Text(employee.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: HrmsColors.navy, fontSize: 18, fontWeight: FontWeight.w800)),
-                              Row(mainAxisSize: MainAxisSize.min, children: [
-                              _StatusBadge(status: employee.status),
-                              SizedBox(width: 32, height: 36, child: PopupMenuButton<String>(
-                                tooltip: 'More employee actions',
+                              const Expanded(
+                                child: Text(
+                                  'Employee Details',
+                                  style: TextStyle(
+                                    color: HrmsColors.navy,
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: 'Close profile',
+                                onPressed: onClose,
                                 padding: EdgeInsets.zero,
-                                icon: const Icon(Icons.more_vert, color: HrmsColors.navy),
-                                onSelected: (action) {
-                                  if (action == 'password') onResetPassword();
-                                  if (action == 'delete') onDelete();
-                                },
-                                itemBuilder: (_) => const [
-                                  PopupMenuItem(value: 'password', child: Text('Reset password')),
-                                  PopupMenuItem(value: 'delete', child: Text('Delete employee')),
-                                ],
-                              )),
-                              ]),
+                                constraints: const BoxConstraints.tightFor(
+                                  width: 32,
+                                  height: 32,
+                                ),
+                                icon: const Icon(
+                                  Icons.close,
+                                  color: HrmsColors.navy,
+                                ),
+                              ),
                             ],
                           ),
                           const SizedBox(height: 4),
-                          Text(
-                            [employee.id, employee.designation]
-                                .where((value) => value.trim().isNotEmpty && value.trim() != '-')
-                                .join('  •  '),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: Color(0xFF687A98), fontSize: 12),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              CircleAvatar(
+                                radius: 25,
+                                backgroundColor: const Color(0xFFE8EEF7),
+                                child: Text(
+                                  initials,
+                                  style: const TextStyle(
+                                    color: HrmsColors.navy,
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Wrap(
+                                      spacing: 4,
+                                      runSpacing: 2,
+                                      crossAxisAlignment:
+                                          WrapCrossAlignment.center,
+                                      children: [
+                                        Text(
+                                          employee.name,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            color: HrmsColors.navy,
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                        Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            _StatusBadge(
+                                              status: employee.status,
+                                            ),
+                                            SizedBox(
+                                              width: 32,
+                                              height: 36,
+                                              child: PopupMenuButton<String>(
+                                                tooltip:
+                                                    'More employee actions',
+                                                padding: EdgeInsets.zero,
+                                                icon: const Icon(
+                                                  Icons.more_vert,
+                                                  color: HrmsColors.navy,
+                                                ),
+                                                onSelected: (action) {
+                                                  if (action == 'password')
+                                                    onResetPassword();
+                                                  if (action == 'delete')
+                                                    onDelete();
+                                                },
+                                                itemBuilder: (_) => const [
+                                                  PopupMenuItem(
+                                                    value: 'password',
+                                                    child: Text(
+                                                      'Reset password',
+                                                    ),
+                                                  ),
+                                                  PopupMenuItem(
+                                                    value: 'delete',
+                                                    child: Text(
+                                                      'Delete employee',
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      [employee.id, employee.designation]
+                                          .where(
+                                            (value) =>
+                                                value.trim().isNotEmpty &&
+                                                value.trim() != '-',
+                                          )
+                                          .join('  •  '),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Color(0xFF687A98),
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              SizedBox(
+                                width: 112,
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    FilledButton.icon(
+                                      onPressed: onOpenDetails,
+                                      icon: const Icon(
+                                        Icons.person_outline,
+                                        size: 15,
+                                      ),
+                                      label: const Text('View profile'),
+                                      style: FilledButton.styleFrom(
+                                        minimumSize: const Size(0, 32),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                        ),
+                                        visualDensity: VisualDensity.compact,
+                                        textStyle: const TextStyle(
+                                          fontSize: 11,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 5),
+                                    OutlinedButton.icon(
+                                      onPressed: onEdit,
+                                      icon: const Icon(
+                                        Icons.edit_outlined,
+                                        size: 15,
+                                      ),
+                                      label: const Text('Edit'),
+                                      style: OutlinedButton.styleFrom(
+                                        minimumSize: const Size(0, 32),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                        ),
+                                        visualDensity: VisualDensity.compact,
+                                        textStyle: const TextStyle(
+                                          fontSize: 11,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
+                          const SizedBox(height: 8),
+                          const Divider(height: 1),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              for (final entry in [
+                                'Overview',
+                                'Personal',
+                                'Employment',
+                                'Payroll',
+                                'Documents',
+                              ].indexed)
+                                _tab(entry.$2, index: entry.$1),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          if (selectedTab == 0 || selectedTab == 1)
+                            _profileSection(
+                              _EmployeeDetailSection(
+                                title: 'Contact Information',
+                                fillHeight: selectedTab == 0,
+                                children: [
+                                  _detailLine(
+                                    'Email',
+                                    employee.email.isEmpty
+                                        ? '-'
+                                        : employee.email,
+                                  ),
+                                  _detailLine(
+                                    'Phone',
+                                    employee.phone.isEmpty
+                                        ? '-'
+                                        : employee.phone,
+                                  ),
+                                  _detailLine(
+                                    'Username',
+                                    employee.username.isEmpty
+                                        ? '-'
+                                        : employee.username,
+                                  ),
+                                  _detailLine('Work mode', employee.workMode),
+                                  _detailLine(
+                                    'Employee type',
+                                    employee.employeeType,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          if (selectedTab == 0) const SizedBox(height: 8),
+                          if (selectedTab == 0 || selectedTab == 2)
+                            _profileSection(
+                              _EmployeeDetailSection(
+                                title: 'Employment Details',
+                                fillHeight: selectedTab == 0,
+                                children: [
+                                  _detailLine('Employee ID', employee.id),
+                                  _detailLine(
+                                    'Department',
+                                    employee.department,
+                                  ),
+                                  _detailLine('Salary', employee.salary),
+                                  _detailLine(
+                                    'Salary type',
+                                    employee.salaryType,
+                                  ),
+                                  _detailLine(
+                                    'Joining date',
+                                    employee.joiningDate,
+                                  ),
+                                  _detailLine(
+                                    'Weekly off template',
+                                    employee.weeklyOffTemplate,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          if (selectedTab == 3)
+                            _EmployeeDetailSection(
+                              title: 'Payroll',
+                              children: [
+                                _detailLine('Salary', employee.salary),
+                                _detailLine('Salary type', employee.salaryType),
+                                _detailLine(
+                                  'Weekly off template',
+                                  employee.weeklyOffTemplate,
+                                ),
+                                TextButton(
+                                  onPressed: onOpenPayroll,
+                                  child: const Text('View payroll history'),
+                                ),
+                              ],
+                            ),
+                          if (selectedTab == 4)
+                            const _EmployeeDetailSection(
+                              title: 'Documents',
+                              children: [
+                                Text(
+                                  'Employee documents are not available yet.',
+                                ),
+                              ],
+                            ),
                         ],
-                      )),
-                      const SizedBox(width: 8),
-                      SizedBox(width: 112, child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          FilledButton.icon(
-                            onPressed: onOpenDetails,
-                            icon: const Icon(Icons.person_outline, size: 15),
-                            label: const Text('View profile'),
-                            style: FilledButton.styleFrom(minimumSize: const Size(0, 32), padding: const EdgeInsets.symmetric(horizontal: 6), visualDensity: VisualDensity.compact, textStyle: const TextStyle(fontSize: 11), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
-                          ),
-                          const SizedBox(height: 5),
-                          OutlinedButton.icon(
-                            onPressed: onEdit,
-                            icon: const Icon(Icons.edit_outlined, size: 15),
-                            label: const Text('Edit'),
-                            style: OutlinedButton.styleFrom(minimumSize: const Size(0, 32), padding: const EdgeInsets.symmetric(horizontal: 6), visualDensity: VisualDensity.compact, textStyle: const TextStyle(fontSize: 11), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
-                          ),
-                        ],
-                      )),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  const Divider(height: 1),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      for (final entry in ['Overview', 'Personal', 'Employment', 'Payroll', 'Documents'].indexed)
-                        _tab(entry.$2, index: entry.$1),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  if (selectedTab == 0 || selectedTab == 1) _profileSection(_EmployeeDetailSection(
-                    title: 'Contact Information',
-                    fillHeight: selectedTab == 0,
-                    children: [
-                      _detailLine('Email', employee.email.isEmpty ? '-' : employee.email),
-                      _detailLine('Phone', employee.phone.isEmpty ? '-' : employee.phone),
-                      _detailLine(
-                        'Username',
-                        employee.username.isEmpty ? '-' : employee.username,
                       ),
-                      _detailLine('Work mode', employee.workMode),
-                      _detailLine('Employee type', employee.employeeType),
-                    ],
-                  )),
-                  if (selectedTab == 0) const SizedBox(height: 8),
-                  if (selectedTab == 0 || selectedTab == 2) _profileSection(_EmployeeDetailSection(
-                    title: 'Employment Details',
-                    fillHeight: selectedTab == 0,
-                    children: [
-                      _detailLine('Employee ID', employee.id),
-                      _detailLine('Department', employee.department),
-                      _detailLine('Salary', employee.salary),
-                      _detailLine('Salary type', employee.salaryType),
-                      _detailLine('Joining date', employee.joiningDate),
-                      _detailLine('Weekly off template', employee.weeklyOffTemplate),
-                    ],
-                  )),
-                  if (selectedTab == 3) _EmployeeDetailSection(title: 'Payroll', children: [
-                    _detailLine('Salary', employee.salary),
-                    _detailLine('Salary type', employee.salaryType),
-                    _detailLine('Weekly off template', employee.weeklyOffTemplate),
-                    TextButton(onPressed: onOpenPayroll, child: const Text('View payroll history')),
-                  ]),
-                  if (selectedTab == 4) const _EmployeeDetailSection(title: 'Documents', children: [
-                    Text('Employee documents are not available yet.'),
-                  ]),
-                ],
+                    ),
+                  ),
+                ),
               ),
-            ))))),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _profileSection(Widget child) => selectedTab == 0 ? Expanded(child: child) : child;
+  Widget _profileSection(Widget child) =>
+      selectedTab == 0 ? Expanded(child: child) : child;
 
   Widget _detailLine(String label, String value) =>
       _EmployeeDetailLine(label, value, spacious: selectedTab != 0);
@@ -2828,24 +3542,27 @@ class _EmployeeSidePanelState extends State<_EmployeeSidePanel> {
   Widget _tab(String label, {required int index}) {
     final active = selectedTab == index;
     return Expanded(
-      child: InkWell(onTap: () => setState(() => selectedTab = index), child: Column(
-        children: [
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: active ? HrmsColors.blue : HrmsColors.navy,
-              fontSize: 11,
-              fontWeight: active ? FontWeight.w800 : FontWeight.w600,
+      child: InkWell(
+        onTap: () => setState(() => selectedTab = index),
+        child: Column(
+          children: [
+            Text(
+              label,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: active ? HrmsColors.blue : HrmsColors.navy,
+                fontSize: 11,
+                fontWeight: active ? FontWeight.w800 : FontWeight.w600,
+              ),
             ),
-          ),
-          const SizedBox(height: 8),
-          Container(
-            height: 2,
-            color: active ? HrmsColors.blue : Colors.transparent,
-          ),
-        ],
-      )),
+            const SizedBox(height: 8),
+            Container(
+              height: 2,
+              color: active ? HrmsColors.blue : Colors.transparent,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -3002,12 +3719,12 @@ class _EmployeeDetailPageState extends State<_EmployeeDetailPage> {
         final payrollHistory = _rows(data['payrollHistory']);
         return LayoutBuilder(
           builder: (context, constraints) {
-            // Keep the summary balanced: the old fixed-width cards left a
-            // large empty area on wide employee-profile screens.
-            final metricColumns = constraints.maxWidth >= 1450
-                ? 4
+            // Desktop profiles show every key metric together.  Narrow
+            // screens fall back to a readable grid instead of squeezing text.
+            final metricColumns = constraints.maxWidth >= 1180
+                ? 8
                 : constraints.maxWidth >= 980
-                ? 3
+                ? 4
                 : constraints.maxWidth >= 620
                 ? 2
                 : 1;
@@ -3295,53 +4012,50 @@ class _EmployeeDetailMetric extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SizedBox(
     width: width,
-    height: 88,
+    height: 94,
     child: Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: const Color(0xFFDCE4F1)),
         boxShadow: const [
-          BoxShadow(color: Color(0x080D254A), blurRadius: 10, offset: Offset(0, 3)),
+          BoxShadow(
+            color: Color(0x080D254A),
+            blurRadius: 10,
+            offset: Offset(0, 3),
+          ),
         ],
       ),
-      child: Row(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            width: 40,
-            height: 40,
+            width: 30,
+            height: 30,
             decoration: BoxDecoration(
               color: color.withValues(alpha: .10),
               shape: BoxShape.circle,
             ),
-            child: Icon(icon, color: color, size: 21),
+            child: Icon(icon, color: color, size: 17),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: const TextStyle(
-                    color: Color(0xFF657087),
-                    fontSize: 12,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ],
+          const SizedBox(height: 6),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Color(0xFF657087), fontSize: 11),
+          ),
+          const SizedBox(height: 1),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: color,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
             ),
           ),
         ],
@@ -3364,7 +4078,11 @@ class _EmployeeDetailHero extends StatelessWidget {
       borderRadius: BorderRadius.circular(16),
       border: Border.all(color: const Color(0xFFDCE4F1)),
       boxShadow: const [
-        BoxShadow(color: Color(0x080D254A), blurRadius: 14, offset: Offset(0, 4)),
+        BoxShadow(
+          color: Color(0x080D254A),
+          blurRadius: 14,
+          offset: Offset(0, 4),
+        ),
       ],
     ),
     child: Wrap(
@@ -3376,7 +4094,9 @@ class _EmployeeDetailHero extends StatelessWidget {
           radius: 30,
           backgroundColor: const Color(0xFFEAF0FA),
           child: Text(
-            employee.name.isEmpty ? '?' : employee.name.substring(0, 1).toUpperCase(),
+            employee.name.isEmpty
+                ? '?'
+                : employee.name.substring(0, 1).toUpperCase(),
             style: const TextStyle(
               color: HrmsColors.blue,
               fontWeight: FontWeight.w800,
@@ -3394,16 +4114,31 @@ class _EmployeeDetailHero extends StatelessWidget {
                 employee.name,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: HrmsColors.navy, fontSize: 24, fontWeight: FontWeight.w800),
+                style: const TextStyle(
+                  color: HrmsColors.navy,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
               const SizedBox(height: 5),
-              Text(employee.designation, style: const TextStyle(color: Color(0xFF657087), fontSize: 14)),
+              Text(
+                employee.designation,
+                style: const TextStyle(color: Color(0xFF657087), fontSize: 14),
+              ),
             ],
           ),
         ),
         _EmployeeDetailFact(Icons.badge_outlined, 'Employee ID', employee.id),
-        _EmployeeDetailFact(Icons.apartment_outlined, 'Department', employee.department),
-        _EmployeeDetailFact(Icons.location_on_outlined, 'Work mode', employee.workMode),
+        _EmployeeDetailFact(
+          Icons.apartment_outlined,
+          'Department',
+          employee.department,
+        ),
+        _EmployeeDetailFact(
+          Icons.location_on_outlined,
+          'Work mode',
+          employee.workMode,
+        ),
         _StatusBadge(status: employee.status),
       ],
     ),
@@ -3434,9 +4169,20 @@ class _EmployeeDetailFact extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(label, style: const TextStyle(color: Color(0xFF71819C), fontSize: 11)),
-              Text(value.isEmpty ? '–' : value, maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: HrmsColors.navy, fontSize: 13, fontWeight: FontWeight.w700)),
+              Text(
+                label,
+                style: const TextStyle(color: Color(0xFF71819C), fontSize: 11),
+              ),
+              Text(
+                value.isEmpty ? '–' : value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: HrmsColors.navy,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ],
           ),
         ),
@@ -3446,7 +4192,11 @@ class _EmployeeDetailFact extends StatelessWidget {
 }
 
 class _EmployeeDetailSection extends StatelessWidget {
-  const _EmployeeDetailSection({required this.title, required this.children, this.fillHeight = false});
+  const _EmployeeDetailSection({
+    required this.title,
+    required this.children,
+    this.fillHeight = false,
+  });
   final String title;
   final List<Widget> children;
   final bool fillHeight;
@@ -3461,7 +4211,9 @@ class _EmployeeDetailSection extends StatelessWidget {
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisAlignment: fillHeight ? MainAxisAlignment.spaceEvenly : MainAxisAlignment.start,
+      mainAxisAlignment: fillHeight
+          ? MainAxisAlignment.spaceEvenly
+          : MainAxisAlignment.start,
       children: [
         Text(
           title,
@@ -3488,7 +4240,14 @@ class _EmployeeDetailLine extends StatelessWidget {
     child: Row(
       children: [
         Expanded(
-          child: Text(label, style: const TextStyle(color: Color(0xFF657087), fontSize: 13, height: 1.2)),
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFF657087),
+              fontSize: 13,
+              height: 1.2,
+            ),
+          ),
         ),
         Text(
           value,
@@ -3593,10 +4352,12 @@ class _Employee {
       json['flexibleCycleStartDate']?.toString(),
       json['flexibleCycleEndDate']?.toString(),
       json['passwordLastChangedAt']?.toString(),
-       (json['weeklyOffTemplate'] ?? 'Global Payroll Policy').toString(),
-       (json['email'] ?? '').toString(),
-       (json['phone'] ?? '').toString(),
-      json['trackingTemplateId'] is num ? (json['trackingTemplateId'] as num).toInt() : int.tryParse('${json['trackingTemplateId'] ?? ''}'),
+      (json['weeklyOffTemplate'] ?? 'Global Payroll Policy').toString(),
+      (json['email'] ?? '').toString(),
+      (json['phone'] ?? '').toString(),
+      json['trackingTemplateId'] is num
+          ? (json['trackingTemplateId'] as num).toInt()
+          : int.tryParse('${json['trackingTemplateId'] ?? ''}'),
       json['trackingTemplateName']?.toString(),
     );
   }
@@ -3614,4 +4375,3 @@ const _tableHead = TextStyle(
   fontWeight: FontWeight.w600,
 );
 const _cellStyle = TextStyle(color: HrmsColors.navy, fontSize: 14);
-
