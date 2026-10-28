@@ -206,6 +206,7 @@ class _ManageCalendarDialogState extends State<ManageCalendarDialog> {
                     onNext: _nextMonth,
                     weeklyOffDay: weeklyOffDay,
                     statusForDate: _calendarStatusFor,
+                    actualStatusForDate: _statusFor,
                     onSelected: (day) => setState(() => selectedDay = day)),
                 const SizedBox(height: 12),
                 _EditDatePanel(
@@ -238,6 +239,7 @@ class _ManageCalendarDialogState extends State<ManageCalendarDialog> {
                             onNext: _nextMonth,
                             weeklyOffDay: weeklyOffDay,
                             statusForDate: _calendarStatusFor,
+                            actualStatusForDate: _statusFor,
                             onSelected: (day) =>
                                 setState(() => selectedDay = day))),
                     const SizedBox(width: 12),
@@ -627,6 +629,7 @@ class _CalendarPanel extends StatelessWidget {
     required this.onNext,
     required this.weeklyOffDay,
     required this.statusForDate,
+    required this.actualStatusForDate,
     required this.onSelected,
   });
 
@@ -636,10 +639,25 @@ class _CalendarPanel extends StatelessWidget {
   final VoidCallback onNext;
   final int weeklyOffDay;
   final String Function(DateTime) statusForDate;
+  final String Function(DateTime) actualStatusForDate;
   final ValueChanged<int> onSelected;
 
   @override
-  Widget build(BuildContext context) => Container(
+  Widget build(BuildContext context) {
+    final daysInMonth = DateTime(month.year, month.month + 1, 0).day;
+    final statusCounts = <String, int>{
+      'Working Day': 0,
+      'Weekly Off': 0,
+      'Holiday': 0,
+    };
+    for (var day = 1; day <= daysInMonth; day++) {
+      final status = actualStatusForDate(DateTime(month.year, month.month, day));
+      if (statusCounts.containsKey(status)) {
+        statusCounts[status] = statusCounts[status]! + 1;
+      }
+    }
+
+    return Container(
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
         decoration: BoxDecoration(
             color: Colors.white,
@@ -694,8 +712,6 @@ class _CalendarPanel extends StatelessWidget {
               itemCount: 42,
               itemBuilder: (_, index) {
                 final offset = DateTime(month.year, month.month, 1).weekday - 1;
-                final daysInMonth =
-                    DateTime(month.year, month.month + 1, 0).day;
                 final day = index - offset + 1;
                 if (day < 1 || day > daysInMonth) {
                   return const SizedBox.shrink();
@@ -711,20 +727,35 @@ class _CalendarPanel extends StatelessWidget {
               },
             ),
             const SizedBox(height: 12),
-            const Wrap(
-              spacing: 24,
-              runSpacing: 8,
-              alignment: WrapAlignment.center,
+            GridView.count(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisCount: 2,
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 12,
+              childAspectRatio: 4.5,
               children: [
-                _CalendarLegend('Working Day', HrmsColors.blue),
-                _CalendarLegend('Weekly Off', Color(0xFF63718F)),
-                _CalendarLegend('Holiday', Color(0xFF8500C8)),
-                _CalendarLegend('Override', Color(0xFF168B2A)),
+                _CalendarLegend(
+                  'Working Day',
+                  HrmsColors.blue,
+                  statusCounts['Working Day']!,
+                ),
+                _CalendarLegend(
+                  'Weekly Off',
+                  const Color(0xFF63718F),
+                  statusCounts['Weekly Off']!,
+                ),
+                _CalendarLegend(
+                  'Holiday',
+                  const Color(0xFF8500C8),
+                  statusCounts['Holiday']!,
+                ),
               ],
             ),
           ],
         ),
       );
+  }
 
   static String _monthName(int month) => const [
         'January',
@@ -836,19 +867,27 @@ class _CalendarDay extends StatelessWidget {
 }
 
 class _CalendarLegend extends StatelessWidget {
-  const _CalendarLegend(this.label, this.color);
+  const _CalendarLegend(this.label, this.color, this.count);
   final String label;
   final Color color;
+  final int count;
   @override
   Widget build(BuildContext context) =>
-      Row(mainAxisSize: MainAxisSize.min, children: [
+      Row(children: [
         Container(
             width: 10,
             height: 10,
             decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
         const SizedBox(width: 8),
-        Text(label,
-            style: const TextStyle(color: HrmsColors.navy, fontSize: 10))
+        Expanded(
+          child: Text(label,
+              style: const TextStyle(color: HrmsColors.navy, fontSize: 10)),
+        ),
+        Text('$count',
+            style: const TextStyle(
+                color: HrmsColors.navy,
+                fontSize: 12,
+                fontWeight: FontWeight.w700)),
       ]);
 }
 

@@ -319,6 +319,8 @@ class _EmployeesPageState extends State<EmployeesPage> {
                                 },
                                 onView: (employee) =>
                                     _showEmployeeDetails(employee),
+                                onOpenDetails: (employee) =>
+                                    _openFullEmployeeDetails(employee),
                                 onEdit: (employee) =>
                                     _showEmployeeForm(employee: employee),
                                 onToggle: _toggleEmployee,
@@ -342,6 +344,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
                                         _loadEmployees();
                                       },
                                       onView: _showEmployeeDetails,
+                                      onOpenDetails: _openFullEmployeeDetails,
                                       onEdit: (employee) =>
                                           _showEmployeeForm(employee: employee),
                                       onToggle: _toggleEmployee,
@@ -1892,6 +1895,7 @@ class _EmployeeTable extends StatelessWidget {
     required this.mobile,
     required this.onPageChanged,
     required this.onView,
+    required this.onOpenDetails,
     required this.onEdit,
     required this.onToggle,
     required this.onDelete,
@@ -1901,7 +1905,7 @@ class _EmployeeTable extends StatelessWidget {
   final int total, currentPage, totalPages, pageSize;
   final bool mobile;
   final ValueChanged<int> onPageChanged;
-  final ValueChanged<_Employee> onView, onEdit, onToggle, onDelete;
+  final ValueChanged<_Employee> onView, onOpenDetails, onEdit, onToggle, onDelete;
 
   @override
   Widget build(BuildContext context) => mobile
@@ -1978,6 +1982,7 @@ class _EmployeeTable extends StatelessWidget {
                             employee: entry.$2,
                             selected: entry.$2.profileId == selectedProfileId,
                             onView: () => onView(entry.$2),
+                            onOpenDetails: () => onOpenDetails(entry.$2),
                             onEdit: () => onEdit(entry.$2),
                             onToggle: () => onToggle(entry.$2),
                             onDelete: () => onDelete(entry.$2),
@@ -2372,6 +2377,7 @@ class _EmployeeRow extends StatelessWidget {
     required this.number,
     this.selected = false,
     required this.onView,
+    required this.onOpenDetails,
     required this.onEdit,
     required this.onToggle,
     required this.onDelete,
@@ -2381,7 +2387,7 @@ class _EmployeeRow extends StatelessWidget {
   final _Employee employee;
   final int number;
   final bool selected;
-  final VoidCallback onView, onEdit, onToggle, onDelete;
+  final VoidCallback onView, onOpenDetails, onEdit, onToggle, onDelete;
   final double scale;
   final double height;
 
@@ -2418,13 +2424,22 @@ class _EmployeeRow extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text(
-                      employee.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: HrmsColors.navy,
-                        fontWeight: FontWeight.w700,
+                    InkWell(
+                      onTap: onOpenDetails,
+                      borderRadius: BorderRadius.circular(4),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 2),
+                        child: Text(
+                          employee.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: HrmsColors.blue,
+                            fontWeight: FontWeight.w700,
+                            decoration: TextDecoration.underline,
+                            decorationColor: HrmsColors.blue,
+                          ),
+                        ),
                       ),
                     ),
                     if (employee.username.isNotEmpty)
