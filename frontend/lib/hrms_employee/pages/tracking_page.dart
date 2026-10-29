@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -66,7 +67,6 @@ class _TrackingViewState extends State<_TrackingView>
   String duration = '—';
   String avgSpeed = '—';
 
-
   List<dynamic> activities = [
     {
       'activity_time': '--:--',
@@ -111,7 +111,9 @@ class _TrackingViewState extends State<_TrackingView>
     // interval. Polling keeps the visible activity current. If Android delays
     // that service while this page is open, a guarded fallback sends only the
     // overdue ping; it does not create a second regular 10-second GPS stream.
-    _timelineRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
+    _timelineRefreshTimer = Timer.periodic(const Duration(seconds: 10), (
+      _,
+    ) async {
       if (!mounted || !trackingActive) return;
       await _loadTripSummary();
       await _sendFallbackPingIfDue();
@@ -163,10 +165,11 @@ class _TrackingViewState extends State<_TrackingView>
         final parsedInterval = configuredInterval is num
             ? configuredInterval.toInt()
             : int.tryParse('$configuredInterval');
-        _gpsUpdateIntervalMinutes = (parsedInterval ?? 15).clamp(1, 1440).toInt();
+        _gpsUpdateIntervalMinutes = (parsedInterval ?? 15)
+            .clamp(1, 1440)
+            .toInt();
         _officeLoading = false;
       });
-
     } catch (_) {
       if (!mounted) return;
       setState(() => _officeLoading = false);
@@ -208,11 +211,16 @@ class _TrackingViewState extends State<_TrackingView>
 
   Future<void> _loadFieldSession() async {
     try {
-      await context.read<LiveTrackingCoordinator>().restore();
+      final coordinator = context.read<LiveTrackingCoordinator>();
+      await coordinator.restore();
       final timeline = await HrmsTrackingApi.fieldSessionTimeline();
       if (!mounted) return;
       setState(() {
         trackingActive = timeline['isActive'] == true;
+        // The coordinator restores the interval that was captured in this
+        // employee's active session. Do not use the global admin value here:
+        // it may belong to a different template.
+        _gpsUpdateIntervalMinutes = coordinator.pingMinutes;
         if (trackingActive) {
           mode = _WorkMode.field;
           updated = 'Live tracking active';
@@ -248,41 +256,63 @@ class _TrackingViewState extends State<_TrackingView>
   }
 
   void _applyTimeline(Map<String, dynamic> summary) {
-      final seconds = (summary['durationSeconds'] as num?)?.toInt() ?? 0;
-      final minutes = seconds ~/ 60;
-      final hours = minutes ~/ 60;
-      final remainingMinutes = minutes % 60;
-      final distanceKm = (summary['distanceKm'] as num?)?.toDouble() ?? 0;
-      final averageSpeed =
-          (summary['averageSpeedKmph'] as num?)?.toDouble() ?? 0;
-      duration = hours > 0
-            ? '${hours}h ${remainingMinutes}m'
-            : '$minutes min';
-      distance = '${distanceKm.toStringAsFixed(2)} km';
-      avgSpeed = '${averageSpeed.toStringAsFixed(1)} km/h';
-      final savedPoints = (summary['points'] as List? ?? []).whereType<Map>().map((point) {
-        final lat = double.tryParse('${point['latitude']}');
-        final lng = double.tryParse('${point['longitude']}');
-        return lat == null || lng == null ? null : LatLng(lat, lng);
-      }).whereType<LatLng>().toList();
-      _routePoints = savedPoints;
-      final rawEvents = (summary['events'] as List? ?? []).whereType<Map>().toList();
-      final items = rawEvents.map((event) => {
-        'activity_time': _eventTime(event['recordedAt']),
-        'activity_text': '${event['text'] ?? 'Live location updated'}${event['address'] == null || '${event['address']}'.trim().isEmpty ? '' : ' — ${event['address']}'}${event['latitude'] == null ? '' : '\nGPS: ${event['latitude']}, ${event['longitude']}'}',
-      }).toList().reversed.toList();
-      activities = items.isEmpty ? [{'activity_time': '--:--', 'activity_text': 'No live tracking activity yet'}] : items;
-      if (rawEvents.isNotEmpty) {
-        updated = 'Updated ${_eventTime(rawEvents.last['recordedAt'])}';
-        final recordedAt = DateTime.tryParse('${rawEvents.last['recordedAt'] ?? ''}');
-        if (recordedAt != null) _lastSavedPingAt = recordedAt.toLocal();
-      }
+    final seconds = (summary['durationSeconds'] as num?)?.toInt() ?? 0;
+    final minutes = seconds ~/ 60;
+    final hours = minutes ~/ 60;
+    final remainingMinutes = minutes % 60;
+    final distanceKm = (summary['distanceKm'] as num?)?.toDouble() ?? 0;
+    final averageSpeed = (summary['averageSpeedKmph'] as num?)?.toDouble() ?? 0;
+    duration = hours > 0 ? '${hours}h ${remainingMinutes}m' : '$minutes min';
+    distance = '${distanceKm.toStringAsFixed(2)} km';
+    avgSpeed = '${averageSpeed.toStringAsFixed(1)} km/h';
+    final savedPoints = (summary['points'] as List? ?? [])
+        .whereType<Map>()
+        .map((point) {
+          final lat = double.tryParse('${point['latitude']}');
+          final lng = double.tryParse('${point['longitude']}');
+          return lat == null || lng == null ? null : LatLng(lat, lng);
+        })
+        .whereType<LatLng>()
+        .toList();
+    _routePoints = savedPoints;
+    final rawEvents = (summary['events'] as List? ?? [])
+        .whereType<Map>()
+        .toList();
+    final items = rawEvents
+        .map(
+          (event) => {
+            'activity_time': _eventTime(event['recordedAt']),
+            'activity_text':
+                '${event['text'] ?? 'Live location updated'}${event['address'] == null || '${event['address']}'.trim().isEmpty ? '' : ' — ${event['address']}'}${event['latitude'] == null ? '' : '\nGPS: ${event['latitude']}, ${event['longitude']}'}',
+          },
+        )
+        .toList()
+        .reversed
+        .toList();
+    activities = items.isEmpty
+        ? [
+            {
+              'activity_time': '--:--',
+              'activity_text': 'No live tracking activity yet',
+            },
+          ]
+        : items;
+    if (rawEvents.isNotEmpty) {
+      updated = 'Updated ${_eventTime(rawEvents.last['recordedAt'])}';
+      final recordedAt = DateTime.tryParse(
+        '${rawEvents.last['recordedAt'] ?? ''}',
+      );
+      if (recordedAt != null) _lastSavedPingAt = recordedAt.toLocal();
+    }
   }
 
   Future<void> _sendFallbackPingIfDue() async {
-    if (!trackingActive ||
-        _fallbackPingInFlight ||
-        _lastSavedPingAt == null) {
+    // Android has a foreground service which is the sole GPS ping owner.
+    // Sending a second ping from this visible page caused duplicate/too-frequent
+    // records (for example a 15-minute template producing 1–2 minute pings).
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) return;
+
+    if (!trackingActive || _fallbackPingInFlight || _lastSavedPingAt == null) {
       return;
     }
 
@@ -291,10 +321,7 @@ class _TrackingViewState extends State<_TrackingView>
     // the missed point itself. This is why a visible page no longer needs the
     // manual refresh button to make location activity and the waiting popup
     // appear.
-    final dueAfter = Duration(
-      minutes: _gpsUpdateIntervalMinutes,
-      seconds: 20,
-    );
+    final dueAfter = Duration(minutes: _gpsUpdateIntervalMinutes, seconds: 20);
     if (DateTime.now().difference(_lastSavedPingAt!) < dueAfter) return;
 
     _fallbackPingInFlight = true;
@@ -308,7 +335,9 @@ class _TrackingViewState extends State<_TrackingView>
 
   String _eventTime(dynamic raw) {
     final date = DateTime.tryParse('${raw ?? ''}');
-    return date == null ? '--:--' : TimeOfDay.fromDateTime(date.toLocal()).format(context);
+    return date == null
+        ? '--:--'
+        : TimeOfDay.fromDateTime(date.toLocal()).format(context);
   }
 
   Future<void> _sendLocationPing({required bool showMessage}) async {
@@ -363,7 +392,10 @@ class _TrackingViewState extends State<_TrackingView>
             ],
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
             FilledButton(
               onPressed: () {
                 final value = controller.text.trim();
@@ -686,7 +718,6 @@ class _TrackingViewState extends State<_TrackingView>
       ],
     );
   }
-
 }
 
 class _RouteHistoryView extends StatelessWidget {

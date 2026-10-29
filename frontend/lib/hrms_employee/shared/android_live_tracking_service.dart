@@ -19,7 +19,8 @@ class AndroidLiveTrackingService {
   static const _waitingAlertChannel = AndroidNotificationChannel(
     'field_waiting_alerts',
     'Field waiting alerts',
-    description: 'Alerts that require a field employee to enter a waiting reason.',
+    description:
+        'Alerts that require a field employee to enter a waiting reason.',
     importance: Importance.max,
     playSound: true,
     sound: const RawResourceAndroidNotificationSound('a1_stationary_alert'),
@@ -34,7 +35,9 @@ class AndroidLiveTrackingService {
     enableVibration: false,
   );
   static const _waitingAlertNotificationId = 71403;
-  static final ValueNotifier<int?> pendingWaitingReasonId = ValueNotifier<int?>(null);
+  static final ValueNotifier<int?> pendingWaitingReasonId = ValueNotifier<int?>(
+    null,
+  );
 
   static void _handleNotificationTap(NotificationResponse response) {
     final payload = response.payload ?? '';
@@ -58,11 +61,14 @@ class AndroidLiveTrackingService {
       onDidReceiveNotificationResponse: _handleNotificationTap,
     );
     final launch = await notifications.getNotificationAppLaunchDetails();
-    if (launch?.didNotificationLaunchApp == true && launch?.notificationResponse != null) {
+    if (launch?.didNotificationLaunchApp == true &&
+        launch?.notificationResponse != null) {
       _handleNotificationTap(launch!.notificationResponse!);
     }
     final androidNotifications = notifications
-        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
     await androidNotifications?.requestNotificationsPermission();
     await androidNotifications?.createNotificationChannel(_liveTrackingChannel);
     await androidNotifications?.createNotificationChannel(_waitingAlertChannel);
@@ -80,12 +86,18 @@ class AndroidLiveTrackingService {
     );
   }
 
-  static Future<void> start({required String employeeName, required int pingMinutes}) async {
+  static Future<void> start({
+    required String employeeName,
+    required int pingMinutes,
+  }) async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
     await configure();
     final running = await _service.isRunning();
     if (!running) await _service.startService();
-    _service.invoke('start-live-tracking', {'employeeName': employeeName, 'pingMinutes': pingMinutes});
+    _service.invoke('start-live-tracking', {
+      'employeeName': employeeName,
+      'pingMinutes': pingMinutes,
+    });
     await OverlayPermission.showTrackingBubble();
   }
 
@@ -104,39 +116,92 @@ class AndroidLiveTrackingService {
     );
     await notifications.initialize(initializationSettings);
     final androidNotifications = notifications
-        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
     await androidNotifications?.createNotificationChannel(_waitingAlertChannel);
     await androidNotifications?.createNotificationChannel(_liveTrackingChannel);
 
     Timer? pingTimer;
+    Timer? pingRetryTimer;
     Timer? reminderTimer;
     Timer? waitingAlertTimer;
+    var pingInFlight = false;
+    var pingRetryAttempt = 0;
+    var employeeName = 'Employee';
     int? notifiedWaitingReasonId;
     DateTime? lastWaitingAlertNotificationAt;
     var waitingAlertRepeatSeconds = 5;
-    Future<void> ping() async {
+    Future<void> ping({bool isRetry = false}) async {
+      // A slow GPS fix or API request must never overlap the next scheduled
+      // timer tick. Overlaps create duplicate location records.
+      if (pingInFlight) return;
+      if (!isRetry) {
+        pingRetryTimer?.cancel();
+        pingRetryTimer = null;
+        pingRetryAttempt = 0;
+      }
+      pingInFlight = true;
       try {
         final position = await Geolocator.getCurrentPosition(
-          locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
-        );
-        await HrmsTrackingApi.ping(latitude: position.latitude, longitude: position.longitude, accuracy: position.accuracy, isMocked: position.isMocked);
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+          ),
+        ).timeout(const Duration(seconds: 30));
+        await HrmsTrackingApi.ping(
+          latitude: position.latitude,
+          longitude: position.longitude,
+          accuracy: position.accuracy,
+          isMocked: position.isMocked,
+        ).timeout(const Duration(seconds: 20));
+        pingRetryAttempt = 0;
+        pingRetryTimer?.cancel();
+        pingRetryTimer = null;
+        if (service is AndroidServiceInstance) {
+          await service.setForegroundNotificationInfo(
+            title: '$employeeName — Live tracking active',
+            content: 'Location updates are being saved',
+          );
+        }
       } catch (_) {
-        // The next foreground-service interval retries automatically.
+        // Retry a transient GPS/network failure without creating a permanent
+        // second timer. Three short retries are enough to recover from a
+        // temporary unavailable GPS fix or mobile-data interruption.
+        if (pingRetryAttempt < 3) {
+          pingRetryAttempt += 1;
+          pingRetryTimer?.cancel();
+          pingRetryTimer = Timer(
+            const Duration(seconds: 20),
+            () => ping(isRetry: true),
+          );
+        }
+        if (service is AndroidServiceInstance) {
+          await service.setForegroundNotificationInfo(
+            title: '$employeeName — Live tracking needs attention',
+            content: 'GPS or internet is unavailable. Retrying shortly.',
+          );
+        }
+      } finally {
+        pingInFlight = false;
       }
     }
+
     Future<void> checkClockOutReminder() async {
       try {
         final reminder = await AttendanceApi.clockOutReminderStatus();
-        if (reminder['reminderDue'] == true && service is AndroidServiceInstance) {
+        if (reminder['reminderDue'] == true &&
+            service is AndroidServiceInstance) {
           await service.setForegroundNotificationInfo(
             title: 'Clock-out reminder',
-            content: 'Your shift has ended. Open GoDigital Attendance to respond.',
+            content:
+                'Your shift has ended. Open GoDigital Attendance to respond.',
           );
         }
       } catch (_) {
         // Auth, network and plugin failures are retried on the next interval.
       }
     }
+
     Future<void> checkWaitingAlert() async {
       try {
         final alert = await HrmsTrackingApi.waitingAlert();
@@ -172,7 +237,9 @@ class AndroidLiveTrackingService {
               importance: Importance.max,
               priority: Priority.high,
               playSound: true,
-              sound: const RawResourceAndroidNotificationSound('a1_stationary_alert'),
+              sound: const RawResourceAndroidNotificationSound(
+                'a1_stationary_alert',
+              ),
               enableVibration: true,
               onlyAlertOnce: false,
               vibrationPattern: Int64List.fromList([0, 180, 100, 180]),
@@ -187,10 +254,12 @@ class AndroidLiveTrackingService {
         // A temporary network failure is retried by the next service tick.
       }
     }
+
     Future<void> startWaitingAlertMonitor() async {
       try {
         final settings = await HrmsTrackingApi.trackingSettings();
-        final value = settings['popup_alert_repeat_seconds'] ??
+        final value =
+            settings['popup_alert_repeat_seconds'] ??
             settings['popupAlertRepeatSeconds'];
         final parsed = value is num ? value.toInt() : int.tryParse('$value');
         // Android may throttle extremely fast notification updates, but this
@@ -206,25 +275,34 @@ class AndroidLiveTrackingService {
       );
       await checkWaitingAlert();
     }
+
     service.on('start-live-tracking').listen((event) async {
-      final minutes = (event?['pingMinutes'] as num?)?.toInt().clamp(1, 1440) ?? 15;
-      final name = '${event?['employeeName'] ?? 'Employee'}'.trim();
+      final minutes =
+          (event?['pingMinutes'] as num?)?.toInt().clamp(1, 1440) ?? 15;
+      employeeName = '${event?['employeeName'] ?? 'Employee'}'.trim();
       if (service is AndroidServiceInstance) {
         await service.setAsForegroundService();
         await service.setForegroundNotificationInfo(
-          title: '$name — Live tracking active',
+          title: '$employeeName — Live tracking active',
           content: 'Location updates are being saved',
         );
       }
       pingTimer?.cancel();
+      pingRetryTimer?.cancel();
+      pingRetryTimer = null;
+      pingRetryAttempt = 0;
       pingTimer = Timer.periodic(Duration(minutes: minutes), (_) => ping());
       reminderTimer?.cancel();
-      reminderTimer = Timer.periodic(const Duration(minutes: 1), (_) => checkClockOutReminder());
+      reminderTimer = Timer.periodic(
+        const Duration(minutes: 1),
+        (_) => checkClockOutReminder(),
+      );
       checkClockOutReminder();
       await startWaitingAlertMonitor();
     });
     service.on('stop-live-tracking').listen((_) {
       pingTimer?.cancel();
+      pingRetryTimer?.cancel();
       reminderTimer?.cancel();
       waitingAlertTimer?.cancel();
       notifications.cancel(_waitingAlertNotificationId);

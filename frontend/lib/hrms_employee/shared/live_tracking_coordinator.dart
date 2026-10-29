@@ -13,7 +13,8 @@ import 'android_live_tracking_service.dart';
 
 /// App-level owner for a Field/Hybrid live-tracking session.  Pages can be
 /// created and disposed freely; the timer and active session remain here.
-class LiveTrackingCoordinator extends ChangeNotifier with WidgetsBindingObserver {
+class LiveTrackingCoordinator extends ChangeNotifier
+    with WidgetsBindingObserver {
   LiveTrackingCoordinator() {
     WidgetsBinding.instance.addObserver(this);
   }
@@ -28,6 +29,11 @@ class LiveTrackingCoordinator extends ChangeNotifier with WidgetsBindingObserver
 
   bool get active => _active;
   bool get busy => _busy;
+
+  /// The interval captured in the active tracking session.  It must not be
+  /// replaced by the global setting when an employee resumes the app: a
+  /// template can intentionally use a different interval.
+  int get pingMinutes => _pingMinutes;
   Map<String, dynamic>? get autoClockoutWarning => _autoWarning;
 
   Future<void> restore() async {
@@ -41,20 +47,31 @@ class LiveTrackingCoordinator extends ChangeNotifier with WidgetsBindingObserver
 
   Future<void> _syncSession() async {
     try {
-      final results = await Future.wait([
-        HrmsTrackingApi.fieldSession(),
-        HrmsTrackingApi.trackingSettings(),
-      ]);
-      final session = results[0];
-      final settings = results[1];
-      _active = session['is_active'] == true || session['is_active'] == 1 || session['isActive'] == true;
-      final value = settings['field_ping_interval_minutes'] ?? settings['fieldPingIntervalMinutes'];
-      _pingMinutes = (value is num ? value.toInt() : int.tryParse('$value'))?.clamp(1, 1440) ?? 15;
+      final session = await HrmsTrackingApi.fieldSession();
+      _active =
+          session['is_active'] == true ||
+          session['is_active'] == 1 ||
+          session['isActive'] == true;
+      if (_active) {
+        // The backend snapshots the assigned template into the session at
+        // Start Live Tracking.  Use that snapshot for every later resume.
+        final value =
+            session['field_ping_interval_minutes'] ??
+            session['fieldPingIntervalMinutes'];
+        _pingMinutes =
+            (value is num ? value.toInt() : int.tryParse('$value'))
+                ?.clamp(1, 1440)
+                .toInt() ??
+            15;
+      }
       if (_active) {
         if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
           _armTimer();
         } else {
-          await AndroidLiveTrackingService.start(employeeName: await _employeeName(), pingMinutes: _pingMinutes);
+          await AndroidLiveTrackingService.start(
+            employeeName: await _employeeName(),
+            pingMinutes: _pingMinutes,
+          );
         }
       } else {
         _cancelTimer();
@@ -72,7 +89,10 @@ class LiveTrackingCoordinator extends ChangeNotifier with WidgetsBindingObserver
 
   void _armAutoClockoutMonitor() {
     _autoClockoutTimer?.cancel();
-    _autoClockoutTimer = Timer.periodic(const Duration(minutes: 1), (_) => _checkAutoClockout());
+    _autoClockoutTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => _checkAutoClockout(),
+    );
     _checkAutoClockout();
   }
 
@@ -116,14 +136,20 @@ class LiveTrackingCoordinator extends ChangeNotifier with WidgetsBindingObserver
       throw Exception('Please turn on device location services.');
     }
     var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
-    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+    if (permission == LocationPermission.denied)
+      permission = await Geolocator.requestPermission();
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
       throw Exception('Location permission is required for live tracking.');
     }
     // Android foreground service tracking must be granted "Allow all the time".
     // Web keeps browser best-effort tracking and does not expose this permission.
-    if (requireBackground && !kIsWeb && permission != LocationPermission.always) {
-      throw Exception('Allow location access all the time in Android settings before starting live tracking.');
+    if (requireBackground &&
+        !kIsWeb &&
+        permission != LocationPermission.always) {
+      throw Exception(
+        'Allow location access all the time in Android settings before starting live tracking.',
+      );
     }
     // Do not reuse an old provider reading for Start/Stop.  In particular, a
     // stale reading at Stop made the final map point appear far from the
@@ -135,7 +161,10 @@ class LiveTrackingCoordinator extends ChangeNotifier with WidgetsBindingObserver
   void _armTimer() {
     _cancelTimer();
     _autoClockoutTimer?.cancel();
-    _pingTimer = Timer.periodic(Duration(minutes: _pingMinutes), (_) => sendPing());
+    _pingTimer = Timer.periodic(
+      Duration(minutes: _pingMinutes),
+      (_) => sendPing(),
+    );
   }
 
   void _cancelTimer() {
@@ -145,24 +174,40 @@ class LiveTrackingCoordinator extends ChangeNotifier with WidgetsBindingObserver
 
   Future<void> start() async {
     if (_busy || _active) return;
-    _busy = true; notifyListeners();
+    _busy = true;
+    notifyListeners();
     try {
-      final position = await _position(requireBackground: defaultTargetPlatform == TargetPlatform.android);
-      final started = await HrmsTrackingApi.startFieldSession(latitude: position.latitude, longitude: position.longitude, accuracy: position.accuracy, isMocked: position.isMocked);
+      final position = await _position(
+        requireBackground: defaultTargetPlatform == TargetPlatform.android,
+      );
+      final started = await HrmsTrackingApi.startFieldSession(
+        latitude: position.latitude,
+        longitude: position.longitude,
+        accuracy: position.accuracy,
+        isMocked: position.isMocked,
+      );
       final template = started['template'];
       final assignedMinutes = template is Map
-          ? (template['fieldPingIntervalMinutes'] ?? template['field_ping_interval_minutes'])
+          ? (template['fieldPingIntervalMinutes'] ??
+                template['field_ping_interval_minutes'])
           : null;
-      final parsedMinutes = assignedMinutes is num ? assignedMinutes.toInt() : int.tryParse('$assignedMinutes');
-      if (parsedMinutes != null && parsedMinutes > 0) _pingMinutes = parsedMinutes;
+      final parsedMinutes = assignedMinutes is num
+          ? assignedMinutes.toInt()
+          : int.tryParse('$assignedMinutes');
+      if (parsedMinutes != null && parsedMinutes > 0)
+        _pingMinutes = parsedMinutes;
       _active = true;
       if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-        await AndroidLiveTrackingService.start(employeeName: await _employeeName(), pingMinutes: _pingMinutes);
+        await AndroidLiveTrackingService.start(
+          employeeName: await _employeeName(),
+          pingMinutes: _pingMinutes,
+        );
       } else {
         _armTimer();
       }
     } finally {
-      _busy = false; notifyListeners();
+      _busy = false;
+      notifyListeners();
     }
   }
 
@@ -179,15 +224,23 @@ class LiveTrackingCoordinator extends ChangeNotifier with WidgetsBindingObserver
 
   Future<void> stop(String reason) async {
     if (_busy || !_active) return;
-    _busy = true; notifyListeners();
+    _busy = true;
+    notifyListeners();
     try {
       final position = await _position();
-      await HrmsTrackingApi.stopFieldSession(reason: reason, latitude: position.latitude, longitude: position.longitude, accuracy: position.accuracy, isMocked: position.isMocked);
+      await HrmsTrackingApi.stopFieldSession(
+        reason: reason,
+        latitude: position.latitude,
+        longitude: position.longitude,
+        accuracy: position.accuracy,
+        isMocked: position.isMocked,
+      );
       _active = false;
       _cancelTimer();
       await AndroidLiveTrackingService.stop();
     } finally {
-      _busy = false; notifyListeners();
+      _busy = false;
+      notifyListeners();
     }
   }
 
@@ -196,7 +249,12 @@ class LiveTrackingCoordinator extends ChangeNotifier with WidgetsBindingObserver
     if (!_active || _busy) return;
     try {
       final position = await _position();
-      await HrmsTrackingApi.ping(latitude: position.latitude, longitude: position.longitude, accuracy: position.accuracy, isMocked: position.isMocked);
+      await HrmsTrackingApi.ping(
+        latitude: position.latitude,
+        longitude: position.longitude,
+        accuracy: position.accuracy,
+        isMocked: position.isMocked,
+      );
     } catch (_) {
       // A later scheduled tick can recover from a temporary GPS/network error.
     }
@@ -222,9 +280,15 @@ class LiveTrackingCoordinator extends ChangeNotifier with WidgetsBindingObserver
 class EmployeeRouteSignal extends NavigatorObserver {
   final ValueNotifier<int> revision = ValueNotifier<int>(0);
   void _changed() => revision.value++;
-  @override void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) => _changed();
-  @override void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) => _changed();
-  @override void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) => _changed();
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) =>
+      _changed();
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) =>
+      _changed();
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) =>
+      _changed();
 }
 
 final employeeRouteSignal = EmployeeRouteSignal();
