@@ -902,7 +902,7 @@ class _ClockValues extends StatelessWidget {
 class _ClockLogsPageState extends State<ClockLogsPage> {
   final _employeeSearchController = TextEditingController();
   DateTime _date = DateTime.now();
-  bool _monthly = true;
+  bool _monthly = false;
   int? _employeeId;
   List<Map<String, dynamic>> _employees = const [];
   List<Map<String, dynamic>> _logs = const [];
@@ -1019,6 +1019,14 @@ class _ClockLogsPageState extends State<ClockLogsPage> {
               monthly: _monthly,
               onSearch: () => setState(() {}),
               onPickDate: _pickDate,
+              onPreviousDate: () {
+                setState(() => _date = _date.subtract(const Duration(days: 1)));
+                _load();
+              },
+              onNextDate: () {
+                setState(() => _date = _date.add(const Duration(days: 1)));
+                _load();
+              },
               onPeriod: (monthly) {
                 if (_monthly != monthly) {
                   setState(() => _monthly = monthly);
@@ -1599,7 +1607,13 @@ class _ClockLogsPageState extends State<ClockLogsPage> {
 
 String _clockStatus(Map<String, dynamic> log) {
   final out = '${log['checkOut'] ?? ''}'.trim();
-  if (out.isEmpty || out == '-' || out == '—') return 'Missing out';
+  if (out.isEmpty || out == '-' || out == '—') {
+    final date = '${log['date'] ?? ''}'.trim();
+    final now = DateTime.now();
+    final today =
+        '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    return date == today ? 'Active' : 'Missing out';
+  }
   final status = '${log['status'] ?? ''}'.toLowerCase();
   if (status.contains('late')) return 'Late';
   if (status.contains('early')) return 'Early exit';
@@ -1627,6 +1641,8 @@ class _ClockWorkspace extends StatefulWidget {
     required this.monthly,
     required this.onSearch,
     required this.onPickDate,
+    required this.onPreviousDate,
+    required this.onNextDate,
     required this.onPeriod,
     required this.onRetry,
   });
@@ -1635,7 +1651,7 @@ class _ClockWorkspace extends StatefulWidget {
   final bool loading, monthly;
   final String? error;
   final String period;
-  final VoidCallback onSearch, onPickDate, onRetry;
+  final VoidCallback onSearch, onPickDate, onPreviousDate, onNextDate, onRetry;
   final ValueChanged<bool> onPeriod;
   @override
   State<_ClockWorkspace> createState() => _ClockWorkspaceState();
@@ -1854,13 +1870,6 @@ class _ClockWorkspaceState extends State<_ClockWorkspace> {
                         Icons.warning_amber_rounded,
                         const Color(0xFFE58A00),
                       ),
-                      _metric(
-                        width,
-                        'Total Hours',
-                        _clockHours(filtered),
-                        Icons.access_time,
-                        _navy,
-                      ),
                     ],
                   );
                 },
@@ -1907,66 +1916,30 @@ class _ClockWorkspaceState extends State<_ClockWorkspace> {
                                     builder: (context, toolbar) {
                                     final controls = <Widget>[
                                       _filterGroup(
-                                        'Date Range',
-                                        OutlinedButton.icon(
-                                          onPressed: widget.onPickDate,
-                                          style: OutlinedButton.styleFrom(
-                                            minimumSize: const Size(0, 38),
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 12,
+                                        'Date',
+                                        Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            IconButton(
+                                              tooltip: 'Previous date',
+                                              onPressed: widget.onPreviousDate,
+                                              icon: const Icon(Icons.chevron_left),
                                             ),
-                                          ),
-                                          icon: const Icon(
-                                            Icons.calendar_month_outlined,
-                                            size: 18,
-                                          ),
-                                          label: Text(widget.period),
-                                        ),
-                                      ),
-                                      _filterGroup(
-                                        'Quick Range',
-                                        SegmentedButton<bool>(
-                                          style: ButtonStyle(
-                                            visualDensity:
-                                                VisualDensity.compact,
-                                            backgroundColor:
-                                                WidgetStateProperty.resolveWith(
-                                                  (states) =>
-                                                      states.contains(
-                                                        WidgetState.selected,
-                                                      )
-                                                      ? _blue
-                                                      : Colors.white,
-                                                ),
-                                            foregroundColor:
-                                                WidgetStateProperty.resolveWith(
-                                                  (states) =>
-                                                      states.contains(
-                                                        WidgetState.selected,
-                                                      )
-                                                      ? Colors.white
-                                                      : _navy,
-                                                ),
-                                          ),
-                                          segments: const [
-                                            ButtonSegment(
-                                              value: false,
-                                              label: Text('Day'),
+                                            OutlinedButton.icon(
+                                              onPressed: widget.onPickDate,
+                                              style: OutlinedButton.styleFrom(
+                                                minimumSize: const Size(0, 38),
+                                                padding: const EdgeInsets.symmetric(horizontal: 12),
+                                              ),
+                                              icon: const Icon(Icons.calendar_month_outlined, size: 18),
+                                              label: Text(widget.period),
                                             ),
-                                            ButtonSegment(
-                                              value: true,
-                                              label: Text('Month'),
+                                            IconButton(
+                                              tooltip: 'Next date',
+                                              onPressed: widget.onNextDate,
+                                              icon: const Icon(Icons.chevron_right),
                                             ),
                                           ],
-                                          selected: {widget.monthly},
-                                          showSelectedIcon: false,
-                                          onSelectionChanged: (v) {
-                                            setState(() {
-                                              page = 0;
-                                              selectedId = null;
-                                            });
-                                            widget.onPeriod(v.first);
-                                          },
                                         ),
                                       ),
                                       _filterGroup(
@@ -2036,10 +2009,11 @@ class _ClockWorkspaceState extends State<_ClockWorkspace> {
                                       return Row(
                                         crossAxisAlignment: CrossAxisAlignment.end,
                                         children: [
-                                          controls[0], gap, controls[1], gap,
-                                          Expanded(child: controls[2]), gap,
-                                          controls[3], gap, controls[4], gap,
-                                          controls[5],
+                                          controls[0], gap,
+                                          Expanded(child: controls[1]), gap,
+                                          controls[2], gap,
+                                          controls[3], gap,
+                                          controls[4],
                                         ],
                                       );
                                     }
@@ -2050,8 +2024,10 @@ class _ClockWorkspaceState extends State<_ClockWorkspace> {
                                           Row(
                                             crossAxisAlignment: CrossAxisAlignment.end,
                                             children: [
-                                              controls[0], gap, controls[1],
-                                              const Spacer(), controls[5],
+                                              controls[0], gap,
+                                              Expanded(child: controls[1]),
+                                              const SizedBox(width: 12),
+                                              controls[4],
                                             ],
                                           ),
                                           const SizedBox(height: 12),
@@ -2070,9 +2046,11 @@ class _ClockWorkspaceState extends State<_ClockWorkspace> {
                                       runSpacing: 12,
                                       crossAxisAlignment: WrapCrossAlignment.end,
                                       children: [
-                                        controls[0], controls[1], controls[5],
+                                        controls[0],
+                                        SizedBox(width: toolbar.maxWidth, child: controls[1]),
+                                        controls[4],
                                         SizedBox(width: toolbar.maxWidth, child: controls[2]),
-                                        controls[3], controls[4],
+                                        controls[3],
                                       ],
                                     );
                                     },
@@ -2205,11 +2183,7 @@ class _ClockWorkspaceState extends State<_ClockWorkspace> {
                                                       },
                                                       cells: [
                                                         DataCell(Text('${current * perPage + entry.key + 1}')),
-                                                        DataCell(
-                                                          Text(
-                                                            '${log['employeeName'] ?? '-'}',
-                                                          ),
-                                                        ),
+                                                        DataCell(Text('${log['employeeName'] ?? '-'}')),
                                                         DataCell(
                                                           Text(
                                                             '${log['role'] ?? '-'}',

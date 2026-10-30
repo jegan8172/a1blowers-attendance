@@ -91,12 +91,30 @@ class HrmsPayrollApi {
     return _decode(response);
   }
 
-  static Future<List<Map<String, dynamic>>> deductionHistory({required int profileId, required int year, required int month}) async {
+  static Future<Map<String, dynamic>> deductionHistory({required int profileId, required int year, required int month}) async {
     final response = await http.get(Uri.parse('${ApiConfig.baseUrl}/hrms/payroll/$profileId/deduction-history?year=$year&month=$month'), headers: await _headers());
     final data = _decode(response);
-    final rawItems = data['data'];
+    final rawItems = data['items'];
     final List items = rawItems is List ? rawItems : const [];
-    return items.whereType<Map>().map((item) => Map<String, dynamic>.from(item)).toList();
+    return {
+      'summary': data['summary'] is Map ? Map<String, dynamic>.from(data['summary']) : null,
+      'items': items.whereType<Map>().map((item) => Map<String, dynamic>.from(item)).toList(),
+    };
+  }
+
+  static Future<List<Map<String, dynamic>>> payrollHistory({required int profileId}) async {
+    final response = await http.get(
+      Uri.parse('${ApiConfig.baseUrl}/hrms/payroll/$profileId/history'),
+      headers: await _headers(),
+    );
+    final data = _decode(response);
+    final raw = data['data'];
+    final rawItems = raw is List ? raw : (data['items'] is List ? data['items'] : const []);
+    final result = <Map<String, dynamic>>[];
+    for (final item in rawItems) {
+      if (item is Map) result.add(Map<String, dynamic>.from(item));
+    }
+    return result;
   }
 
   static Future<Map<String, dynamic>> saveCycleOverride({

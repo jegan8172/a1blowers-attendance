@@ -38,7 +38,7 @@ class _SalaryView extends StatelessWidget {
   Widget build(BuildContext context) {
     final viewButton =
         _ViewPayslipButton(
-          onPressed: () => _SalaryView.openPayslipSheet(context),
+          onPressed: () => _showPayrollHistory(context),
         );
 
     if (mobile) {
@@ -81,6 +81,11 @@ class _SalaryView extends StatelessWidget {
     if (!showPayslip) return const SizedBox.shrink();
 
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [viewButton],
+      ),
+      const SizedBox(height: 14),
       Row(crossAxisAlignment: CrossAxisAlignment.start, children: const [
           Expanded(flex: 6, child: _NetPayBanner(mobile: false)),
           SizedBox(width: 20),
@@ -113,8 +118,8 @@ class _ViewPayslipButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) => FilledButton.icon(
         onPressed: onPressed,
-        icon: const Icon(Icons.description_outlined, size: 21),
-        label: const Text('View Payslip',
+        icon: const Icon(Icons.history_outlined, size: 21),
+        label: const Text('View history',
             style: TextStyle(fontWeight: FontWeight.w700)),
         style: FilledButton.styleFrom(
           backgroundColor: const Color(0xFF052D70),
@@ -262,6 +267,70 @@ class _Coin extends StatelessWidget {
 class _SalaryOverviewCard extends StatefulWidget {
   const _SalaryOverviewCard();
   @override State<_SalaryOverviewCard> createState() => _SalaryOverviewCardState();
+}
+
+String _monthKey(DateTime d) => '${d.year}-${d.month.toString().padLeft(2, '0')}';
+
+Future<void> _showPayrollHistory(BuildContext context) async {
+  await showDialog<void>(
+    context: context,
+    builder: (_) => const _PayrollHistoryDialog(),
+  );
+}
+
+class _PayrollHistoryDialog extends StatefulWidget {
+  const _PayrollHistoryDialog();
+  @override State<_PayrollHistoryDialog> createState() => _PayrollHistoryDialogState();
+}
+
+class _PayrollHistoryDialogState extends State<_PayrollHistoryDialog> {
+  late String _month = _monthKey(DateTime.now());
+  late Future<Map<String, dynamic>> _future = HrmsPayslipApi.history(_month);
+
+  List<String> get _months => List.generate(12, (i) {
+        final d = DateTime(DateTime.now().year, DateTime.now().month - i, 1);
+        return _monthKey(d);
+      });
+
+  String _displayMonth(String key) {
+    final p = key.split('-');
+    final d = DateTime(int.parse(p[0]), int.parse(p[1]), 1);
+    const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return '${names[d.month - 1]} ${d.year}';
+  }
+
+  @override
+  Widget build(BuildContext context) => Dialog(
+        insetPadding: const EdgeInsets.all(24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1180, maxHeight: 760),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Row(children: [
+                const Expanded(child: Text('Payroll history', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: employeeNavy))),
+                DropdownButton<String>(value: _month, items: _months.map((m) => DropdownMenuItem(value: m, child: Text(_displayMonth(m)))).toList(), onChanged: (v) { if (v == null) return; setState(() { _month = v; _future = HrmsPayslipApi.history(v); }); }),
+                const SizedBox(width: 12), IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
+              ]),
+              const SizedBox(height: 16),
+              Expanded(child: FutureBuilder<Map<String, dynamic>>(future: _future, builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+                if (snapshot.hasError) return Center(child: Text('Unable to load payroll history: ${snapshot.error}', style: const TextStyle(color: employeeMuted)));
+                final rawItems = snapshot.data?['items'];
+                final items = rawItems is List
+                    ? rawItems.whereType<Map>().map((row) => Map<String, dynamic>.from(row)).toList()
+                    : <Map<String, dynamic>>[];
+                if (items.isEmpty) return const Center(child: Text('No payroll or attendance records for this month.', style: TextStyle(color: employeeMuted)));
+                return Scrollbar(child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: DataTable(columns: const [
+                  DataColumn(label: Text('Date')), DataColumn(label: Text('Salary')), DataColumn(label: Text('Working')), DataColumn(label: Text('Check-in')), DataColumn(label: Text('Check-out')), DataColumn(label: Text('Status')), DataColumn(label: Text('Late deduction')), DataColumn(label: Text('Absent/LOP')), DataColumn(label: Text('Total deduction')), DataColumn(label: Text('Updated salary')),
+                ], rows: items.map((r) => DataRow(cells: [
+                  DataCell(Text('${r['date'] ?? '-'}')), DataCell(Text(_money(r['salary']))), DataCell(Text('${r['working'] ?? 0}')), DataCell(Text('${r['check_in'] ?? '-'}')), DataCell(Text('${r['check_out'] ?? '-'}')), DataCell(Text('${r['status'] ?? '-'}')), DataCell(Text(_money(r['late_deduction']))), DataCell(Text(_money(r['absent_deduction']))), DataCell(Text(_money(r['total_deduction']))), DataCell(Text(_money(r['updated_salary']))),
+                ])).toList())));
+              })),
+            ]),
+          ),
+        ),
+      );
 }
 
 Future<void> _showDeductionHistory(BuildContext context) async {

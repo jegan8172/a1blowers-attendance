@@ -39,12 +39,16 @@ class AttendanceRowData {
   final int absent;
   final String absentDeduction;
   final int late;
+  final String lateDeduction;
   final int excused;
   final int unexcused;
   final int halfLeave;
   final int earnedLeave;
   final int approvedLeave;
   final String salaryPerMonth;
+  final String salaryPerDay;
+  final String presentSalary;
+  final String lateSalary;
   final String totalSalaryAfterLeaves;
   final String updatedSalary;
 
@@ -56,12 +60,16 @@ class AttendanceRowData {
     required this.absent,
     required this.absentDeduction,
     required this.late,
+    required this.lateDeduction,
     required this.excused,
     required this.unexcused,
     required this.halfLeave,
     required this.earnedLeave,
     required this.approvedLeave,
     required this.salaryPerMonth,
+    required this.salaryPerDay,
+    required this.presentSalary,
+    required this.lateSalary,
     required this.totalSalaryAfterLeaves,
     required this.updatedSalary,
   });
@@ -111,6 +119,7 @@ class _AttendanceGridState extends State<AttendanceGrid> {
     48.0,
     58.0,
     60.0,
+    58.0,
     54.0,
   ];
   int _windowStart = 0;
@@ -415,6 +424,7 @@ class _AttendanceGridState extends State<AttendanceGrid> {
     'Half\nLeave',
     'Earned\nLeave',
     'Salary\nPer\nMonth',
+    'Salary\nPer\nDay',
     'Absent\nDeduction',
     'Updated\nSalary',
   ];
@@ -425,10 +435,11 @@ class _AttendanceGridState extends State<AttendanceGrid> {
     HrmsColors.accentPurple,
     HrmsColors.info,
     Color(0xFF07186F),
+    Color(0xFF07186F),
     HrmsColors.danger,
     Color(0xFF07186F),
   ];
-  static const _summaryPanelWidth = 400.0;
+  static const _summaryPanelWidth = 458.0;
 
   Widget _summaryHeaderRow(double scale) => SizedBox(
     width: _summaryPanelWidth * scale,
@@ -439,7 +450,7 @@ class _AttendanceGridState extends State<AttendanceGrid> {
             width: _summaryWidths[i] * scale,
             text: _summaryLabels[i],
             dense: true,
-            color: i == 5 || i == 7 ? Theme.of(context).colorScheme.onSurface : _summaryColors[i],
+            color: i == 5 || i == 6 || i == 8 ? Theme.of(context).colorScheme.onSurface : _summaryColors[i],
           ),
       ],
     ),
@@ -457,13 +468,13 @@ class _AttendanceGridState extends State<AttendanceGrid> {
                 _BodyCell(
                   width: _summaryWidths[0] * scale,
                   child: Center(
-                    child: _statText('${row.present}', HrmsColors.success),
+                    child: _statText('${row.present} (${row.presentSalary})', HrmsColors.success),
                   ),
                 ),
                 _BodyCell(
                   width: _summaryWidths[1] * scale,
                   child: Center(
-                    child: _statText('${row.late}', HrmsColors.warning),
+                    child: _statText('${row.late} (${row.lateSalary})', HrmsColors.warning),
                   ),
                 ),
                 _BodyCell(
@@ -504,9 +515,9 @@ class _AttendanceGridState extends State<AttendanceGrid> {
                   width: _summaryWidths[6] * scale,
                   child: Center(
                     child: Text(
-                      '${row.absent} ${row.absentDeduction}',
+                      row.salaryPerDay,
                       maxLines: 1,
-                      style: _moneyStyle.copyWith(color: HrmsColors.danger),
+                      style: _moneyStyle.copyWith(color: Theme.of(context).colorScheme.onSurface),
                     ),
                   ),
                 ),
@@ -514,9 +525,33 @@ class _AttendanceGridState extends State<AttendanceGrid> {
                   width: _summaryWidths[7] * scale,
                   child: Center(
                     child: Text(
-                      row.updatedSalary,
+                      '${row.absent} ${row.absentDeduction}',
                       maxLines: 1,
-                      style: _moneyStyle.copyWith(color: Theme.of(context).colorScheme.onSurface),
+                      style: _moneyStyle.copyWith(color: HrmsColors.danger),
+                    ),
+                  ),
+                ),
+                _BodyCell(
+                  width: _summaryWidths[8] * scale,
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          '${row.present + row.late} days',
+                          maxLines: 1,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        Text(
+                          row.updatedSalary,
+                          maxLines: 1,
+                          style: _moneyStyle.copyWith(color: Theme.of(context).colorScheme.onSurface),
+                        ),
+                      ],
                     ),
                   ),
                 ),

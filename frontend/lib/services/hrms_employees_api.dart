@@ -115,6 +115,23 @@ class HrmsEmployeesApi {
     _decode(response);
   }
 
+  static Future<void> deleteRole(String name) async {
+    final response = await http.delete(
+      Uri.parse('${ApiConfig.baseUrl}/hrms/employees/roles/${Uri.encodeComponent(name)}'),
+      headers: await _headers(),
+    );
+    _decode(response);
+  }
+
+  static Future<void> renameRole(String oldName, String newName) async {
+    final response = await http.put(
+      Uri.parse('${ApiConfig.baseUrl}/hrms/employees/roles/${Uri.encodeComponent(oldName)}'),
+      headers: await _headers(),
+      body: jsonEncode({'name': newName}),
+    );
+    _decode(response);
+  }
+
   static Future<Map<String, dynamic>> resetPassword(
     int id,
     String password,

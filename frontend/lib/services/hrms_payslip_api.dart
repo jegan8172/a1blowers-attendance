@@ -57,6 +57,19 @@ class HrmsPayslipApi {
         .toList();
   }
 
+  static Future<Map<String, dynamic>> history(String month) async {
+    final response = await http.get(
+      Uri.parse('${ApiConfig.baseUrl}/hrms/payslips/my/history?month=${Uri.encodeQueryComponent(month)}'),
+      headers: await _headers(),
+    );
+    final body = jsonDecode(response.body);
+    if (response.statusCode >= 400 || body['success'] != true) {
+      throw Exception(body['message'] ?? 'Unable to load payroll history');
+    }
+    final data = body['data'];
+    return data is Map ? Map<String, dynamic>.from(data) : const {};
+  }
+
   static Future<void> request(int payrollId) async {
     final response = await http.post(
       Uri.parse('${ApiConfig.baseUrl}/hrms/payslips/$payrollId/request'),

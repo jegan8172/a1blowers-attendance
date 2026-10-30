@@ -34,6 +34,11 @@ async function ensureHrmsEmployeeTables(db) {
     if (error.code !== 'ER_DUP_FIELDNAME') throw error;
   }
   try {
+    await db.query('ALTER TABLE hrms_employee_profiles ADD COLUMN designation VARCHAR(120) NULL AFTER department');
+  } catch (error) {
+    if (error.code !== 'ER_DUP_FIELDNAME') throw error;
+  }
+  try {
     await db.query("ALTER TABLE hrms_employee_profiles ADD COLUMN employee_type ENUM('Employee', 'Labour') NOT NULL DEFAULT 'Employee' AFTER work_mode");
   } catch (error) {
     if (error.code !== 'ER_DUP_FIELDNAME') throw error;

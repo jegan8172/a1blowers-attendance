@@ -2567,13 +2567,13 @@ class _EmployeeTrackingDetailsDialogState
     insetPadding: const EdgeInsets.all(24),
     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
     child: ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 1120, maxHeight: 760),
+      constraints: const BoxConstraints(maxWidth: 1400, maxHeight: 900),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(24, 20, 24, 18),
         child: Column(
           children: [
             _header(),
-            const SizedBox(height: 16),
+            const SizedBox(height: 4),
             Expanded(child: _body()),
           ],
         ),
@@ -2639,6 +2639,36 @@ class _EmployeeTrackingDetailsDialogState
           ],
         ),
       ),
+      Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: 'Previous day',
+            onPressed: () => _shiftDate(-1),
+            icon: const Icon(Icons.chevron_left),
+          ),
+          OutlinedButton.icon(
+            onPressed: _pickDate,
+            icon: const Icon(Icons.calendar_today_outlined, size: 16),
+            label: Text(DateFormat('dd MMM yyyy').format(_selectedDate)),
+          ),
+          IconButton(
+            tooltip: 'Next day',
+            onPressed: _selectedDate.isBefore(DateTime.now())
+                ? () => _shiftDate(1)
+                : null,
+            icon: const Icon(Icons.chevron_right),
+          ),
+          if (!_invalidated)
+            OutlinedButton.icon(
+              onPressed: _loading || _invalidating
+                  ? null
+                  : _invalidateSelectedRoute,
+              icon: const Icon(Icons.block_outlined, size: 16),
+              label: const Text('Invalidate route'),
+            ),
+        ],
+      ),
       IconButton(
         tooltip: 'Close',
         onPressed: () => Navigator.of(context).pop(),
@@ -2658,56 +2688,20 @@ class _EmployeeTrackingDetailsDialogState
         ),
       );
     }
-    return Column(
-      children: [
-        LayoutBuilder(
-          builder: (context, constraints) => Wrap(
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+        Offstage(
+          offstage: true,
+          child: Transform.translate(
+            offset: const Offset(0, -24),
+            child: LayoutBuilder(
+            builder: (context, constraints) => Wrap(
             spacing: 8,
             runSpacing: 8,
-            alignment: constraints.maxWidth < 800
-                ? WrapAlignment.end
-                : WrapAlignment.start,
+            alignment: WrapAlignment.start,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              _trackingDataButton(
-                label: 'Route history',
-                icon: Icons.route_outlined,
-                count: _activityPoints.length,
-                onPressed: () => _showTrackingDataPopup(
-                  title: 'Route history',
-                  icon: Icons.route_outlined,
-                  color: HrmsColors.blue,
-                  rows: _routeHistoryRows(),
-                  emptyText: 'No location updates were recorded on this date.',
-                ),
-              ),
-              _trackingDataButton(
-                label: 'Waiting comments',
-                icon: Icons.chat_bubble_outline,
-                count: _waitingReasons.length,
-                onPressed: () => _showTrackingDataPopup(
-                  title: 'Waiting popup comments',
-                  icon: Icons.pause_circle_outline,
-                  color: const Color(0xFFFF8400),
-                  rows: _waitingReasonRows(),
-                  emptyText:
-                      'No waiting popup comments were submitted on this date.',
-                ),
-              ),
-              _trackingDataButton(
-                label: 'Permanent comments',
-                icon: Icons.comment_outlined,
-                count: _comments.length,
-                onPressed: () => _showTrackingDataPopup(
-                  title: 'Permanent comments',
-                  icon: Icons.comment_outlined,
-                  color: const Color(0xFF6B52D7),
-                  rows: _commentRows(),
-                  emptyText:
-                      'No permanent comments were submitted on this date.',
-                ),
-              ),
-              const SizedBox(width: 8),
               IconButton(
                 tooltip: 'Previous day',
                 onPressed: () => _shiftDate(-1),
@@ -2740,11 +2734,13 @@ class _EmployeeTrackingDetailsDialogState
                   label: const Text('Invalidate route'),
                 ),
             ],
+            ),
+            ),
           ),
         ),
         const SizedBox(height: 10),
-        Expanded(
-          flex: 5,
+        SizedBox(
+          height: 520,
           child: LayoutBuilder(
             builder: (_, constraints) {
               final stacked = constraints.maxWidth < 720;
@@ -2760,15 +2756,20 @@ class _EmployeeTrackingDetailsDialogState
                     )
                   : Row(
                       children: [
-                        Expanded(flex: 4, child: map),
+                        Expanded(flex: 3, child: map),
                         const SizedBox(width: 14),
-                        SizedBox(width: 220, child: summary),
+                        SizedBox(width: 260, child: summary),
                       ],
                     );
             },
           ),
         ),
-      ],
+        const SizedBox(height: 10),
+        _tabs(),
+        const SizedBox(height: 8),
+        _tabContent(),
+        ],
+      ),
     );
   }
 
@@ -3037,7 +3038,10 @@ class _EmployeeTrackingDetailsDialogState
       .map(
         (item) => _historyRow(
           time: _time(
-            item['reason_submitted_at'] ?? item['waiting_detected_at'],
+            item['reasonSubmittedAt'] ??
+                item['reason_submitted_at'] ??
+                item['waitingDetectedAt'] ??
+                item['waiting_detected_at'],
           ),
           title: 'Waiting ${item['waiting_minutes'] ?? 0} min',
           detail: '${item['reason'] ?? 'No reason submitted'}',
@@ -3217,7 +3221,10 @@ class _EmployeeTrackingDetailsDialogState
             .map(
               (item) => _historyRow(
                 time: _time(
-                  item['reason_submitted_at'] ?? item['waiting_detected_at'],
+                  item['reasonSubmittedAt'] ??
+                      item['reason_submitted_at'] ??
+                      item['waitingDetectedAt'] ??
+                      item['waiting_detected_at'],
                 ),
                 title: 'Waiting ${item['waiting_minutes'] ?? 0} min',
                 detail: '${item['reason'] ?? 'No reason submitted'}',
@@ -3258,11 +3265,14 @@ class _EmployeeTrackingDetailsDialogState
               style: const TextStyle(color: Color(0xFF657087), fontSize: 12),
             ),
           )
-        : ListView.separated(
-            itemCount: rows.length,
-            separatorBuilder: (_, __) =>
-                const Divider(height: 1, color: Color(0xFFE9EDF3)),
-            itemBuilder: (_, index) => rows[index],
+        : Column(
+            children: [
+              for (var index = 0; index < rows.length; index++) ...[
+                if (index > 0)
+                  const Divider(height: 1, color: Color(0xFFE9EDF3)),
+                rows[index],
+              ],
+            ],
           ),
   );
 

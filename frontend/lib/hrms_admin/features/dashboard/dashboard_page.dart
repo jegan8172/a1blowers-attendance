@@ -261,7 +261,7 @@ class _DashboardPageState extends State<DashboardPage> {
         for (var day = 1; day <= days; day++)
           '$day ${weekdays[DateTime(_year, month, day).weekday - 1]}',
         'Present', if (!_monthly) 'Absent', 'Late', 'Leave', 'Half Leave', 'Earned Leave',
-        if (_monthly) ...['Salary Per Month', 'Absent Deduction', 'Updated Salary'],
+        if (_monthly) ...['Salary Per Month', 'Salary Per Day', 'Absent Deduction', 'Updated Salary'],
       ];
       final rows = <List<Object?>>[
         for (final employee in _visibleEmployees)
@@ -270,7 +270,7 @@ class _DashboardPageState extends State<DashboardPage> {
               _AttendanceTable.markForDay(day, employee, _year, month, _weeklyOffDay, _calendarOverrides),
             employee.present, if (!_monthly) employee.absent, employee.late,
             employee.approvedLeave, employee.halfLeave, employee.earnedLeave,
-            if (_monthly) ...[employee.salary, '${employee.absent} ${employee.absentDeduction}', employee.updatedSalary],
+            if (_monthly) ...[employee.salary, employee.salaryPerDay, '${employee.absent} ${employee.absentDeduction}', employee.updatedSalary],
           ],
       ];
       final title = _monthly ? '${_fullMonthName(_month)} $_year Attendance' : '$_year Yearly Attendance';
@@ -981,12 +981,16 @@ class _AttendanceTable extends StatelessWidget {
             absent: employee.absent,
             absentDeduction: employee.absentDeduction,
             late: employee.late,
+            lateDeduction: employee.lateDeduction,
             excused: employee.excused,
             unexcused: employee.unexcused,
             halfLeave: employee.halfLeave,
             earnedLeave: employee.earnedLeave,
             approvedLeave: employee.approvedLeave,
             salaryPerMonth: employee.salary,
+            salaryPerDay: employee.salaryPerDay,
+            presentSalary: employee.presentSalary,
+            lateSalary: employee.lateSalary,
             totalSalaryAfterLeaves:
                 '${employee.daysPaid} ${employee.afterLeaves}',
             updatedSalary: employee.updatedSalary,
@@ -1060,12 +1064,16 @@ class _EmployeeAttendance {
     required this.absent,
     required this.absentDeduction,
     required this.late,
+    required this.lateDeduction,
     required this.halfLeave,
     required this.earnedLeave,
     required this.approvedLeave,
     required this.excused,
     required this.unexcused,
     required this.salary,
+    required this.salaryPerDay,
+    required this.presentSalary,
+    required this.lateSalary,
     required this.daysPaid,
     required this.afterLeaves,
     required this.updatedSalary,
@@ -1078,12 +1086,16 @@ class _EmployeeAttendance {
   final int absent;
   final String absentDeduction;
   final int late;
+  final String lateDeduction;
   final int halfLeave;
   final int earnedLeave;
   final int approvedLeave;
   final int excused;
   final int unexcused;
   final String salary;
+  final String salaryPerDay;
+  final String presentSalary;
+  final String lateSalary;
   final String daysPaid;
   final String afterLeaves;
   final String updatedSalary;
@@ -1099,12 +1111,16 @@ class _EmployeeAttendance {
       absent: asInt(json['absent']),
       absentDeduction: (json['absentDeduction'] ?? '–').toString(),
       late: asInt(json['late']),
+      lateDeduction: (json['lateDeduction'] ?? '₹0').toString(),
       halfLeave: asInt(json['halfLeave']),
       earnedLeave: asInt(json['earnedLeave']),
       approvedLeave: asInt(json['approvedLeave']),
       excused: asInt(json['excused']),
       unexcused: asInt(json['unexcused']),
       salary: (json['salary'] ?? 'Not Set').toString(),
+      salaryPerDay: (json['salaryPerDay'] ?? '–').toString(),
+      presentSalary: (json['presentSalary'] ?? '–').toString(),
+      lateSalary: (json['lateSalary'] ?? '–').toString(),
       daysPaid: (json['daysPaid'] ?? '0').toString(),
       afterLeaves: (json['afterLeaves'] ?? '–').toString(),
       updatedSalary: (json['updatedSalary'] ?? 'Not Set').toString(),

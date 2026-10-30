@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS hrms_employee_profiles (
   email VARCHAR(160) NULL,
   phone VARCHAR(32) NULL,
   department VARCHAR(100) NOT NULL DEFAULT 'Engineering',
+  designation VARCHAR(120) NULL,
   work_mode VARCHAR(32) NOT NULL DEFAULT 'Office',
   employee_type ENUM('Employee', 'Labour') NOT NULL DEFAULT 'Employee',
   overtime_eligible TINYINT(1) NOT NULL DEFAULT 0,

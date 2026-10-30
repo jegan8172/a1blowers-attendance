@@ -15,6 +15,7 @@ router.param('payrollId', async (req, res, next, value) => {
 });
 router.get('/my', controller.mine);
 router.get('/my/summary', controller.summary);
+router.get('/my/history', controller.myHistory);
 router.get('/my/deduction-history', controller.myDeductionHistory);
 router.post('/:payrollId/request', controller.request);
 router.get('/:payrollId/download', controller.download);

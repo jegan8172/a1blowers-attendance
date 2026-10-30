@@ -108,6 +108,7 @@ function toUi(row) {
     department: row.department,
     workMode: row.work_mode,
     employeeType: row.employee_type || 'Employee',
+    designation: row.designation || '',
     overtimeEligible: Boolean(Number(row.overtime_eligible || 0)),
     gender: row.gender || 'Male',
     salary: formatSalary(row.monthly_salary),
@@ -190,6 +191,11 @@ async function list(req, res) {
   "FROM hrms_employee_profiles WHERE TRIM(COALESCE(department, '')) <> '' " +
   "ORDER BY name ASC"
 );
+    const [designationRows] = await db.query(
+      "SELECT DISTINCT designation AS name FROM hrms_employee_profiles WHERE TRIM(COALESCE(designation, '')) <> '' " +
+      "UNION SELECT DISTINCT role_name AS name FROM user_roles WHERE TRIM(COALESCE(role_name, '')) <> '' " +
+      "ORDER BY name ASC"
+    );
 
     return ok(res, {
       items: rows.map(toUi),
@@ -198,6 +204,7 @@ async function list(req, res) {
       total: total,
       totalPages: totalPages,
       departments: departmentRows.map(function (row) { return row.name; }),
+      designations: designationRows.map(function (row) { return row.name; }),
       kpis: {
         total: allRows.length,
         active: allRows.filter(function (r) { return r.employment_status === 'Active'; }).length,
@@ -326,6 +333,7 @@ async function detail(req, res) {
         const late = Number(row.late_deductions || row.deductions || 0);
         const absent = Number(row.absent_deductions || 0);
         return {
+          year: Number(row.pay_year), monthNumber: Number(row.pay_month),
           month: new Date(Number(row.pay_year), Number(row.pay_month) - 1, 1).toLocaleString('en-US', { month: 'long', year: 'numeric' }),
           salary: Number(row.monthly_salary || 0), workingDays: Number(row.working_days || 0),
           paidDays: Number(row.paid_days || 0), lopDays: Number(row.lop_days || 0),
@@ -347,11 +355,13 @@ async function create(req, res) {
     const name = String(body.name || body.full_name || '').trim();
     const code = String(body.employeeCode || body.employee_code || body.id || '').trim();
     const department = String(body.department || 'Engineering').trim();
+    const designation = String(body.designation || body.jobTitle || '').trim();
+    if (!designation) return fail(res, 400, 'Designation is required');
     const workMode = String(body.workMode || body.work_mode || 'Office').trim();
     const trackingTemplateId = ['Field','Hybrid'].includes(workMode) ? Number(body.trackingTemplateId || body.tracking_template_id) : null;
     const employeeType = String(body.employeeType || body.employee_type || 'Employee').trim();
     const overtimeEligible = body.overtimeEligible || body.overtime_eligible ? 1 : 0;
-    if (!['Employee', 'Labour'].includes(employeeType)) return fail(res, 400, 'Employee type must be Employee or Labour');
+    if (!['Employee', 'Labour', 'Administrator'].includes(employeeType)) return fail(res, 400, 'Employee type must be Employee, Labour or Administrator');
     const gender = String(body.gender || 'Male').trim();
     if (!['Male', 'Female'].includes(gender)) return fail(res, 400, 'Gender must be Male or Female');
     const status = String(body.status || body.employment_status || 'Active').trim();
@@ -376,7 +386,7 @@ async function create(req, res) {
       bcrypt: bcrypt,
       input: {
         name: name, code: code, department: department, workMode: workMode,
-        employeeType: employeeType, overtimeEligible: overtimeEligible,
+        employeeType: employeeType, designation: designation || null, overtimeEligible: overtimeEligible,
         gender: gender, status: status, salary: salary, salaryType: cycle.salaryType,
         cycleStartDay: cycle.cycleStartDay, cycleEndDay: cycle.cycleEndDay,
         cycleStartDate: cycle.cycleStartDate, cycleEndDate: cycle.cycleEndDate,
@@ -458,11 +468,13 @@ async function update(req, res) {
     const name = String(body.name || body.full_name || '').trim();
     const code = String(body.employeeCode || body.employee_code || body.id || '').trim();
     const department = String(body.department || '').trim();
+    const designation = String(body.designation || body.jobTitle || '').trim();
+    if (!designation) return fail(res, 400, 'Designation is required');
     const workMode = String(body.workMode || body.work_mode || '').trim();
     const trackingTemplateId = ['Field','Hybrid'].includes(workMode) ? Number(body.trackingTemplateId || body.tracking_template_id) : null;
     const employeeType = String(body.employeeType || body.employee_type || 'Employee').trim();
     const overtimeEligible = body.overtimeEligible || body.overtime_eligible ? 1 : 0;
-    if (!['Employee', 'Labour'].includes(employeeType)) return fail(res, 400, 'Employee type must be Employee or Labour');
+    if (!['Employee', 'Labour', 'Administrator'].includes(employeeType)) return fail(res, 400, 'Employee type must be Employee, Labour or Administrator');
     const gender = String(body.gender || 'Male').trim();
     if (!['Male', 'Female'].includes(gender)) return fail(res, 400, 'Gender must be Male or Female');
     const requestedStatus = String(body.status || body.employment_status || '').trim();
@@ -531,8 +543,8 @@ async function update(req, res) {
     );
 
     await connection.query(
-      'UPDATE hrms_employee_profiles SET employee_code = ?, full_name = ?, email = ?, phone = ?, department = ?, work_mode = ?, tracking_template_id = ?, employee_type = ?, overtime_eligible = ?, gender = ?, employment_status = ?, joining_date = COALESCE(?, joining_date), monthly_salary = ?, salary_type = ?, flexible_cycle_start_day = ?, flexible_cycle_end_day = ?, flexible_cycle_start_date = ?, flexible_cycle_end_date = ? WHERE id = ?',
-      [code, name, email, phone === undefined ? existingProfile.phone : phone, department, workMode, trackingTemplateId, employeeType, overtimeEligible, gender, status, requestedJoiningDate, salary, cycle.salaryType, cycle.cycleStartDay, cycle.cycleEndDay, cycle.cycleStartDate, cycle.cycleEndDate, id]
+      'UPDATE hrms_employee_profiles SET employee_code = ?, full_name = ?, email = ?, phone = ?, department = ?, designation = ?, work_mode = ?, tracking_template_id = ?, employee_type = ?, overtime_eligible = ?, gender = ?, employment_status = ?, joining_date = COALESCE(?, joining_date), monthly_salary = ?, salary_type = ?, flexible_cycle_start_day = ?, flexible_cycle_end_day = ?, flexible_cycle_start_date = ?, flexible_cycle_end_date = ? WHERE id = ?',
+      [code, name, email, phone === undefined ? existingProfile.phone : phone, department, designation || null, workMode, trackingTemplateId, employeeType, overtimeEligible, gender, status, requestedJoiningDate, salary, cycle.salaryType, cycle.cycleStartDay, cycle.cycleEndDay, cycle.cycleStartDate, cycle.cycleEndDate, id]
     );
     if (Number(existingProfile.tracking_template_id || 0) !== Number(trackingTemplateId || 0)) {
       await connection.query('INSERT INTO hrms_tracking_template_audit (action_type,admin_id,employee_id,old_values,new_values) VALUES (?,?,?,?,?)', ['assign', req.user && req.user.id, id, JSON.stringify({ trackingTemplateId: existingProfile.tracking_template_id || null }), JSON.stringify({ trackingTemplateId: trackingTemplateId || null })]);
@@ -707,6 +719,66 @@ async function exportCsv(req, res) {
   }
 }
 
+async function removeRole(req, res) {
+  const name = String(req.params.name || '').trim();
+  if (!name) return fail(res, 400, 'Role name is required');
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [[used]] = await connection.query(
+      `SELECT
+        (SELECT COUNT(*) FROM hrms_employee_profiles WHERE department = ? OR designation = ?) AS profile_count,
+        (SELECT COUNT(*) FROM employee_users WHERE role = ?) AS user_count`,
+      [name, name, name],
+    );
+    if (Number(used.profile_count || 0) || Number(used.user_count || 0)) {
+      await connection.rollback();
+      return fail(res, 409, `Cannot delete "${name}" because it is already connected to ${Number(used.profile_count || 0) + Number(used.user_count || 0)} employee record(s). Reassign them first.`);
+    }
+    const [result] = await connection.query(
+      'DELETE FROM user_roles WHERE TRIM(role_name) = ?',
+      [name],
+    );
+    await connection.commit();
+    return ok(res, { name, deleted: result.affectedRows > 0 }, 'Role deleted');
+  } catch (error) {
+    await connection.rollback();
+    return fail(res, 500, error.message);
+  } finally {
+    connection.release();
+  }
+}
+
+async function renameRole(req, res) {
+  const oldName = String(req.params.name || '').trim();
+  const newName = String(req.body?.name || '').trim();
+  if (!oldName || !newName) return fail(res, 400, 'Both role names are required');
+  if (oldName === newName) return ok(res, { name: newName }, 'Role unchanged');
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [[duplicate]] = await connection.query(
+      'SELECT COUNT(*) AS count FROM user_roles WHERE TRIM(role_name) = ?',
+      [newName],
+    );
+    if (Number(duplicate.count || 0)) {
+      await connection.rollback();
+      return fail(res, 409, 'A role with this name already exists');
+    }
+    await connection.query('UPDATE user_roles SET role_name = ? WHERE TRIM(role_name) = ?', [newName, oldName]);
+    await connection.query('UPDATE hrms_employee_profiles SET department = ? WHERE department = ?', [newName, oldName]);
+    await connection.query('UPDATE hrms_employee_profiles SET designation = ? WHERE designation = ?', [newName, oldName]);
+    await connection.query('UPDATE employee_users SET role = ? WHERE role = ?', [newName, oldName]);
+    await connection.commit();
+    return ok(res, { name: newName }, 'Role renamed');
+  } catch (error) {
+    await connection.rollback();
+    return fail(res, 500, error.message);
+  } finally {
+    connection.release();
+  }
+}
+
 module.exports = {
   requireAdmin: requireAdmin,
   summary: summary,
@@ -719,5 +791,7 @@ module.exports = {
   update: update,
   updateStatus: updateStatus,
   remove: remove,
+  removeRole: removeRole,
+  renameRole: renameRole,
   exportCsv: exportCsv
 };

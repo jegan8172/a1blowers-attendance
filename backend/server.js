@@ -13,6 +13,7 @@ const attendancePolicy = require('./lib/attendancePolicy');
 const payroll = require('./controllers/hrmsPayrollController');
 const { createApp: createEmployeeAttendanceApp } = require('./attendance/app');
 const clockOutReminder = require('./lib/clockOutReminder');
+const cron = require('node-cron');
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -54,13 +55,15 @@ async function start() {
   await ensureHrmsEmployeeTables(db);
   await ensureHrmsTrackingTables(db);
   await ensureWeeklyOffTemplateTables(db);
-  // Auto mode safely regenerates only the current month's unpaid payroll once
-  // per local calendar day. Paid payroll rows remain immutable.
+  // Run once on startup so a restart after midnight can catch up. The
+  // scheduled job below is the normal daily trigger.
   await payroll.runAutomaticPayroll();
-  setInterval(() => {
+  // 00:01 every day in the business timezone. runAutomaticPayroll() checks
+  // the policy switch and the last-generated date, so retries are idempotent.
+  cron.schedule('1 0 * * *', () => {
     payroll.runAutomaticPayroll().catch((error) =>
       console.error('Automatic payroll update failed:', error.message));
-  }, 15 * 60 * 1000).unref();
+  }, { timezone: process.env.ATTENDANCE_TIMEZONE || 'Asia/Kolkata' });
   // Event uniqueness makes this safe across transient scheduler overlap; each
   // employee is isolated so one bad row cannot block the rest of the run.
   setInterval(() => {

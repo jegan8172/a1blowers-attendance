@@ -237,6 +237,20 @@ async function monthView(req, res) {
       .map(function (row) { return row.employee_user_id; })
       .filter(Boolean);
 
+    const [lateDeductionRows] = await db.query(
+      `SELECT employee_user_id, COALESCE(SUM(amount), 0) AS late_deduction
+       FROM hrms_payroll_deduction_entries
+       WHERE pay_year = ? AND pay_month = ? AND deduction_type = 'late'
+         AND employee_user_id IN (?)
+       GROUP BY employee_user_id`,
+      [year, month, userIds.length ? userIds : [0]]
+    ).catch(() => [[]]);
+    const lateDeductionByUser = new Map(
+      lateDeductionRows.map(function (row) {
+        return [Number(row.employee_user_id), Number(row.late_deduction || 0)];
+      })
+    );
+
     const [records] = userIds.length
       ? await db.query(
           `SELECT * FROM attendance_records
@@ -415,10 +429,18 @@ async function monthView(req, res) {
       const lopDays = Math.min(salaryWorkingDays, unexcused);
       const dailyRate = salaryNumber / salaryWorkingDays;
       const absentDeduction = Math.round(absent * dailyRate * 100) / 100;
+      const lateDeductionTotal = Number(
+        lateDeductionByUser.get(Number(profile.employee_user_id)) || 0
+      );
       // The dashboard is an earned-to-date view: pay starts at zero and
       // grows only for check-ins and approved paid leave.  Absence never
       // removes money already accrued.
-      const accruedSalary = Math.round(Math.min(salaryWorkingDays, accruedPaidDays) * dailyRate * 100) / 100;
+      const accruedSalary = Math.max(
+        0,
+        Math.round(
+          (Math.min(salaryWorkingDays, accruedPaidDays) * dailyRate - lateDeductionTotal) * 100
+        ) / 100
+      );
 
       return {
         id: profile.id,
@@ -427,7 +449,12 @@ async function monthView(req, res) {
         designation: profile.department,
         days: days,
         present: present,
+        presentSalary: salaryNumber ? formatSalary(present * dailyRate) : '–',
         late: late,
+        lateDeduction: salaryNumber ? formatSalary(lateDeductionTotal) : '–',
+        lateSalary: salaryNumber
+          ? formatSalary(Math.max(0, (late * dailyRate) - lateDeductionTotal))
+          : '–',
         excused: halfLeave,
         unexcused: unexcused,
         halfLeave: halfLeave,
@@ -436,6 +463,7 @@ async function monthView(req, res) {
         absent: absent,
         absentDeduction: salaryNumber ? formatSalary(absentDeduction) : '–',
         salary: formatSalary(profile.monthly_salary),
+        salaryPerDay: salaryNumber ? formatSalary(dailyRate) : '–',
         daysPaid: String(accruedPaidDays),
         afterLeaves: salaryNumber ? formatSalary(absentDeduction) : '–',
         updatedSalary: salaryNumber ? formatSalary(accruedSalary) : '–',

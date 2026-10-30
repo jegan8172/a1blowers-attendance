@@ -16,6 +16,7 @@ import '../../../services/hrms_employees_api.dart';
 import '../../../services/api_config.dart';
 import '../../../services/auth_storage.dart';
 import '../../../services/hrms_tracking_api.dart';
+import '../../../services/hrms_payroll_api.dart';
 
 abstract final class HrmsColors {
   static const blue = Color(0xFF1769E0);
@@ -55,6 +56,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
   List<_Employee> employees = [];
   _Employee? _selectedEmployee;
   List<String> departmentOptions = const [];
+  List<String> designationOptions = const [];
   int filteredTotal = 0;
   int totalPages = 1;
   int kpiTotal = 0;
@@ -63,6 +65,71 @@ class _EmployeesPageState extends State<EmployeesPage> {
   int kpiInactive = 0;
   bool loading = true;
   String? error;
+
+  void _showTopMessage(String message) {
+    final overlay = Overlay.of(context, rootOverlay: true);
+    late final OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (_) => Positioned(
+        top: 24,
+        right: 24,
+        child: Material(
+          color: Colors.transparent,
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0, end: 1),
+            duration: const Duration(milliseconds: 250),
+            builder: (_, value, child) => Opacity(
+              opacity: value,
+              child: Transform.translate(
+                offset: Offset((1 - value) * 24, 0),
+                child: child,
+              ),
+            ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 380),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border.all(color: const Color(0xFFD8E6FA)),
+                  borderRadius: BorderRadius.circular(10),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x3D0B2A55),
+                      blurRadius: 18,
+                      spreadRadius: 1,
+                      offset: Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.info_outline, color: HrmsColors.blue, size: 20),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        message,
+                        style: const TextStyle(
+                          color: HrmsColors.navy,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    overlay.insert(entry);
+    Future<void>.delayed(const Duration(seconds: 5), () {
+      if (entry.mounted) entry.remove();
+    });
+  }
 
   @override
   void initState() {
@@ -143,6 +210,12 @@ class _EmployeesPageState extends State<EmployeesPage> {
               .toList()
             ..sort();
       final selectedProfileId = _selectedEmployee?.profileId;
+      final designations = (data['designations'] as List? ?? [])
+          .map((value) => value.toString().trim())
+          .where((value) => value.isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort();
       _Employee? refreshedSelectedEmployee;
       if (selectedProfileId != null) {
         for (final item in items) {
@@ -161,6 +234,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
             refreshedSelectedEmployee ??
             (preserveSelection ? _selectedEmployee : null);
         departmentOptions = departments;
+        designationOptions = designations;
         filteredTotal = data['total'] is int
             ? data['total'] as int
             : int.tryParse('${data['total']}') ?? items.length;
@@ -454,10 +528,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
                                                   _showEmployeeDetails(
                                                     employee,
                                                   ),
-                                              onOpenDetails: (employee) =>
-                                                  _openFullEmployeeDetails(
-                                                    employee,
-                                                  ),
+                                              onOpenDetails: _openFullEmployeeDetails,
                                               onEdit: (employee) =>
                                                   _showEmployeeForm(
                                                     employee: employee,
@@ -547,7 +618,11 @@ class _EmployeesPageState extends State<EmployeesPage> {
                                                       child: child,
                                                     ),
                                                   ),
-                                              child: selected == null
+                                              child: const SizedBox.shrink(
+                                                  key: ValueKey('employee-details-removed'),
+                                                ),
+                                                /*
+                                                  selected == null
                                                   ? const SizedBox.shrink(
                                                       key: ValueKey('closed'),
                                                     )
@@ -587,7 +662,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
                                                               selected,
                                                             ),
                                                       ),
-                                                    ),
+                                                    ), */
                                             ),
                                           ),
                                         ),
@@ -873,24 +948,38 @@ class _EmployeesPageState extends State<EmployeesPage> {
             ? availableDepartments.first
             : 'Engineering');
     var selectedMode = employee?.workMode ?? 'Office';
-    late final List<Map<String, dynamic>> templates;
-    try {
-      templates = await HrmsTrackingApi.trackingTemplates();
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Unable to open the employee form: tracking templates could not '
-            'be loaded. Deploy the matching backend and try again. $error',
-          ),
-        ),
-      );
-      return;
+    var templates = <Map<String, dynamic>>[];
+    if (selectedMode == 'Field' || selectedMode == 'Hybrid') {
+      try {
+        // Office edits do not need this request; avoid delaying their dialog.
+        templates = await HrmsTrackingApi.trackingTemplates().timeout(
+          const Duration(seconds: 5),
+        );
+      } catch (_) {
+        // Keep the form usable even if the optional request fails.
+      }
     }
     if (!mounted) return;
     var selectedTrackingTemplateId = employee?.trackingTemplateId;
     var selectedEmployeeType = employee?.employeeType ?? 'Employee';
+    String? selectedDesignation = employee == null
+        ? null
+        : ((employee.designation).trim().isEmpty
+              ? employee.employeeType
+              : (employee.designation).trim());
+    if (selectedDesignation != null && selectedDesignation!.isEmpty) {
+      selectedDesignation = null;
+    }
+    final designationOptions = <String>{
+      ...this.designationOptions,
+      if (employee?.designation != null && employee!.designation.trim().isNotEmpty)
+        employee.designation,
+      // Existing profiles without a saved designation use the employee type
+      // as a compatibility fallback; it must also be present in the menu or
+      // DropdownButtonFormField will fail to render the edit dialog.
+      if (selectedDesignation != null && selectedDesignation!.trim().isNotEmpty)
+        selectedDesignation!,
+    }.where((value) => value.trim().isNotEmpty).toList()..sort();
     var overtimeEligible = employee?.overtimeEligible ?? false;
     var selectedGender = employee?.gender ?? 'Male';
     const employmentStatuses = ['Active', 'On Leave', 'Inactive'];
@@ -912,6 +1001,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
       if (selectedMode == 'Field' || selectedMode == 'Hybrid')
         'trackingTemplateId': selectedTrackingTemplateId,
       'employeeType': selectedEmployeeType,
+      'designation': selectedDesignation?.trim() ?? '',
       'overtimeEligible': overtimeEligible,
       'gender': selectedGender,
       'status': selectedStatus,
@@ -950,22 +1040,52 @@ class _EmployeesPageState extends State<EmployeesPage> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (submitError != null) ...[
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFFEBEE),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: const Color(0xFFE53935)),
-                        ),
-                        child: Text(
-                          submitError!,
-                          style: const TextStyle(color: Color(0xFFB71C1C)),
-                        ),
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 250),
+                      transitionBuilder: (child, animation) => SlideTransition(
+                        position: Tween<Offset>(
+                          begin: const Offset(0, -0.2),
+                          end: Offset.zero,
+                        ).animate(animation),
+                        child: FadeTransition(opacity: animation, child: child),
                       ),
-                      const SizedBox(height: 12),
-                    ],
+                      child: submitError == null
+                          ? const SizedBox.shrink(key: ValueKey('no-error'))
+                          : Container(
+                              key: ValueKey(submitError),
+                              width: double.infinity,
+                              margin: const EdgeInsets.only(bottom: 12),
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFE8F1FF),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: const Color(0xFF8DB7F5)),
+                                boxShadow: const [
+                                  BoxShadow(
+                                    color: Color(0x220B2A55),
+                                    blurRadius: 10,
+                                    offset: Offset(0, 3),
+                                  ),
+                                ],
+                              ),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Icon(Icons.info_outline, color: HrmsColors.blue),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      submitError!,
+                                      style: const TextStyle(
+                                        color: HrmsColors.navy,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                    ),
                     _formField(name, 'Employee name'),
                     const SizedBox(height: 12),
                     _formField(id, 'Employee ID'),
@@ -1072,32 +1192,67 @@ class _EmployeesPageState extends State<EmployeesPage> {
                       onAddRole: () async {
                         final role = await _showAddRoleDialog(dialogContext);
                         if (role == null || !mounted) return;
+                        // Departments are stored on the employee profile. Add
+                        // the new value locally immediately, then persist it
+                        // with the employee when the form is submitted.
+                        setState(() {
+                          departmentOptions = {
+                            ...departmentOptions,
+                            role,
+                          }.toList()..sort();
+                        });
+                        setDialogState(() {
+                          if (!availableDepartments.contains(role)) {
+                            availableDepartments.add(role);
+                            availableDepartments.sort();
+                          }
+                          selectedDepartment = role;
+                        });
+                      },
+                      onEditValue: (value) async {
+                        final edited = await _showRenameRoleDialog(
+                          dialogContext,
+                          value,
+                        );
+                        if (edited == null || edited == value) return;
                         try {
-                          await HrmsEmployeesApi.createRole(role);
-                          if (!mounted) return;
-                          setState(() {
-                            departmentOptions = {
-                              ...departmentOptions,
-                              role,
-                            }.toList()..sort();
-                          });
-                          setDialogState(() {
-                            if (!availableDepartments.contains(role)) {
-                              availableDepartments.add(role);
-                              availableDepartments.sort();
-                            }
-                            selectedDepartment = role;
-                          });
-                        } catch (err) {
-                          if (!context.mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                err.toString().replaceFirst('Exception: ', ''),
-                              ),
-                            ),
-                          );
+                          await HrmsEmployeesApi.renameRole(value, edited);
+                        } catch (error) {
+                          if (dialogContext.mounted) {
+                            final message = error.toString().replaceFirst('Exception: ', '');
+                            setDialogState(() => submitError = message);
+                            _showTopMessage(message);
+                          }
+                          return;
                         }
+                        setDialogState(() {
+                          final index = availableDepartments.indexOf(value);
+                          if (index >= 0) availableDepartments[index] = edited;
+                          availableDepartments.sort();
+                          if (selectedDepartment == value) {
+                            selectedDepartment = edited;
+                          }
+                        });
+                      },
+                      onDeleteValue: (value) async {
+                        try {
+                          await HrmsEmployeesApi.deleteRole(value);
+                        } catch (error) {
+                          if (dialogContext.mounted) {
+                            final message = error.toString().replaceFirst('Exception: ', '');
+                            setDialogState(() => submitError = message);
+                            _showTopMessage(message);
+                          }
+                          return;
+                        }
+                        setDialogState(() {
+                          availableDepartments.remove(value);
+                          if (selectedDepartment == value) {
+                            selectedDepartment = availableDepartments.isNotEmpty
+                                ? availableDepartments.first
+                                : 'Engineering';
+                          }
+                        });
                       },
                     ),
                     const SizedBox(height: 12),
@@ -1150,9 +1305,72 @@ class _EmployeesPageState extends State<EmployeesPage> {
                     _formDropdown(
                       'Employee type',
                       selectedEmployeeType,
-                      const ['Employee', 'Labour'],
+                      const ['Employee', 'Labour', 'Administrator'],
                       (value) =>
                           setDialogState(() => selectedEmployeeType = value!),
+                    ),
+                    const SizedBox(height: 12),
+                    _formDropdown(
+                      'Designation',
+                      selectedDesignation,
+                      designationOptions,
+                      (value) => setDialogState(
+                        () => selectedDesignation = value!,
+                      ),
+                      onAddRole: () async {
+                        final role = await _showAddRoleDialog(dialogContext);
+                        if (role == null || !mounted) return;
+                        // Designations are stored with the employee profile;
+                        // keep the newly entered value in this form and save
+                        // it with the employee instead of creating a department
+                        // role through the roles endpoint.
+                        setDialogState(() {
+                          if (!designationOptions.contains(role)) {
+                            designationOptions.add(role);
+                            designationOptions.sort();
+                          }
+                          selectedDesignation = role;
+                        });
+                      },
+                      onEditValue: (value) async {
+                        final edited = await _showRenameRoleDialog(
+                          dialogContext,
+                          value,
+                        );
+                        if (edited == null || edited == value) return;
+                        try {
+                          await HrmsEmployeesApi.renameRole(value, edited);
+                        } catch (error) {
+                          if (dialogContext.mounted) {
+                            setDialogState(() => submitError = error.toString().replaceFirst('Exception: ', ''));
+                          }
+                          return;
+                        }
+                        setDialogState(() {
+                          final index = designationOptions.indexOf(value);
+                          if (index >= 0) designationOptions[index] = edited;
+                          designationOptions.sort();
+                          if (selectedDesignation == value) {
+                            selectedDesignation = edited;
+                          }
+                        });
+                      },
+                      onDeleteValue: (value) async {
+                        try {
+                          await HrmsEmployeesApi.deleteRole(value);
+                        } catch (error) {
+                          if (dialogContext.mounted) {
+                            setDialogState(() => submitError = error.toString().replaceFirst('Exception: ', ''));
+                          }
+                          return;
+                        }
+                        setDialogState(() {
+                          designationOptions.remove(value);
+                          if (selectedDesignation == value) {
+                            selectedDesignation = null;
+                          }
+                        });
+                      },
                     ),
                     const SizedBox(height: 12),
                     SwitchListTile(
@@ -1245,6 +1463,13 @@ class _EmployeesPageState extends State<EmployeesPage> {
                   ? null
                   : () async {
                       if (!formKey.currentState!.validate()) return;
+                      if (selectedDesignation == null ||
+                          selectedDesignation!.trim().isEmpty) {
+                        setDialogState(() {
+                          submitError = 'Designation is required.';
+                        });
+                        return;
+                      }
                       setDialogState(() {
                         submitting = true;
                         submitError = null;
@@ -1351,19 +1576,61 @@ class _EmployeesPageState extends State<EmployeesPage> {
     );
   }
 
+  Future<String?> _showRenameRoleDialog(
+    BuildContext context,
+    String current,
+  ) async {
+    final controller = TextEditingController(text: current);
+    return showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Edit role'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Role name',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final value = controller.text.trim();
+              if (value.isNotEmpty) Navigator.pop(dialogContext, value);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _formDropdown(
     String label,
-    String value,
+    String? value,
     List<String> values,
     ValueChanged<String?> onChanged, {
     Future<void> Function()? onAddRole,
+    Future<void> Function(String value)? onEditValue,
+    Future<void> Function(String value)? onDeleteValue,
   }) {
     // Keep the employee's current designation even when it is a custom value,
     // and ensure each dropdown value appears only once.
-    final dropdownValues = <String>{...values, value}.toList();
+    final dropdownValues = <String>{
+      ...values,
+      if (value != null && value.trim().isNotEmpty) value,
+    }.toList();
+    final safeValue = value != null && dropdownValues.contains(value)
+        ? value
+        : null;
     const addRoleValue = '__add_new_role__';
     return DropdownButtonFormField<String>(
-      initialValue: value,
+      initialValue: safeValue,
       decoration: InputDecoration(
         labelText: label,
         border: const OutlineInputBorder(),
@@ -1381,7 +1648,33 @@ class _EmployeesPageState extends State<EmployeesPage> {
             ),
           ),
         ...dropdownValues.map(
-          (item) => DropdownMenuItem(value: item, child: Text(item)),
+          (item) => DropdownMenuItem(
+            value: item,
+            child: Row(
+              children: [
+                // Dropdown menu items are laid out with an unbounded width;
+                // avoid flex children entirely in this row.
+                SizedBox(
+                  // Reserve the menu's text area so the action icons sit at
+                  // the far right, immediately before the dropdown arrow.
+                  width: 250,
+                  child: Text(item, overflow: TextOverflow.ellipsis),
+                ),
+                if (onEditValue != null)
+                  IconButton(
+                    tooltip: 'Edit $label',
+                    icon: const Icon(Icons.edit_outlined, size: 17),
+                    onPressed: () => onEditValue(item),
+                  ),
+                if (onDeleteValue != null)
+                  IconButton(
+                    tooltip: 'Delete $label',
+                    icon: const Icon(Icons.delete_outline, size: 17),
+                    onPressed: () => onDeleteValue(item),
+                  ),
+              ],
+            ),
+          ),
         ),
       ],
       onChanged: (selected) {
@@ -1395,12 +1688,8 @@ class _EmployeesPageState extends State<EmployeesPage> {
   }
 
   Future<void> _showEmployeeDetails(_Employee employee) async {
-    if (!mounted) return;
-    if (MediaQuery.sizeOf(context).width < 600) {
-      await _openFullEmployeeDetails(employee);
-      return;
-    }
-    setState(() => _selectedEmployee = employee);
+    // Keep the employee list full-width; details are available through
+    // the explicit View profile action.
   }
 
   void _closeEmployeeDetails() {
@@ -3579,6 +3868,9 @@ class _EmployeeDetailPage extends StatefulWidget {
 class _EmployeeDetailPageState extends State<_EmployeeDetailPage> {
   late Future<Map<String, dynamic>> _detail;
   late int _selectedTab;
+  String? _expandedPayrollKey;
+  Future<Map<String, dynamic>>? _expandedPayroll;
+  bool _showPayrollDaywise = false;
 
   String _money(dynamic value) {
     final amount = value is num ? value : num.tryParse('$value');
@@ -3668,6 +3960,66 @@ class _EmployeeDetailPageState extends State<_EmployeeDetailPage> {
       status,
       style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w700),
     );
+  }
+
+  Widget _payrollDetails(List<Map<String, dynamic>> payrollHistory) {
+    final current = payrollHistory.isEmpty ? null : payrollHistory.first;
+    final currentDate = current == null ? null : _parsePayrollMonth('${current['month']}');
+    final currentYear = int.tryParse('${current?['year']}') ?? currentDate?.year ?? 0;
+    final currentMonth = int.tryParse('${current?['monthNumber']}') ?? currentDate?.month ?? 0;
+    final summaryRows = payrollHistory.map((row) => [
+      _tableText(row['month'], color: HrmsColors.blue, weight: FontWeight.w700),
+      _tableText(_money(row['salary'])), _tableText(row['workingDays']),
+      _tableText(row['paidDays']), _tableText(row['lopDays']),
+      _tableText(_money(row['lateDeduction'])), _tableText(_money(row['absentDeduction'])),
+      _tableText(_money(row['totalDeduction'])), _tableText(_money(row['netPay']), color: HrmsColors.blue, weight: FontWeight.w800),
+      _statusCell(row['status']),
+    ]).toList();
+    final expanded = !_showPayrollDaywise || current == null || currentYear < 1 || currentMonth < 1
+        ? const <Widget>[]
+        : [
+            const SizedBox(height: 14),
+            FutureBuilder<Map<String, dynamic>>(
+              future: HrmsPayrollApi.deductionHistory(profileId: widget.employee.profileId, year: currentYear, month: currentMonth),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) return const Center(child: CircularProgressIndicator());
+                if (snapshot.hasError) return Text('Unable to load day-wise payroll: ${snapshot.error}');
+                final items = (snapshot.data?['items'] as List? ?? const []).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+                if (items.isEmpty) return const Text('No day-wise payroll details for this month.');
+                return SingleChildScrollView(scrollDirection: Axis.horizontal, child: SizedBox(width: 1500, child: _detailTable(
+                  headers: const ['Date','Salary','Working','Check-in','Check-out','Status','Late deduction','Absent/LOP deduction','Total deduction','Carry-forward updated salary'],
+                  emptyMessage: 'No day-wise payroll details for this month.',
+                  rows: items.map((item) => [
+                    _tableText(item['attendance_date']), _tableText(_money(item['daily_salary'])),
+                    _tableText(item['attendance_status'] == 'Present' || item['attendance_status'] == 'Late' ? 1 : 0),
+                    _tableText(item['check_in_at']), _tableText(item['check_out_at']), _statusCell(item['attendance_status']),
+                    _tableText(_money(item['deduction_type'] == 'late' ? item['amount'] : 0)),
+                    _tableText(_money(item['deduction_type'] == 'absent' ? item['amount'] : 0)),
+                    _tableText(_money(item['amount'])), _tableText(_money(item['updated_salary'])),
+                  ]).toList(),
+                )));
+              },
+            ),
+          ];
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Expanded(child: OutlinedButton.icon(onPressed: () => setState(() => _showPayrollDaywise = false), icon: const Icon(Icons.calendar_month_outlined, size: 17), label: const Text('Month-wise'))),
+        const SizedBox(width: 10),
+        Expanded(child: OutlinedButton.icon(onPressed: () => setState(() => _showPayrollDaywise = true), icon: const Icon(Icons.list_alt_outlined, size: 17), label: const Text('Day-wise'))),
+      ]),
+      const SizedBox(height: 12),
+      if (!_showPayrollDaywise)
+        _detailTable(headers: const ['Month','Salary','Working','Paid','LOP','Late deduction','Absent / LOP','Total deduction','Net pay','Status'], emptyMessage: 'No payroll history is available.', rows: summaryRows),
+      ...expanded,
+    ]);
+  }
+
+  DateTime? _parsePayrollMonth(String value) {
+    try {
+      return DateFormat('MMMM yyyy', 'en_US').parseStrict(value);
+    } catch (_) {
+      return null;
+    }
   }
 
   @override
@@ -3808,45 +4160,7 @@ class _EmployeeDetailPageState extends State<_EmployeeDetailPage> {
                       ),
                     ],
                   )
-                : _detailTable(
-                    headers: const [
-                      'Month',
-                      'Salary',
-                      'Working',
-                      'Paid',
-                      'LOP',
-                      'Late deduction',
-                      'Absent / LOP',
-                      'Total deduction',
-                      'Net pay',
-                      'Status',
-                    ],
-                    emptyMessage: 'No payroll history is available.',
-                    rows: payrollHistory
-                        .map(
-                          (row) => [
-                            _tableText(
-                              row['month'],
-                              color: HrmsColors.blue,
-                              weight: FontWeight.w700,
-                            ),
-                            _tableText(_money(row['salary'])),
-                            _tableText(row['workingDays']),
-                            _tableText(row['paidDays']),
-                            _tableText(row['lopDays']),
-                            _tableText(_money(row['lateDeduction'])),
-                            _tableText(_money(row['absentDeduction'])),
-                            _tableText(_money(row['totalDeduction'])),
-                            _tableText(
-                              _money(row['netPay']),
-                              color: HrmsColors.blue,
-                              weight: FontWeight.w800,
-                            ),
-                            _statusCell(row['status']),
-                          ],
-                        )
-                        .toList(),
-                  );
+                : _payrollDetails(payrollHistory);
             return SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(28, 20, 28, 32),
               child: Center(
@@ -4335,7 +4649,7 @@ class _Employee {
       (json['department'] ?? '').toString(),
       mode,
       (json['employeeType'] ?? 'Employee').toString(),
-      (json['designation'] ?? json['employeeType'] ?? 'Employee').toString(),
+      (json['designation'] ?? '').toString(),
       (json['location'] ?? json['workLocation'] ?? '-').toString(),
       (json['joiningDate'] ?? json['dateOfJoining'] ?? '-').toString(),
       json['overtimeEligible'] == true || json['overtimeEligible'] == 1,

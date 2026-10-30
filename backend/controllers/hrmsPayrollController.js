@@ -871,23 +871,95 @@ async function deductionHistory(req, res) {
     }
     // History is read-only: changing the selected month must not regenerate
     // payroll, alter tables, or replace saved deduction entries.
-    const [rows] = await db.query(
-      `SELECT DATE_FORMAT(d.attendance_date, '%Y-%m-%d') AS attendance_date,
-              d.deduction_type, d.late_minutes, d.amount,
-              (SELECT DATE_FORMAT(MIN(a.check_in_at), '%Y-%m-%d %H:%i:%s')
-               FROM attendance_records a
-               WHERE a.employee_id = d.employee_user_id
-                 AND a.attendance_date = d.attendance_date) AS check_in_at,
-              (SELECT DATE_FORMAT(MAX(a.check_out_at), '%Y-%m-%d %H:%i:%s')
-               FROM attendance_records a
-               WHERE a.employee_id = d.employee_user_id
-                 AND a.attendance_date = d.attendance_date) AS check_out_at
-       FROM hrms_payroll_deduction_entries d
-       WHERE d.profile_id = ? AND d.pay_year = ? AND d.pay_month = ?
-       ORDER BY d.attendance_date DESC, d.deduction_type ASC`,
-      [profileId, year, month]
+    const [[summary]] = await db.query(
+      `SELECT monthly_salary, working_days, paid_days, lop_days,
+              late_deductions, absent_deductions, deductions, net_pay, status
+       FROM hrms_payroll_items
+       WHERE profile_id = ? AND pay_year = ? AND pay_month = ?
+       LIMIT 1`, [profileId, year, month]
     );
-    return ok(res, rows);
+    const [rows] = await db.query(
+      `SELECT DATE_FORMAT(x.attendance_date, '%Y-%m-%d') AS attendance_date,
+              COALESCE(d.deduction_type, CASE WHEN a.attendance_status = 'present' THEN 'present' ELSE 'absent' END) AS deduction_type,
+              COALESCE(d.late_minutes, 0) AS late_minutes,
+              COALESCE(d.amount, 0) AS amount,
+              ROUND(p.monthly_salary / NULLIF(p.working_days, 0), 2) AS daily_salary,
+              ROUND((p.monthly_salary / NULLIF(p.working_days, 0)) - COALESCE(d.amount, 0), 2) AS updated_salary,
+              DATE_FORMAT(a.check_in_at, '%Y-%m-%d %H:%i:%s') AS check_in_at,
+              DATE_FORMAT(a.check_out_at, '%Y-%m-%d %H:%i:%s') AS check_out_at,
+              CASE WHEN d.deduction_type = 'late' THEN 'Late'
+                   WHEN a.check_in_at IS NOT NULL THEN 'Present' ELSE 'Absent' END AS attendance_status
+       FROM (
+         SELECT attendance_date FROM attendance_records
+         WHERE employee_id = (SELECT employee_user_id FROM hrms_payroll_items WHERE profile_id = ? AND pay_year = ? AND pay_month = ? LIMIT 1)
+           AND YEAR(attendance_date) = ? AND MONTH(attendance_date) = ?
+         UNION SELECT attendance_date FROM hrms_payroll_deduction_entries
+         WHERE profile_id = ? AND pay_year = ? AND pay_month = ?
+           AND YEAR(attendance_date) = ? AND MONTH(attendance_date) = ?
+       ) x
+       LEFT JOIN hrms_payroll_items p ON p.profile_id = ? AND p.pay_year = ? AND p.pay_month = ?
+       LEFT JOIN attendance_records a ON a.employee_id = p.employee_user_id AND a.attendance_date = x.attendance_date
+       LEFT JOIN hrms_payroll_deduction_entries d ON d.profile_id = p.profile_id AND d.pay_year = p.pay_year AND d.pay_month = p.pay_month AND d.attendance_date = x.attendance_date
+       ORDER BY x.attendance_date ASC`,
+      [profileId, year, month, year, month, profileId, year, month, year, month, profileId, year, month]
+    );
+    // Updated salary is a running payroll-month balance. Present days add the
+    // daily salary; late days add the daily salary after that day's deduction;
+    // absent days do not add to the balance.
+    let runningSalary = 0;
+    for (const row of rows) {
+      const status = String(row.attendance_status || '').toLowerCase();
+      const daily = Number(row.daily_salary || 0);
+      const amount = Number(row.amount || 0);
+      if (status === 'present' || status === 'late') {
+        runningSalary += daily - (status === 'late' ? amount : 0);
+      }
+      row.updated_salary = Number(runningSalary.toFixed(2));
+    }
+    rows.reverse();
+    const late = Number(summary?.late_deductions || summary?.deductions || 0);
+    const absent = Number(summary?.absent_deductions || 0);
+    return ok(res, {
+      summary: summary ? {
+        salary: Number(summary.monthly_salary || 0), workingDays: Number(summary.working_days || 0),
+        paidDays: Number(summary.paid_days || 0), lopDays: Number(summary.lop_days || 0),
+        lateDeduction: late, absentDeduction: absent, totalDeduction: late + absent,
+        netPay: Number(summary.net_pay || 0), status: summary.status,
+      } : null,
+      items: rows,
+    });
+  } catch (error) {
+    return fail(res, 500, error.message);
+  }
+}
+
+async function history(req, res) {
+  try {
+    const profileId = Number(req.params.profileId);
+    if (!Number.isInteger(profileId) || profileId < 1) {
+      return fail(res, 400, 'profile is required');
+    }
+    const [rows] = await db.query(
+      `SELECT pay_year, pay_month, monthly_salary, working_days, paid_days, lop_days,
+              late_deductions, absent_deductions, deductions, net_pay, status
+       FROM hrms_payroll_items
+       WHERE profile_id = ?
+       ORDER BY pay_year DESC, pay_month DESC`,
+      [profileId]
+    );
+    return ok(res, rows.map((row) => {
+      const late = Number(row.late_deductions || row.deductions || 0);
+      const absent = Number(row.absent_deductions || 0);
+      return {
+        year: Number(row.pay_year), month: Number(row.pay_month),
+        label: `${row.pay_year}-${String(row.pay_month).padStart(2, '0')}`,
+        salary: Number(row.monthly_salary || 0),
+        workingDays: Number(row.working_days || 0), paidDays: Number(row.paid_days || 0),
+        lopDays: Number(row.lop_days || 0), lateDeduction: late,
+        absentDeduction: absent, totalDeduction: late + absent,
+        netPay: Number(row.net_pay || 0), status: row.status,
+      };
+    }));
   } catch (error) {
     return fail(res, 500, error.message);
   }
@@ -900,6 +972,7 @@ module.exports = {
   markPaid,
   saveCycleOverride,
   deductionHistory,
+  history,
   getPolicy,
   savePolicy,
   generatePayrollRun,
