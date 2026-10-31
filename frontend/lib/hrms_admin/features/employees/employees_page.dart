@@ -3871,6 +3871,7 @@ class _EmployeeDetailPageState extends State<_EmployeeDetailPage> {
   String? _expandedPayrollKey;
   Future<Map<String, dynamic>>? _expandedPayroll;
   bool _showPayrollDaywise = false;
+  String? _selectedPayrollMonthKey;
 
   String _money(dynamic value) {
     final amount = value is num ? value : num.tryParse('$value');
@@ -3963,7 +3964,20 @@ class _EmployeeDetailPageState extends State<_EmployeeDetailPage> {
   }
 
   Widget _payrollDetails(List<Map<String, dynamic>> payrollHistory) {
-    final current = payrollHistory.isEmpty ? null : payrollHistory.first;
+    final payrollMonthKeys = payrollHistory
+        .map((row) => '${row['year']}-${row['monthNumber']}')
+        .toSet()
+        .toList();
+    final selectedPayrollKey = payrollMonthKeys.contains(_selectedPayrollMonthKey)
+        ? _selectedPayrollMonthKey!
+        : payrollMonthKeys.isEmpty
+        ? null
+        : payrollMonthKeys.first;
+    final current = selectedPayrollKey == null
+        ? null
+        : payrollHistory.firstWhere(
+            (row) => '${row['year']}-${row['monthNumber']}' == selectedPayrollKey,
+          );
     final currentDate = current == null ? null : _parsePayrollMonth('${current['month']}');
     final currentYear = int.tryParse('${current?['year']}') ?? currentDate?.year ?? 0;
     final currentMonth = int.tryParse('${current?['monthNumber']}') ?? currentDate?.month ?? 0;
@@ -4008,6 +4022,25 @@ class _EmployeeDetailPageState extends State<_EmployeeDetailPage> {
         Expanded(child: OutlinedButton.icon(onPressed: () => setState(() => _showPayrollDaywise = true), icon: const Icon(Icons.list_alt_outlined, size: 17), label: const Text('Day-wise'))),
       ]),
       const SizedBox(height: 12),
+      if (_showPayrollDaywise && payrollMonthKeys.isNotEmpty) ...[
+        DropdownButtonFormField<String>(
+          value: selectedPayrollKey,
+          isExpanded: true,
+          decoration: const InputDecoration(
+            labelText: 'Payroll month',
+            prefixIcon: Icon(Icons.calendar_month_outlined),
+          ),
+          items: payrollHistory.map((row) {
+            final key = '${row['year']}-${row['monthNumber']}';
+            return DropdownMenuItem<String>(
+              value: key,
+              child: Text('${row['month']}'),
+            );
+          }).toList(),
+          onChanged: (value) => setState(() => _selectedPayrollMonthKey = value),
+        ),
+        const SizedBox(height: 12),
+      ],
       if (!_showPayrollDaywise)
         _detailTable(headers: const ['Month','Salary','Working','Paid','LOP','Late deduction','Absent / LOP','Total deduction','Net pay','Status'], emptyMessage: 'No payroll history is available.', rows: summaryRows),
       ...expanded,
