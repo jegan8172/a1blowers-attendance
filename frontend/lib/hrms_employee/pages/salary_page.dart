@@ -321,16 +321,28 @@ class _PayrollHistoryDialogState extends State<_PayrollHistoryDialog> {
                     ? rawItems.whereType<Map>().map((row) => Map<String, dynamic>.from(row)).toList()
                     : <Map<String, dynamic>>[];
                 if (items.isEmpty) return const Center(child: Text('No payroll or attendance records for this month.', style: TextStyle(color: employeeMuted)));
-                return Scrollbar(child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: DataTable(columns: const [
+                return Scrollbar(child: SingleChildScrollView(child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: DataTable(columns: const [
                   DataColumn(label: Text('Date')), DataColumn(label: Text('Salary')), DataColumn(label: Text('Working')), DataColumn(label: Text('Check-in')), DataColumn(label: Text('Check-out')), DataColumn(label: Text('Status')), DataColumn(label: Text('Late deduction')), DataColumn(label: Text('Absent/LOP')), DataColumn(label: Text('Total deduction')), DataColumn(label: Text('Updated salary')),
                 ], rows: items.map((r) => DataRow(cells: [
-                  DataCell(Text('${r['date'] ?? '-'}')), DataCell(Text(_money(r['salary']))), DataCell(Text('${r['working'] ?? 0}')), DataCell(Text('${r['check_in'] ?? '-'}')), DataCell(Text('${r['check_out'] ?? '-'}')), DataCell(Text('${r['status'] ?? '-'}')), DataCell(Text(_money(r['late_deduction']))), DataCell(Text(_money(r['absent_deduction']))), DataCell(Text(_money(r['total_deduction']))), DataCell(Text(_money(r['updated_salary']))),
-                ])).toList())));
+                  DataCell(Text('${r['date'] ?? '-'}')), DataCell(Text(_money(r['salary']))), DataCell(Text('${r['working'] ?? 0}')), DataCell(Text(_payrollTime(r['check_in']))), DataCell(Text(_payrollTime(r['check_out']))), DataCell(Text('${r['status'] ?? '-'}')), DataCell(Text(_money(r['late_deduction']))), DataCell(Text(_money(r['absent_deduction']))), DataCell(Text(_money(r['total_deduction']))), DataCell(Text(_money(r['updated_salary']))),
+                ])).toList()))));
               })),
             ]),
           ),
         ),
       );
+}
+
+String _payrollTime(dynamic value) {
+  final raw = value?.toString().trim() ?? '';
+  if (raw.isEmpty || raw == '-' || raw == '—') return '—';
+  final dateTime = DateTime.tryParse(raw);
+  if (dateTime == null) return raw;
+  final local = dateTime.toLocal();
+  final hour = local.hour % 12 == 0 ? 12 : local.hour % 12;
+  final minute = local.minute.toString().padLeft(2, '0');
+  final period = local.hour >= 12 ? 'PM' : 'AM';
+  return '$hour:$minute $period';
 }
 
 Future<void> _showDeductionHistory(BuildContext context) async {

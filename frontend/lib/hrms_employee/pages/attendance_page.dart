@@ -42,6 +42,7 @@ class _AttendanceViewState extends State<_AttendanceView> {
   int _presentCount = 0;
   int _absentCount = 0;
   int _lateCount = 0;
+  int _workingDaysCount = 0;
   String? _token;
 
   static const monthNames = [
@@ -186,6 +187,7 @@ class _AttendanceViewState extends State<_AttendanceView> {
               _presentCount = (overview?['present_days'] as num?)?.toInt() ?? 0;
               _absentCount = (overview?['absent_days'] as num?)?.toInt() ?? 0;
               _lateCount = (overview?['late_days'] as num?)?.toInt() ?? 0;
+              _workingDaysCount = (overview?['work_time']?['working_days'] as num?)?.toInt() ?? daysMap.values.where((item) => item['status'] != 'OFF' && item['status'] != 'H').length;
               _monthDays = daysMap;
             });
           }
@@ -240,6 +242,7 @@ class _AttendanceViewState extends State<_AttendanceView> {
         present: _presentCount,
         absent: _absentCount,
         late: _lateCount,
+        workingDays: _workingDaysCount,
       ),
       const SizedBox(height: 16),
       _RecentAttendanceCard(
@@ -560,12 +563,14 @@ class _SummaryCard extends StatelessWidget {
     required this.present,
     required this.absent,
     required this.late,
+    required this.workingDays,
   });
 
   final String monthLabel;
   final int present;
   final int absent;
   final int late;
+  final int workingDays;
 
   @override
   Widget build(BuildContext context) => EmployeeCard(
@@ -580,7 +585,7 @@ class _SummaryCard extends StatelessWidget {
           Row(children: [
             Expanded(
                 child: _SummaryCell(
-                    'Working Days', '26', employeeBlue)),
+                    'Working Days', '$workingDays', employeeBlue)),
             Expanded(
                 child: _SummaryCell(
                     'Present', '$present', employeeBlue)),

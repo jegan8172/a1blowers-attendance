@@ -68,12 +68,19 @@ async function summary(req, res) {
         AND c.effective_from <= CURDATE()
       WHERE e.employee_user_id = ?
       ORDER BY c.effective_from DESC, c.id DESC LIMIT 1`, [req.user.id]);
+    // Payroll rows created by older versions may have a valid profile link but
+    // a missing or stale employee_user_id. Resolve through either immutable
+    // key so a generated pending row is still visible to its employee.
     const [[payroll]] = await db.query(`SELECT p.* FROM hrms_payroll_items p
+      WHERE (p.employee_user_id = ? OR p.profile_id = (
+        SELECT id FROM hrms_employee_profiles WHERE employee_user_id = ? LIMIT 1
+      )) AND p.monthly_salary > 0
+      ORDER BY p.pay_year DESC, p.pay_month DESC, p.id DESC LIMIT 1`, [req.user.id, req.user.id]);
+    const [[invalid]] = await db.query(`SELECT p.id FROM hrms_payroll_items p
       JOIN hrms_employee_profiles e ON e.id = p.profile_id
-      WHERE e.employee_user_id = ? AND p.monthly_salary > 0
-      ORDER BY p.pay_year DESC, p.pay_month DESC, p.id DESC LIMIT 1`, [req.user.id]);
-    const [[invalid]] = await db.query(`SELECT p.id FROM hrms_payroll_items p JOIN hrms_employee_profiles e ON e.id = p.profile_id
-      WHERE e.employee_user_id = ? AND (NOT(p.employee_user_id <=> e.employee_user_id) OR (p.status = 'paid' AND COALESCE(p.monthly_salary, 0) <= 0)) LIMIT 1`, [req.user.id]);
+      WHERE (p.employee_user_id = ? OR e.employee_user_id = ?)
+        AND (NOT(p.employee_user_id <=> e.employee_user_id) OR (p.status = 'paid' AND COALESCE(p.monthly_salary, 0) <= 0))
+      LIMIT 1`, [req.user.id, req.user.id]);
 
     // Live payroll: compute earnedToDate = days_attended_so_far × daily_rate
     let livePayroll = null;
@@ -92,7 +99,7 @@ async function summary(req, res) {
       // Count days with check-in up to today
       const [[attRow]] = await db.query(`SELECT COUNT(DISTINCT DATE(check_in_at)) AS present_days
         FROM attendance_records
-        WHERE employee_user_id = ? AND DATE(check_in_at) BETWEEN ? AND ? AND check_in_at IS NOT NULL`,
+        WHERE employee_id = ? AND DATE(check_in_at) BETWEEN ? AND ? AND check_in_at IS NOT NULL`,
         [req.user.id, monthStart, cutoff]);
       const paidDaysToDate = Number(attRow && attRow.present_days || 0);
       const earnedToDate = Math.round(paidDaysToDate * dailyRate * 100) / 100;
