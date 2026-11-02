@@ -677,6 +677,8 @@ async function employeeDashboard(req, res) {
     const date = policy.todayIstDate();
     const month = parseMonthParam(req.query.month);
     if (!month) return fail(res, 400, 'month must be YYYY-MM');
+    const [monthYear, monthNumber] = month.split('-').map(Number);
+    const monthEndDate = `${month}-${String(new Date(Date.UTC(monthYear, monthNumber, 0)).getUTCDate()).padStart(2, '0')}`;
 
     const people = await staff.listActiveStaff(db);
     const person = people.find(function (item) {
@@ -749,9 +751,9 @@ async function employeeDashboard(req, res) {
     try { globalWeeklyOffDays = JSON.parse((policyRows[0] && policyRows[0].weekly_off_days) || '[0]').map(Number); } catch (_) {}
     const profileId = profileRows[0] && Number(profileRows[0].id);
     const weeklyResolver = profileId
-      ? await weeklyOffTemplates.offDaysForProfileByDate(db, profileId, month + '-01', month + '-31', globalWeeklyOffDays)
+      ? await weeklyOffTemplates.offDaysForProfileByDate(db, profileId, month + '-01', monthEndDate, globalWeeklyOffDays)
       : { forDate: () => new Set(globalWeeklyOffDays) };
-    const monthlyOverrides = await calendar.overridesForPeriod(month + '-01', month + '-31');
+    const monthlyOverrides = await calendar.overridesForPeriod(month + '-01', monthEndDate);
     let monthlyWorkingDays = 0;
     for (let day = 1; day <= new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate(); day += 1) {
       const workDate = month + '-' + String(day).padStart(2, '0');
