@@ -25,6 +25,11 @@ const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
 const DEFAULT_POLICY = { weeklyOffDays: [0], deductApprovedLeave: true, deductExplicitAbsence: true, missingAttendanceIsAbsent: false };
 
 function timeSeconds(value) { const p = String(value || '').slice(-8).split(':').map(Number); return (p[0] || 0) * 3600 + (p[1] || 0) * 60 + (p[2] || 0); }
+function shiftDurationMinutes(start, end) {
+  let duration = Math.round((timeSeconds(end) - timeSeconds(start)) / 60);
+  if (duration <= 0) duration += 24 * 60;
+  return duration;
+}
 function attendanceTimeSeconds(value) {
   const text = String(value || '');
   if (text.includes('T') || value instanceof Date) {
@@ -415,6 +420,7 @@ async function computeRows(year, month, today, options) {
         department: profile.department, monthlySalary: Number(profile.monthly_salary || 0) || null,
         salary: formatSalary(profile.monthly_salary), salaryType: 'Flexible',
         periodStart: start, periodEnd: end, cycleOverridden: false,
+        dailySalary: null,
         workingDays: 0, presentDays: 0, lateDays: 0, leaveDays: 0, absentDays: 0,
         paidDays: 0, lopDays: 0, deductions: 0, deductionsLabel: '–',
         lateDeductions: 0, absentDeductions: 0, netPay: 0, netPayLabel: '–',
@@ -511,6 +517,7 @@ async function computeRows(year, month, today, options) {
         name: String(profile.full_name || '').trim(), employeeCode: profile.employee_code,
         department: profile.department, monthlySalary: salaryNumber || null, salary: formatSalary(salaryNumber || null),
         salaryType: period.salaryType, periodStart: period.start, periodEnd: period.end, cycleOverridden: Boolean(period.overridden),
+        dailySalary: salaryNumber ? Math.round(dailyRate * 100) / 100 : null,
         workingDays, paidDays, lopDays, deductions: 0, deductionsLabel: 'Review required',
         netPay: 0, netPayLabel: 'Review required', status: 'Review required', paidAt: '',
         integrityError: 'Saved payroll has inconsistent ownership or missing paid salary. An audited correction is required.' };
@@ -522,6 +529,7 @@ async function computeRows(year, month, today, options) {
         name: String(profile.full_name || '').trim(), employeeCode: profile.employee_code,
         department: profile.department, monthlySalary: null, salary: 'Not Set',
         salaryType: period.salaryType, periodStart: period.start, periodEnd: period.end, cycleOverridden: Boolean(period.overridden),
+        dailySalary: null,
         workingDays: workingDays, presentDays: present, lateDays: late, leaveDays: leaveDays, absentDays: absent,
         paidDays: paidDays, lopDays: lopDays, deductions: 0, deductionsLabel: '–',
         lateDeductions: 0, absentDeductions: 0, netPay: 0, netPayLabel: '–',
@@ -537,6 +545,9 @@ async function computeRows(year, month, today, options) {
         name: String(profile.full_name || '').trim(), employeeCode: profile.employee_code,
         department: profile.department, monthlySalary: Number(saved.monthly_salary || 0), salary: formatSalary(saved.monthly_salary),
         salaryType: period.salaryType, periodStart: savedPeriodStart, periodEnd: savedPeriodEnd, cycleOverridden: Boolean(period.overridden),
+        dailySalary: Number(saved.working_days || 0) > 0
+          ? Math.round((Number(saved.monthly_salary || 0) / Number(saved.working_days)) * 100) / 100
+          : null,
         workingDays: Number(saved.working_days || 0), presentDays: present, lateDays: late, leaveDays: leaveDays, absentDays: absent,
         paidDays: Number(saved.paid_days || 0), lopDays: Number(saved.lop_days || 0), deductions: Number(saved.deductions || 0),
         deductionsLabel: formatSalary(saved.deductions),
@@ -562,6 +573,7 @@ async function computeRows(year, month, today, options) {
       cycleOverridden: Boolean(period.overridden),
       monthlySalary: salaryNumber || null,
       salary: formatSalary(salaryNumber),
+      dailySalary: Math.round(dailyRate * 100) / 100,
       workingDays: workingDays,
       presentDays: present,
       lateDays: late,
@@ -869,6 +881,18 @@ async function deductionHistory(req, res) {
         !Number.isInteger(month) || month < 1 || month > 12) {
       return fail(res, 400, 'profile, year, and month are required');
     }
+    const [[profile]] = await db.query(
+      `SELECT monthly_salary, gender
+       FROM hrms_employee_profiles
+       WHERE id = ?`,
+      [profileId]
+    );
+    if (!profile) return fail(res, 404, 'Employee profile not found.');
+    const timeSettings = await policy.getTimeSettings(db);
+    const schedule = String(profile.gender).toLowerCase() === 'female'
+      ? timeSettings.female
+      : timeSettings.male;
+
     // History is read-only: changing the selected month must not regenerate
     // payroll, alter tables, or replace saved deduction entries.
     const [[summary]] = await db.query(
@@ -920,6 +944,13 @@ async function deductionHistory(req, res) {
     const late = Number(summary?.late_deductions || summary?.deductions || 0);
     const absent = Number(summary?.absent_deductions || 0);
     return ok(res, {
+      overview: {
+        monthlySalary: Number(summary?.monthly_salary ?? profile.monthly_salary ?? 0),
+        workingDays: summary ? Number(summary.working_days || 0) : null,
+        shiftStart: schedule.shiftStart,
+        shiftEnd: schedule.shiftEnd,
+        shiftMinutes: shiftDurationMinutes(schedule.shiftStart, schedule.shiftEnd),
+      },
       summary: summary ? {
         salary: Number(summary.monthly_salary || 0), workingDays: Number(summary.working_days || 0),
         paidDays: Number(summary.paid_days || 0), lopDays: Number(summary.lop_days || 0),

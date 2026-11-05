@@ -257,13 +257,20 @@ class AndroidLiveTrackingService {
 
     Future<void> startWaitingAlertMonitor() async {
       try {
-        final settings = await HrmsTrackingApi.trackingSettings();
+        final session = await HrmsTrackingApi.fieldSession();
+        final sessionValue =
+            session['popup_alert_repeat_seconds'] ??
+            session['popupAlertRepeatSeconds'];
+        final settings = sessionValue == null
+            ? await HrmsTrackingApi.trackingSettings()
+            : const <String, dynamic>{};
         final value =
+            sessionValue ??
             settings['popup_alert_repeat_seconds'] ??
             settings['popupAlertRepeatSeconds'];
         final parsed = value is num ? value.toInt() : int.tryParse('$value');
         // Android may throttle extremely fast notification updates, but this
-        // preserves the administrator's chosen repeat interval where allowed.
+        // preserves the active session's template interval where allowed.
         waitingAlertRepeatSeconds = (parsed ?? 5).clamp(2, 60).toInt();
       } catch (_) {
         waitingAlertRepeatSeconds = 5;

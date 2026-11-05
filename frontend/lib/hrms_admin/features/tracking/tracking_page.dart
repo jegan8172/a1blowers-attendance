@@ -2930,6 +2930,12 @@ class _EmployeeTrackingDetailsDialogState
           '${_waitingReasons.length}',
           const Color(0xFFFF8400),
         ),
+        _summaryRow(
+          Icons.comment_outlined,
+          'Permanent comments',
+          '${_comments.length}',
+          const Color(0xFF6B52D7),
+        ),
       ],
     ),
   );

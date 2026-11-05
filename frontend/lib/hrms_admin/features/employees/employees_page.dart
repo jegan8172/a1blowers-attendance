@@ -1260,11 +1260,29 @@ class _EmployeesPageState extends State<EmployeesPage> {
                       'Work mode',
                       selectedMode,
                       const ['Office', 'Hybrid', 'Field'],
-                      (value) => setDialogState(() {
-                        selectedMode = value!;
-                        if (selectedMode == 'Office' || selectedMode == 'Home')
-                          selectedTrackingTemplateId = null;
-                      }),
+                      (value) async {
+                        final nextMode = value!;
+                        setDialogState(() {
+                          selectedMode = nextMode;
+                          if (selectedMode == 'Office' || selectedMode == 'Home') {
+                            selectedTrackingTemplateId = null;
+                          }
+                        });
+                        if (nextMode != 'Field' && nextMode != 'Hybrid') return;
+                        try {
+                          final loadedTemplates = await HrmsTrackingApi
+                              .trackingTemplates()
+                              .timeout(const Duration(seconds: 5));
+                          if (!dialogContext.mounted) return;
+                          setDialogState(() => templates = loadedTemplates);
+                        } catch (_) {
+                          if (!dialogContext.mounted) return;
+                          setDialogState(() {
+                            submitError =
+                                'Unable to load live tracking templates. Please try again.';
+                          });
+                        }
+                      },
                     ),
                     if (selectedMode == 'Field' ||
                         selectedMode == 'Hybrid') ...[

@@ -217,10 +217,25 @@ class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with Wi
 
   Future<Duration> _popupAlertRepeatInterval() async {
     try {
+      final session = await HrmsTrackingApi.fieldSession();
+      final sessionValue =
+          session['popup_alert_repeat_seconds'] ??
+          session['popupAlertRepeatSeconds'];
+      final sessionSeconds = sessionValue is num
+          ? sessionValue.toInt()
+          : int.tryParse('$sessionValue');
+      if (sessionSeconds != null && sessionSeconds > 0) {
+        return Duration(seconds: sessionSeconds.clamp(2, 60).toInt());
+      }
+
+      // Older sessions can predate the per-template snapshot columns. Keep
+      // the global setting only as a compatibility fallback for those rows.
       final settings = await HrmsTrackingApi.trackingSettings();
-      final seconds =
-          int.tryParse('${settings['popup_alert_repeat_seconds'] ?? 5}') ?? 5;
-      return Duration(seconds: seconds.clamp(1, 30).toInt());
+      final value =
+          settings['popup_alert_repeat_seconds'] ??
+          settings['popupAlertRepeatSeconds'];
+      final seconds = value is num ? value.toInt() : int.tryParse('$value');
+      return Duration(seconds: (seconds ?? 5).clamp(2, 60).toInt());
     } catch (_) {
       return const Duration(seconds: 5);
     }

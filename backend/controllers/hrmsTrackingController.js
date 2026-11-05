@@ -104,6 +104,20 @@ async function archiveTrackingTemplate(req, res) {
   try {
     const id = Number(req.params.id); const [rows] = await db.query('SELECT * FROM hrms_tracking_templates WHERE id=?', [id]);
     if (!rows.length) return fail(res, 404, 'Tracking template not found');
+    const [assigned] = await db.query(
+      `SELECT COUNT(*) AS count
+       FROM hrms_employee_profiles
+       WHERE tracking_template_id = ?
+         AND work_mode IN ('Field', 'Hybrid')`,
+      [id]
+    );
+    if (Number(assigned[0].count) > 0) {
+      return fail(
+        res,
+        409,
+        'This template is assigned to Field or Hybrid employees. Reassign them before archiving it.'
+      );
+    }
     await db.query('UPDATE hrms_tracking_templates SET is_active=0,updated_by=? WHERE id=?', [req.user.id,id]);
     await db.query('INSERT INTO hrms_tracking_template_audit (action_type,admin_id,template_id,old_values,new_values) VALUES (?,?,?,?,?)', ['archive',req.user.id,id,JSON.stringify(rows[0]),JSON.stringify({is_active:0})]);
     return ok(res, { id }, 'Tracking template archived');

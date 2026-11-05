@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 import '../../shared/theme/admin_surface_palette.dart';
 
+import '../../../services/hrms_attendance_time_api.dart';
 import '../../../services/hrms_payroll_api.dart';
+import '../../../services/payslip_download.dart';
 import '../../shared/widgets/admin_top_nav.dart';
 
 abstract final class _PayrollColors {
@@ -659,6 +663,7 @@ class _DeductionHistoryDialogState extends State<_DeductionHistoryDialog> {
   late int selectedYear, selectedMonth;
   late Future<Map<String, dynamic>> history;
   late Future<List<Map<String, dynamic>>> summaries;
+  late Future<Map<String, dynamic>> timeSettings;
   bool showMonthlySummary = false;
 
   @override
@@ -668,6 +673,7 @@ class _DeductionHistoryDialogState extends State<_DeductionHistoryDialog> {
     selectedMonth = widget.initialMonth;
     history = _load();
     summaries = HrmsPayrollApi.payrollHistory(profileId: widget.profileId);
+    timeSettings = HrmsAttendanceTimeApi.load();
   }
 
   Future<Map<String, dynamic>> _load() => HrmsPayrollApi.deductionHistory(
@@ -688,9 +694,357 @@ class _DeductionHistoryDialogState extends State<_DeductionHistoryDialog> {
   }
 
   String _duration(dynamic value) {
-    final minutes = int.tryParse('$value') ?? 0;
+    final minutes = value is num ? value.toInt() : int.tryParse('$value') ?? 0;
+    if (minutes <= 0) return '—';
     return '${minutes ~/ 60}h ${minutes % 60}m';
   }
+
+  String _monthLabel(int year, int month) {
+    const names = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+    return '${names[month.clamp(1, 12).toInt() - 1]} $year';
+  }
+
+  String _presentAmount(Map<String, dynamic> item) {
+    final status = '${item['attendance_status'] ?? ''}'.toLowerCase();
+    if (status != 'present' && status != 'late') return '₹0';
+
+    final dailySalary = item['daily_salary'] is num
+        ? (item['daily_salary'] as num).toDouble()
+        : double.tryParse('${item['daily_salary']}') ?? 0;
+    final lateDeduction = status == 'late'
+        ? (item['amount'] is num
+              ? (item['amount'] as num).toDouble()
+              : double.tryParse('${item['amount']}') ?? 0)
+        : 0.0;
+    final payable = dailySalary - lateDeduction;
+    return '₹${(payable < 0 ? 0 : payable).toStringAsFixed(2)}';
+  }
+
+  String _money(dynamic value) {
+    final amount = value is num ? value : num.tryParse('$value');
+    return amount == null || amount <= 0 ? 'Not Set' : '₹${amount.round()}';
+  }
+
+  String _timeRange(Map<String, dynamic> overview) {
+    int? minutes(dynamic value) {
+      final match = RegExp(r'^(\d{2}):(\d{2})').firstMatch('$value');
+      if (match == null) return null;
+      return (int.tryParse(match.group(1)!) ?? 0) * 60 +
+          (int.tryParse(match.group(2)!) ?? 0);
+    }
+
+    String display(dynamic value) {
+      final match = RegExp(r'^(\d{2}):(\d{2})').firstMatch('$value');
+      if (match == null) return '—';
+      final hour = int.tryParse(match.group(1)!) ?? 0;
+      final minute = match.group(2)!;
+      return '${((hour + 11) % 12 + 1).toString().padLeft(2, '0')}:$minute ${hour >= 12 ? 'PM' : 'AM'}';
+    }
+
+    final configuredMinutes = overview['shiftMinutes'];
+    var totalMinutes = configuredMinutes is num
+        ? configuredMinutes.toInt()
+        : int.tryParse('$configuredMinutes');
+    if (totalMinutes == null) {
+      final start = minutes(overview['shiftStart']);
+      final end = minutes(overview['shiftEnd']);
+      if (start != null && end != null) {
+        totalMinutes = end - start;
+        if (totalMinutes <= 0) totalMinutes += 24 * 60;
+      }
+    }
+    final duration = totalMinutes == null
+        ? ''
+        : totalMinutes % 60 == 0
+        ? ' (${totalMinutes ~/ 60}h)'
+        : ' (${totalMinutes ~/ 60}h ${totalMinutes % 60}m)';
+    return '${display(overview['shiftStart'])} – ${display(overview['shiftEnd'])}$duration';
+  }
+
+  Widget _overviewChip(String label, String value) => Container(
+    constraints: const BoxConstraints(minWidth: 104),
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+    decoration: BoxDecoration(
+      color: const Color(0xFFF7F9FD),
+      border: Border.all(color: const Color(0xFFDCE5F2)),
+      borderRadius: BorderRadius.circular(9),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(fontSize: 10, color: Color(0xFF657087)),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 12,
+            color: _PayrollColors.navy,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
+    ),
+  );
+
+  String _pdfMoney(dynamic value) {
+    final amount = value is num ? value : num.tryParse('$value');
+    return 'Rs. ${(amount ?? 0).toStringAsFixed(2)}';
+  }
+
+  Future<void> _exportPdf(Map<String, dynamic> data) async {
+    Map<String, dynamic> managedTime = const <String, dynamic>{};
+    try {
+      managedTime = await timeSettings;
+    } catch (_) {
+      // The payroll report remains exportable when the optional time settings
+      // request is unavailable; the backend overview is used when present.
+    }
+    final overview = data['overview'] is Map
+        ? Map<String, dynamic>.from(data['overview'] as Map)
+        : const <String, dynamic>{};
+    final summary = data['summary'] is Map
+        ? Map<String, dynamic>.from(data['summary'] as Map)
+        : const <String, dynamic>{};
+    final displayOverview = <String, dynamic>{
+      ...managedTime,
+      ...summary,
+      ...overview,
+      'monthlySalary': overview['monthlySalary'] ?? summary['salary'],
+      'workingDays': overview['workingDays'] ?? summary['workingDays'],
+    };
+    final items = (data['items'] as List? ?? [])
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+    final months = showMonthlySummary
+        ? await summaries
+        : const <Map<String, dynamic>>[];
+    final isMonthly = showMonthlySummary;
+
+    if ((isMonthly && months.isEmpty) || (!isMonthly && items.isEmpty)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No payroll data is available to export.')),
+        );
+      }
+      return;
+    }
+
+    final headers = isMonthly
+        ? <String>[
+            'Month',
+            'Salary',
+            'Working',
+            'Paid',
+            'LOP',
+            'Late deduction',
+            'Absent/LOP deduction',
+            'Total deduction',
+            'Net pay',
+            'Status',
+          ]
+        : <String>[
+            'Date',
+            'Salary',
+            'Check in',
+            'Check out',
+            'Status',
+            'Late deduction time',
+            'Late deduction',
+            'Absent amount',
+            'Total deduction',
+            'Present amount',
+            'Updated salary',
+          ];
+    final tableRows = isMonthly
+        ? months
+              .map(
+                (row) => <String>[
+                  '${row['label'] ?? '—'}',
+                  _pdfMoney(row['salary']),
+                  '${row['workingDays'] ?? 0}',
+                  '${row['paidDays'] ?? 0}',
+                  '${row['lopDays'] ?? 0}',
+                  _pdfMoney(row['lateDeduction']),
+                  _pdfMoney(row['absentDeduction']),
+                  _pdfMoney(row['totalDeduction']),
+                  _pdfMoney(row['netPay']),
+                  '${row['status'] ?? '—'}',
+                ],
+              )
+              .toList()
+        : items
+              .map(
+                (item) => <String>[
+                  '${item['attendance_date'] ?? '—'}',
+                  _pdfMoney(item['daily_salary']),
+                  _clock(item['check_in_at']),
+                  _clock(item['check_out_at']),
+                  '${item['attendance_status'] ?? 'Absent'}',
+                  _duration(item['late_minutes']),
+                  item['deduction_type'] == 'late'
+                      ? _pdfMoney(item['amount'])
+                      : 'Rs. 0.00',
+                  item['deduction_type'] == 'absent'
+                      ? _pdfMoney(item['amount'])
+                      : 'Rs. 0.00',
+                  _pdfMoney(item['amount']),
+                  _presentAmount(item).replaceFirst('₹', 'Rs. '),
+                  _pdfMoney(item['updated_salary']),
+                ],
+              )
+              .toList();
+
+    final reportKind = isMonthly ? 'Month-wise summary' : 'Day-wise details';
+    final safeEmployeeName = widget.employeeName
+        .replaceAll(RegExp(r'[^A-Za-z0-9]+'), '-')
+        .replaceAll(RegExp(r'^-+|-+$'), '');
+    final document = pw.Document();
+    document.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a3.landscape,
+        margin: const pw.EdgeInsets.fromLTRB(24, 24, 24, 28),
+        header: (context) => pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text(
+                  '${widget.employeeName} - Payroll history',
+                  style: pw.TextStyle(
+                    fontSize: 18,
+                    fontWeight: pw.FontWeight.bold,
+                    color: PdfColor.fromInt(0xFF081B3C),
+                  ),
+                ),
+                pw.Text(
+                  reportKind,
+                  style: const pw.TextStyle(
+                    fontSize: 10,
+                    color: PdfColors.grey700,
+                  ),
+                ),
+              ],
+            ),
+            pw.SizedBox(height: 4),
+            pw.Text(
+              'Payroll month: ${_monthLabel(selectedYear, selectedMonth)}',
+              style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700),
+            ),
+            pw.SizedBox(height: 10),
+            pw.Row(
+              children: [
+                _pdfSummaryCard('Total salary', _pdfMoney(displayOverview['monthlySalary'])),
+                pw.SizedBox(width: 8),
+                _pdfSummaryCard('Company hours', _timeRange(displayOverview)),
+                pw.SizedBox(width: 8),
+                _pdfSummaryCard(
+                  'Working days',
+                  displayOverview['workingDays'] == null
+                      ? '—'
+                      : '${displayOverview['workingDays']}',
+                ),
+              ],
+            ),
+            pw.SizedBox(height: 12),
+            pw.Container(height: 1, color: PdfColor.fromInt(0xFFD7E0EE)),
+            pw.SizedBox(height: 10),
+          ],
+        ),
+        footer: (context) => pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text(
+              'A1 Blowers - Payroll record',
+              style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600),
+            ),
+            pw.Text(
+              'Page ${context.pageNumber} of ${context.pagesCount}',
+              style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600),
+            ),
+          ],
+        ),
+        build: (context) => [
+          pw.TableHelper.fromTextArray(
+            headers: headers,
+            data: tableRows,
+            headerDecoration: const pw.BoxDecoration(
+              color: PdfColor.fromInt(0xFF1769E0),
+            ),
+            headerStyle: pw.TextStyle(
+              color: PdfColors.white,
+              fontSize: 7,
+              fontWeight: pw.FontWeight.bold,
+            ),
+            cellStyle: const pw.TextStyle(fontSize: 7, color: PdfColors.blue900),
+            cellPadding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+            border: pw.TableBorder.all(
+              color: PdfColor.fromInt(0xFFD8E1F1),
+              width: .5,
+            ),
+            oddRowDecoration: const pw.BoxDecoration(
+              color: PdfColor.fromInt(0xFFF5F8FD),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    try {
+      await downloadPayslipPdf(
+        await document.save(),
+        '${safeEmployeeName.isEmpty ? 'employee' : safeEmployeeName}-payroll-${isMonthly ? 'monthwise' : 'daywise'}-${selectedYear.toString().padLeft(4, '0')}-${selectedMonth.toString().padLeft(2, '0')}.pdf',
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Unable to export payroll PDF. Please try again.')),
+        );
+      }
+    }
+  }
+
+  pw.Widget _pdfSummaryCard(String label, String value) => pw.Container(
+    padding: const pw.EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+    decoration: pw.BoxDecoration(
+      color: PdfColor.fromInt(0xFFF7F9FD),
+      border: pw.Border.all(color: PdfColor.fromInt(0xFFDCE5F2)),
+      borderRadius: pw.BorderRadius.circular(6),
+    ),
+    child: pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Text(label, style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
+        pw.SizedBox(height: 2),
+        pw.Text(
+          value,
+          style: pw.TextStyle(
+            fontSize: 9,
+            fontWeight: pw.FontWeight.bold,
+            color: PdfColor.fromInt(0xFF081B3C),
+          ),
+        ),
+      ],
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -708,27 +1062,128 @@ class _DeductionHistoryDialogState extends State<_DeductionHistoryDialog> {
       ),
     );
     return AlertDialog(
-      title: Text('${widget.employeeName} — Payroll history'),
+      title: FutureBuilder<Map<String, dynamic>>(
+        future: history,
+        builder: (context, snapshot) {
+          final overview = snapshot.data?['overview'] is Map
+              ? Map<String, dynamic>.from(snapshot.data!['overview'] as Map)
+              : const <String, dynamic>{};
+          final summary = snapshot.data?['summary'] is Map
+              ? Map<String, dynamic>.from(snapshot.data!['summary'] as Map)
+              : const <String, dynamic>{};
+          return FutureBuilder<Map<String, dynamic>>(
+            future: timeSettings,
+            builder: (context, timeSnapshot) {
+              final managedTime =
+                  timeSnapshot.data ?? const <String, dynamic>{};
+              final displayOverview = <String, dynamic>{
+                ...managedTime,
+                ...summary,
+                ...overview,
+                'monthlySalary': overview['monthlySalary'] ?? summary['salary'],
+                'workingDays':
+                    overview['workingDays'] ?? summary['workingDays'],
+              };
+              return Wrap(
+                spacing: 14,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text('${widget.employeeName} — Payroll history'),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    alignment: WrapAlignment.end,
+                    children: [
+                      _overviewChip(
+                        'Total salary',
+                        _money(displayOverview['monthlySalary']),
+                      ),
+                      _overviewChip(
+                        'Company hours',
+                        _timeRange(displayOverview),
+                      ),
+                      _overviewChip(
+                        'Working days',
+                        displayOverview['workingDays'] == null
+                            ? '—'
+                            : '${displayOverview['workingDays']}',
+                      ),
+                    ],
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      ),
       content: SizedBox(
         width: MediaQuery.sizeOf(context).width * .88,
         height: MediaQuery.sizeOf(context).height * .72,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(children: [
-              Expanded(child: DropdownButtonFormField<String>(
-                initialValue: selectedKey, isExpanded: true,
-                decoration: const InputDecoration(labelText: 'Payroll month'),
-                items: options.values.map((option) => DropdownMenuItem(value: option.key, child: Text(option.label))).toList(),
-                onChanged: (key) { if (key == null) return; final option = options[key]!; setState(() { selectedYear = option.year; selectedMonth = option.month; history = _load(); showMonthlySummary = false; }); },
-              )),
-              const SizedBox(width: 12),
-              OutlinedButton.icon(
-                onPressed: () => setState(() => showMonthlySummary = !showMonthlySummary),
-                icon: const Icon(Icons.calendar_month_outlined, size: 17),
-                label: Text(showMonthlySummary ? 'Day-wise details' : 'Month-wise summary'),
-              ),
-            ]),
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: selectedKey,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Payroll month',
+                    ),
+                    items: options.values
+                        .map(
+                          (option) => DropdownMenuItem(
+                            value: option.key,
+                            child: Text(option.label),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (key) {
+                      if (key == null) return;
+                      final option = options[key]!;
+                      setState(() {
+                        selectedYear = option.year;
+                        selectedMonth = option.month;
+                        history = _load();
+                        showMonthlySummary = false;
+                      });
+                    },
+                  ),
+                ),
+                const SizedBox(width: 12),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    try {
+                      await _exportPdf(await history);
+                    } catch (_) {
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Unable to export payroll PDF. Please try again.',
+                          ),
+                        ),
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.picture_as_pdf_outlined, size: 17),
+                  label: const Text('Export PDF'),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: () =>
+                      setState(() => showMonthlySummary = !showMonthlySummary),
+                  icon: const Icon(Icons.calendar_month_outlined, size: 17),
+                  label: Text(
+                    showMonthlySummary
+                        ? 'Day-wise details'
+                        : 'Month-wise summary',
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 12),
             Expanded(
               child: FutureBuilder<Map<String, dynamic>>(
@@ -764,40 +1219,106 @@ class _DeductionHistoryDialogState extends State<_DeductionHistoryDialog> {
                           child: FutureBuilder<List<Map<String, dynamic>>>(
                             future: summaries,
                             builder: (context, summarySnapshot) {
-                              if (summarySnapshot.connectionState != ConnectionState.done) {
-                                return const Center(child: CircularProgressIndicator());
+                              if (summarySnapshot.connectionState !=
+                                  ConnectionState.done) {
+                                return const Center(
+                                  child: CircularProgressIndicator(),
+                                );
                               }
                               if (summarySnapshot.hasError) {
-                                return Center(child: Text('Unable to load payroll history: ${summarySnapshot.error}'));
+                                return Center(
+                                  child: Text(
+                                    'Unable to load payroll history: ${summarySnapshot.error}',
+                                  ),
+                                );
                               }
-                              final rows = summarySnapshot.data ?? const <Map<String, dynamic>>[];
-                              if (rows.isEmpty) return const Center(child: Text('No payroll history found.'));
+                              final rows =
+                                  summarySnapshot.data ??
+                                  const <Map<String, dynamic>>[];
+                              if (rows.isEmpty)
+                                return const Center(
+                                  child: Text('No payroll history found.'),
+                                );
                               return SingleChildScrollView(
                                 child: SingleChildScrollView(
                                   scrollDirection: Axis.horizontal,
                                   child: DataTable(
                                     columns: const [
-                                      DataColumn(label: Text('Month')), DataColumn(label: Text('Salary')),
-                                      DataColumn(label: Text('Working')), DataColumn(label: Text('Paid')),
-                                      DataColumn(label: Text('LOP')), DataColumn(label: Text('Late deduction')),
-                                      DataColumn(label: Text('Absent/LOP deduction')), DataColumn(label: Text('Total deduction')),
-                                      DataColumn(label: Text('Net pay')), DataColumn(label: Text('Status')),
+                                      DataColumn(label: Text('Month')),
+                                      DataColumn(label: Text('Salary')),
+                                      DataColumn(label: Text('Working')),
+                                      DataColumn(label: Text('Paid')),
+                                      DataColumn(label: Text('LOP')),
+                                      DataColumn(label: Text('Late deduction')),
+                                      DataColumn(
+                                        label: Text('Absent/LOP deduction'),
+                                      ),
+                                      DataColumn(
+                                        label: Text('Total deduction'),
+                                      ),
+                                      DataColumn(label: Text('Net pay')),
+                                      DataColumn(label: Text('Status')),
                                     ],
-                                    rows: rows.map((row) => DataRow(
-                                      onSelectChanged: (_) {
-                                        final y = int.tryParse('${row['year']}');
-                                        final m = int.tryParse('${row['month']}');
-                                        if (y == null || m == null) return;
-                                        setState(() { selectedYear = y; selectedMonth = m; history = _load(); showMonthlySummary = false; });
-                                      },
-                                      cells: [
-                                        DataCell(Text('${row['label']}')), DataCell(Text('₹${row['salary'] ?? 0}')),
-                                        DataCell(Text('${row['workingDays'] ?? 0}')), DataCell(Text('${row['paidDays'] ?? 0}')),
-                                        DataCell(Text('${row['lopDays'] ?? 0}')), DataCell(Text('₹${row['lateDeduction'] ?? 0}')),
-                                        DataCell(Text('₹${row['absentDeduction'] ?? 0}')), DataCell(Text('₹${row['totalDeduction'] ?? 0}')),
-                                        DataCell(Text('₹${row['netPay'] ?? 0}')), DataCell(Text('${row['status'] ?? '—'}')),
-                                      ],
-                                    )).toList(),
+                                    rows: rows
+                                        .map(
+                                          (row) => DataRow(
+                                            onSelectChanged: (_) {
+                                              final y = int.tryParse(
+                                                '${row['year']}',
+                                              );
+                                              final m = int.tryParse(
+                                                '${row['month']}',
+                                              );
+                                              if (y == null || m == null)
+                                                return;
+                                              setState(() {
+                                                selectedYear = y;
+                                                selectedMonth = m;
+                                                history = _load();
+                                                showMonthlySummary = false;
+                                              });
+                                            },
+                                            cells: [
+                                              DataCell(Text('${row['label']}')),
+                                              DataCell(
+                                                Text('₹${row['salary'] ?? 0}'),
+                                              ),
+                                              DataCell(
+                                                Text(
+                                                  '${row['workingDays'] ?? 0}',
+                                                ),
+                                              ),
+                                              DataCell(
+                                                Text('${row['paidDays'] ?? 0}'),
+                                              ),
+                                              DataCell(
+                                                Text('${row['lopDays'] ?? 0}'),
+                                              ),
+                                              DataCell(
+                                                Text(
+                                                  '₹${row['lateDeduction'] ?? 0}',
+                                                ),
+                                              ),
+                                              DataCell(
+                                                Text(
+                                                  '₹${row['absentDeduction'] ?? 0}',
+                                                ),
+                                              ),
+                                              DataCell(
+                                                Text(
+                                                  '₹${row['totalDeduction'] ?? 0}',
+                                                ),
+                                              ),
+                                              DataCell(
+                                                Text('₹${row['netPay'] ?? 0}'),
+                                              ),
+                                              DataCell(
+                                                Text('${row['status'] ?? '—'}'),
+                                              ),
+                                            ],
+                                          ),
+                                        )
+                                        .toList(),
                                   ),
                                 ),
                               );
@@ -807,9 +1328,7 @@ class _DeductionHistoryDialogState extends State<_DeductionHistoryDialog> {
                       if (showMonthlySummary)
                         const SizedBox.shrink()
                       else if (items.isEmpty)
-                        const Text(
-                          'No payroll details for this month.',
-                        )
+                        const Text('No payroll details for this month.')
                       else
                         Expanded(
                           child: SingleChildScrollView(
@@ -819,13 +1338,18 @@ class _DeductionHistoryDialogState extends State<_DeductionHistoryDialog> {
                                 columns: const [
                                   DataColumn(label: Text('Date')),
                                   DataColumn(label: Text('Salary')),
-                                  DataColumn(label: Text('Working')),
                                   DataColumn(label: Text('Check in')),
                                   DataColumn(label: Text('Check out')),
                                   DataColumn(label: Text('Status')),
+                                  DataColumn(
+                                    label: Text('Late deduction time'),
+                                  ),
                                   DataColumn(label: Text('Late deduction')),
-                                  DataColumn(label: Text('Absent/LOP deduction')),
+                                  DataColumn(
+                                    label: Text('Absent amount'),
+                                  ),
                                   DataColumn(label: Text('Total deduction')),
+                                  DataColumn(label: Text('Present amount')),
                                   DataColumn(label: Text('Updated salary')),
                                 ],
                                 rows: items
@@ -835,18 +1359,48 @@ class _DeductionHistoryDialogState extends State<_DeductionHistoryDialog> {
                                           DataCell(
                                             Text('${item['attendance_date']}'),
                                           ),
-                                          DataCell(Text('₹${item['daily_salary'] ?? 0}')),
-                                          DataCell(Text(item['attendance_status']?.toString() == 'Present' ? '1' : '0')),
+                                          DataCell(
+                                            Text(
+                                              '₹${item['daily_salary'] ?? 0}',
+                                            ),
+                                          ),
                                           DataCell(
                                             Text(_clock(item['check_in_at'])),
                                           ),
                                           DataCell(
                                             Text(_clock(item['check_out_at'])),
                                           ),
-                                          DataCell(Text(item['attendance_status'] ?? 'Absent')),
-                                          DataCell(Text(item['deduction_type'] == 'late' ? '₹${item['amount'] ?? 0}' : '₹0')),
-                                          DataCell(Text(item['deduction_type'] == 'absent' ? '₹${item['amount'] ?? 0}' : '₹0')),
-                                          DataCell(Text('₹${item['amount'] ?? 0}')),
+                                          DataCell(
+                                            Text(
+                                              item['attendance_status'] ??
+                                                  'Absent',
+                                            ),
+                                          ),
+                                          DataCell(
+                                            Text(
+                                              _duration(item['late_minutes']),
+                                            ),
+                                          ),
+                                          DataCell(
+                                            Text(
+                                              item['deduction_type'] == 'late'
+                                                  ? '₹${item['amount'] ?? 0}'
+                                                  : '₹0',
+                                            ),
+                                          ),
+                                          DataCell(
+                                            Text(
+                                              item['deduction_type'] == 'absent'
+                                                  ? '₹${item['amount'] ?? 0}'
+                                                  : '₹0',
+                                            ),
+                                          ),
+                                          DataCell(
+                                            Text('₹${item['amount'] ?? 0}'),
+                                          ),
+                                          DataCell(
+                                            Text(_presentAmount(item)),
+                                          ),
                                           DataCell(
                                             Text(
                                               '₹${item['updated_salary'] ?? '0.00'}',
@@ -2070,7 +2624,7 @@ class _PayrollTable extends StatelessWidget {
 
 class _PayrollTableHeader extends StatelessWidget {
   const _PayrollTableHeader({required this.scale});
-  static const naturalWidth = 760.0;
+  static const naturalWidth = 920.0;
   final double scale;
   @override
   Widget build(BuildContext context) => Container(
@@ -2087,16 +2641,20 @@ class _PayrollTableHeader extends StatelessWidget {
           child: Text('Salary', style: _headStyle),
         ),
         _Cell(
+          width: 90 * scale,
+          child: Text('Per day salary', style: _headStyle),
+        ),
+        _Cell(
           width: 65 * scale,
           child: Text('Working', style: _headStyle),
         ),
         _Cell(
-          width: 70 * scale,
-          child: Text('Paid', style: _headStyle),
+          width: 90 * scale,
+          child: Text('Paid days', style: _headStyle),
         ),
         _Cell(
-          width: 50 * scale,
-          child: Text('LOP', style: _headStyle),
+          width: 100 * scale,
+          child: Text('Absent days', style: _headStyle),
         ),
         _Cell(
           width: 85 * scale,
@@ -2212,15 +2770,19 @@ class _PayrollTableRow extends StatelessWidget {
                   child: Text(row.salary, style: _cellStyle),
                 ),
                 _Cell(
+                  width: 90 * scale,
+                  child: Text(row.dailySalary, style: _cellStyle),
+                ),
+                _Cell(
                   width: 65 * scale,
                   child: Text('${row.workingDays}', style: _cellStyle),
                 ),
                 _Cell(
-                  width: 70 * scale,
+                  width: 90 * scale,
                   child: Text('${row.paidDays}', style: _cellStyle),
                 ),
                 _Cell(
-                  width: 50 * scale,
+                  width: 100 * scale,
                   child: Text('${row.lopDays}', style: _cellStyle),
                 ),
                 _Cell(
@@ -2355,6 +2917,7 @@ class _PayrollRow {
     required this.code,
     required this.department,
     required this.salary,
+    required this.dailySalary,
     required this.workingDays,
     required this.paidDays,
     required this.lopDays,
@@ -2374,6 +2937,7 @@ class _PayrollRow {
       code,
       department,
       salary,
+      dailySalary,
       lateDeduction,
       absentDeduction,
       totalDeduction,
@@ -2385,6 +2949,8 @@ class _PayrollRow {
   factory _PayrollRow.fromApi(Map<String, dynamic> json) {
     int asInt(dynamic value) =>
         value is int ? value : int.tryParse('$value') ?? 0;
+    num? asNumber(dynamic value) =>
+        value is num ? value : num.tryParse('$value');
     final rawId = json['id'];
     String money(dynamic value) {
       final amount = value is num ? value : num.tryParse('$value');
@@ -2394,6 +2960,17 @@ class _PayrollRow {
 
     final lateDeduction = json['lateDeductions'] ?? json['deductions'] ?? 0;
     final absentDeduction = json['absentDeductions'] ?? 0;
+    final workingDays = asInt(json['workingDays']);
+    final explicitDailySalary = asNumber(json['dailySalary']);
+    final monthlySalary = asNumber(json['monthlySalary']);
+    // An API deployed before the dailySalary field returns the monthly salary
+    // and working-day divisor already used by payroll. Keep the table useful
+    // during that rollout instead of showing a misleading unavailable value.
+    final dailySalary =
+        explicitDailySalary ??
+        (monthlySalary != null && monthlySalary > 0 && workingDays > 0
+            ? monthlySalary / workingDays
+            : null);
     final totalDeduction =
         (lateDeduction is num
             ? lateDeduction
@@ -2408,7 +2985,8 @@ class _PayrollRow {
       code: (json['employeeCode'] ?? '').toString(),
       department: (json['department'] ?? '').toString(),
       salary: (json['salary'] ?? 'Not Set').toString(),
-      workingDays: asInt(json['workingDays']),
+      dailySalary: money(dailySalary),
+      workingDays: workingDays,
       paidDays: asInt(json['paidDays']),
       lopDays: asInt(json['lopDays']),
       lateDeduction: money(lateDeduction),
