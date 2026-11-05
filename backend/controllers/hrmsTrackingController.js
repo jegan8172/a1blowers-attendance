@@ -651,6 +651,15 @@ async function setStatus(req, res) {
   }
 }
 
+async function saveLocationStatus(employeeUserId, status) {
+  await db.query(
+    `INSERT INTO hrms_employee_location_status (employee_user_id, status)
+     VALUES (?, ?)
+     ON DUPLICATE KEY UPDATE status = VALUES(status), updated_at = CURRENT_TIMESTAMP`,
+    [employeeUserId, status]
+  );
+}
+
 function distanceMeters(lat1, lng1, lat2, lng2) {
   const earthRadius = 6371000;
 
@@ -811,12 +820,17 @@ async function ping(req, res) {
       if (office) {
         await db.query(`UPDATE hrms_field_tracking_sessions SET session_mode='office_tracking', outside_fix_count=0, office_started_at=IF(session_mode='office_tracking',office_started_at,CURRENT_TIMESTAMP), last_mode_changed_at=IF(session_mode='office_tracking',last_mode_changed_at,CURRENT_TIMESTAMP) WHERE id=?`,[activeSession.id]);
         if (previousMode !== 'office_tracking') await db.query('INSERT INTO hrms_tracking_mode_audit (employee_user_id,field_session_id,previous_mode,new_mode,latitude,longitude,office_location_id,reason) VALUES (?,?,?,?,?,?,?,?)',[employeeUserId,activeSession.id,previousMode,'office_tracking',latitude,longitude,office.id,'Returned inside active office']);
+        await saveLocationStatus(employeeUserId, 'office');
       } else {
         const count = Number(activeSession.outside_fix_count || 0) + 1;
-        if (previousMode === 'office_tracking' && count >= 3) {
+        if (previousMode === 'office_tracking' && count >= 2) {
           await db.query(`UPDATE hrms_field_tracking_sessions SET session_mode='field_tracking', outside_fix_count=?, field_started_at=CURRENT_TIMESTAMP, last_mode_changed_at=CURRENT_TIMESTAMP WHERE id=?`,[count,activeSession.id]);
-          await db.query('INSERT INTO hrms_tracking_mode_audit (employee_user_id,field_session_id,previous_mode,new_mode,latitude,longitude,reason) VALUES (?,?,?,?,?,?,?)',[employeeUserId,activeSession.id,previousMode,'field_tracking',latitude,longitude,'Three consecutive outside-office fixes']);
-        } else await db.query('UPDATE hrms_field_tracking_sessions SET outside_fix_count=? WHERE id=?',[count,activeSession.id]);
+          await db.query('INSERT INTO hrms_tracking_mode_audit (employee_user_id,field_session_id,previous_mode,new_mode,latitude,longitude,reason) VALUES (?,?,?,?,?,?,?)',[employeeUserId,activeSession.id,previousMode,'field_tracking',latitude,longitude,'Two consecutive outside-office fixes']);
+          await saveLocationStatus(employeeUserId, 'field');
+        } else {
+          await db.query('UPDATE hrms_field_tracking_sessions SET outside_fix_count=? WHERE id=?',[count,activeSession.id]);
+          if (previousMode === 'field_tracking') await saveLocationStatus(employeeUserId, 'field');
+        }
       }
     }
     const [result] = await db.query(
@@ -847,21 +861,36 @@ async function ping(req, res) {
 async function liveOverview(req, res) {
   try {
     const [profiles] = await db.query(`
-      SELECT id, employee_user_id, full_name, employee_code
+      SELECT id, employee_user_id, full_name, employee_code, work_mode
       FROM hrms_employee_profiles
       WHERE employment_status <> 'Inactive'
     `);
     const userIds = profiles.map(function (row) { return row.employee_user_id; }).filter(Boolean);
 
-    const [statuses] = userIds.length
-      ? await db.query(
-          `SELECT employee_user_id, status FROM hrms_employee_location_status
-           WHERE employee_user_id IN (?)`,
-          [userIds]
-        )
-      : [[]];
-    const statusMap = new Map();
-    statuses.forEach(function (row) { statusMap.set(Number(row.employee_user_id), row.status); });
+    const [sessionResult, attendanceResult] = userIds.length
+      ? await Promise.all([
+          db.query(
+            `SELECT employee_user_id, session_mode
+             FROM hrms_field_tracking_sessions
+             WHERE employee_user_id IN (?) AND is_active = 1`,
+            [userIds]
+          ),
+          db.query(
+            `SELECT employee_id
+             FROM attendance_records
+             WHERE employee_id IN (?)
+               AND attendance_date = ?
+               AND check_in_at IS NOT NULL
+               AND check_out_at IS NULL`,
+            [userIds, policy.todayIstDate()]
+          ),
+        ])
+      : [[[]], [[]]];
+    const activeSessions = sessionResult[0];
+    const openAttendance = attendanceResult[0];
+    const sessionModeMap = new Map();
+    activeSessions.forEach(function (row) { sessionModeMap.set(Number(row.employee_user_id), row.session_mode); });
+    const activeAttendanceIds = new Set(openAttendance.map(function (row) { return Number(row.employee_id); }));
 
     const [latestPings] = userIds.length
       ? await db.query(
@@ -880,21 +909,26 @@ async function liveOverview(req, res) {
     const pingMap = new Map();
     latestPings.forEach(function (row) { pingMap.set(Number(row.employee_user_id), row); });
 
-    const now = Date.now();
     let activeNow = 0;
     const counts = { office: 0, home: 0, field: 0 };
 
     const items = profiles.map(function (profile) {
       const uid = profile.employee_user_id ? Number(profile.employee_user_id) : null;
-      const status = (uid && statusMap.get(uid)) || 'office';
+      const sessionMode = uid ? sessionModeMap.get(uid) : null;
+      const workMode = String(profile.work_mode || 'Office');
+      const status = sessionMode === 'office_tracking'
+        ? 'office'
+        : sessionMode === 'field_tracking'
+          ? 'field'
+          : workMode === 'Field'
+            ? 'field'
+            : workMode === 'Home'
+              ? 'home'
+              : 'office';
       const ping = uid ? pingMap.get(uid) : null;
       counts[status] = (counts[status] || 0) + 1;
 
-      let isActive = false;
-      if (ping && ping.recorded_at) {
-        const ageMinutes = (now - new Date(ping.recorded_at).getTime()) / 60000;
-        isActive = ageMinutes <= ACTIVE_WINDOW_MINUTES;
-      }
+      const isActive = uid != null && activeAttendanceIds.has(uid);
       if (isActive) activeNow += 1;
 
       return {
@@ -1728,13 +1762,9 @@ async function startFieldTracking(req, res) {
       [employeeUserId, latitude, longitude, accuracy]
     );
 
-    await db.query(
-      `INSERT INTO hrms_employee_location_status (employee_user_id, status)
-       VALUES (?, 'field')
-       ON DUPLICATE KEY UPDATE
-         status = 'field',
-         updated_at = CURRENT_TIMESTAMP`,
-      [employeeUserId]
+    await saveLocationStatus(
+      employeeUserId,
+      sessionMode === 'office_tracking' ? 'office' : 'field'
     );
 
     return ok(
@@ -1851,6 +1881,20 @@ async function stopFieldTracking(req, res) {
 async function getMyWaitingAlert(req, res) {
   try {
     const employeeUserId = req.user && req.user.id;
+
+    const [fieldSessions] = await db.query(
+      `SELECT id
+       FROM hrms_field_tracking_sessions
+       WHERE employee_user_id = ?
+         AND is_active = 1
+         AND session_mode = 'field_tracking'
+       ORDER BY started_at DESC
+       LIMIT 1`,
+      [employeeUserId]
+    );
+    // A pending alert is retained for audit, but must not interrupt an
+    // employee after their active session has returned to the office.
+    if (!fieldSessions.length) return ok(res, null);
 
     // The employee page polls this endpoint once per minute. Re-run the
     // stationary check here as a reliable fallback in case a browser or
