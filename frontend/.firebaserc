@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "a1-attendence"
+  },
+  "targets": {
+    "a1-attendence": {
+      "hosting": {
+        "corrected-site": [
+          "a1-attendance"
+        ]
+      }
+    }
+  }
+}

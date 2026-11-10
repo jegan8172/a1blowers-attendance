@@ -1,0 +1,6 @@
+# Files that must never be uploaded with the Cloud Run source deployment.
+.env
+node_modules/
+npm-debug.log
+.git/
+.gcloudignore

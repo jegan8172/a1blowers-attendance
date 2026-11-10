@@ -1,0 +1,20 @@
+{
+  "hosting": {
+    "target": "corrected-site",
+    "public": "build/web",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "/api/**",
+        "run": {
+          "serviceId": "attendance-api",
+          "region": "asia-south1"
+        }
+      }
+    ]
+  }
+}
