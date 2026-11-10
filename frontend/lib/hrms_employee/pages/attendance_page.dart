@@ -1,4 +1,5 @@
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
@@ -7,9 +8,17 @@ import 'package:provider/provider.dart';
 import '../../services/api_config.dart';
 import '../../services/auth_service.dart';
 import '../shared/employee_ui.dart';
+import '../../hrms_admin/features/dashboard/widgets/attendance_details_dialog.dart';
 
-class EmployeeAttendancePage extends StatelessWidget {
+class EmployeeAttendancePage extends StatefulWidget {
   const EmployeeAttendancePage({super.key});
+
+  @override
+  State<EmployeeAttendancePage> createState() => _EmployeeAttendancePageState();
+}
+
+class _EmployeeAttendancePageState extends State<EmployeeAttendancePage> {
+  final _attendanceKey = GlobalKey<_AttendanceViewState>();
 
   @override
   Widget build(BuildContext context) {
@@ -20,14 +29,23 @@ class EmployeeAttendancePage extends StatelessWidget {
       route: '/employee/attendance',
       title: 'Attendance Calendar',
       subtitle: 'Your attendance for $monthName',
-      desktop: const _AttendanceView(mobile: false),
+      desktopHeaderAction: FilledButton.icon(
+        onPressed: () => _attendanceKey.currentState?._requestCorrection(),
+        style: FilledButton.styleFrom(
+          backgroundColor: employeeBlue,
+          foregroundColor: Colors.white,
+        ),
+        icon: const Icon(Icons.edit_calendar_outlined),
+        label: const Text('Request Correction'),
+      ),
+      desktop: _AttendanceView(key: _attendanceKey, mobile: false),
       mobile: const _AttendanceView(mobile: true),
     );
   }
 }
 
 class _AttendanceView extends StatefulWidget {
-  const _AttendanceView({required this.mobile});
+  const _AttendanceView({super.key, required this.mobile});
   final bool mobile;
 
   @override
@@ -44,6 +62,7 @@ class _AttendanceViewState extends State<_AttendanceView> {
   int _lateCount = 0;
   int _workingDaysCount = 0;
   String? _token;
+  DateTime? _selectedDate;
 
   static const monthNames = [
     'January', 'February', 'March', 'April', 'May', 'June',
@@ -224,12 +243,317 @@ class _AttendanceViewState extends State<_AttendanceView> {
     return {'status': '', 'clock_in': null};
   }
 
+  Future<void> _requestCorrection() async {
+    final today = DateTime.now();
+    final lastDayOfMonth = DateTime(year, month + 1, 0).day;
+    DateTime date = _selectedDate ??
+        DateTime(year, month, today.day > lastDayOfMonth ? lastDayOfMonth : today.day);
+    final startOfToday = DateTime(today.year, today.month, today.day);
+    if (!date.isBefore(startOfToday)) {
+      date = startOfToday.subtract(const Duration(days: 1));
+    }
+    final reason = TextEditingController();
+    final checkIn = TextEditingController();
+    String type = 'incorrect_automatic_absence';
+    bool isSubmitting = false;
+    String? errorMessage;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          const borderColor = Color(0xFFD6E1F4);
+          const surfaceColor = Color(0xFFF6F8FC);
+          final fieldBorder = OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: borderColor),
+          );
+          final fieldDecoration = InputDecoration(
+            filled: true,
+            fillColor: surfaceColor,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+            enabledBorder: fieldBorder,
+            focusedBorder: fieldBorder.copyWith(
+              borderSide: const BorderSide(color: Color(0xFF0969F9)),
+            ),
+          );
+
+          return Dialog(
+            insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+            backgroundColor: Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(22),
+            ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 470),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(24, 26, 24, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.edit_calendar_outlined,
+                            color: Color(0xFF0969F9), size: 24),
+                        SizedBox(width: 10),
+                        Text('Request Correction',
+                            style: TextStyle(
+                                color: Color(0xFF0C1C49),
+                                fontSize: 22,
+                                fontWeight: FontWeight.w800)),
+                      ],
+                    ),
+                    const SizedBox(height: 30),
+                    InkWell(
+                      onTap: isSubmitting
+                          ? null
+                          : () async {
+                              final selected = await showDatePicker(
+                                context: dialogContext,
+                                initialDate: date,
+                                firstDate: DateTime(2020),
+                                lastDate: startOfToday.subtract(const Duration(days: 1)),
+                              );
+                              if (selected != null) {
+                                setDialogState(() {
+                                  date = selected;
+                                  errorMessage = null;
+                                });
+                              }
+                            },
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('Attendance date',
+                                    style: TextStyle(
+                                        color: Color(0xFF66789B), fontSize: 13)),
+                                const SizedBox(height: 3),
+                                Text(DateFormat('dd MMM yyyy').format(date),
+                                    style: const TextStyle(
+                                        color: Color(0xFF0C1C49),
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w700)),
+                              ],
+                            ),
+                          ),
+                          const Icon(Icons.calendar_today_outlined,
+                              color: Color(0xFF0969F9), size: 23),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 22),
+                    SizedBox(
+                      height: 48,
+                      child: DropdownButtonFormField<String>(
+                        value: type,
+                        isExpanded: true,
+                        icon: const Icon(Icons.arrow_drop_down,
+                            color: Color(0xFF62656A)),
+                        style: const TextStyle(
+                            color: Color(0xFF182238),
+                            fontSize: 17,
+                            fontWeight: FontWeight.w500),
+                        decoration: fieldDecoration,
+                        items: const [
+                          DropdownMenuItem(
+                              value: 'incorrect_automatic_absence',
+                              child: Text('Incorrect automatic absence')),
+                          DropdownMenuItem(
+                              value: 'missing_check_in',
+                              child: Text('Missing check-in')),
+                          DropdownMenuItem(
+                              value: 'missing_check_out',
+                              child: Text('Missing check-out')),
+                          DropdownMenuItem(value: 'other', child: Text('Other')),
+                        ],
+                        onChanged: isSubmitting
+                            ? null
+                            : (value) => setDialogState(() => type = value!),
+                      ),
+                    ),
+                    const SizedBox(height: 13),
+                    SizedBox(
+                      height: 56,
+                      child: TextField(
+                        controller: checkIn,
+                        enabled: !isSubmitting,
+                        keyboardType: TextInputType.datetime,
+                        style: const TextStyle(fontSize: 16),
+                        decoration: fieldDecoration.copyWith(
+                          hintText: 'Correct check-in time (HH:MM)',
+                          hintStyle: const TextStyle(
+                              color: Color(0xFF667089), fontSize: 16),
+                          suffixIcon: const Icon(Icons.schedule_outlined,
+                              color: Color(0xFF0969F9), size: 23),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 13),
+                    SizedBox(
+                      height: 70,
+                      child: TextField(
+                        controller: reason,
+                        enabled: !isSubmitting,
+                        maxLines: null,
+                        expands: true,
+                        textAlignVertical: TextAlignVertical.top,
+                        style: const TextStyle(fontSize: 16),
+                        decoration: fieldDecoration.copyWith(
+                          contentPadding: const EdgeInsets.fromLTRB(16, 13, 16, 10),
+                          hintText: 'Reason for this correction',
+                          hintStyle: const TextStyle(
+                              color: Color(0xFF182238), fontSize: 16),
+                        ),
+                      ),
+                    ),
+                    if (errorMessage != null) ...[
+                      const SizedBox(height: 10),
+                      Text(errorMessage!,
+                          style: const TextStyle(
+                              color: Color(0xFFC62828), fontSize: 13)),
+                    ],
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          TextButton(
+                            onPressed: isSubmitting
+                                ? null
+                                : () => Navigator.pop(dialogContext),
+                            style: TextButton.styleFrom(
+                              foregroundColor: const Color(0xFF667089),
+                              textStyle: const TextStyle(
+                                  fontSize: 15, fontWeight: FontWeight.w600),
+                            ),
+                            child: const Text('Cancel'),
+                          ),
+                          const SizedBox(width: 13),
+                          SizedBox(
+                            height: 36,
+                            child: FilledButton(
+                              onPressed: isSubmitting
+                                  ? null
+                                  : () async {
+                                      final trimmedReason = reason.text.trim();
+                                      final trimmedCheckIn = checkIn.text.trim();
+                                      final needsCheckIn = type == 'missing_check_in' ||
+                                          type == 'incorrect_check_in_time';
+                                      if (trimmedReason.length < 3) {
+                                        setDialogState(() => errorMessage =
+                                            'Enter a reason of at least 3 characters.');
+                                        return;
+                                      }
+                                      if (needsCheckIn &&
+                                          !RegExp(r'^\d{2}:\d{2}$')
+                                              .hasMatch(trimmedCheckIn)) {
+                                        setDialogState(() => errorMessage =
+                                            'Enter the corrected check-in time as HH:MM.');
+                                        return;
+                                      }
+
+                                      setDialogState(() {
+                                        isSubmitting = true;
+                                        errorMessage = null;
+                                      });
+                                      try {
+                                        final token = _token;
+                                        final response = await http
+                                            .post(
+                                              Uri.parse('${ApiConfig.baseUrl}/attendance/corrections'),
+                                              headers: {
+                                                'Content-Type': 'application/json',
+                                                'Accept': 'application/json',
+                                                if (token != null && token.isNotEmpty)
+                                                  'Authorization': 'Bearer $token',
+                                              },
+                                              body: jsonEncode({
+                                                'attendanceDate':
+                                                    DateFormat('yyyy-MM-dd').format(date),
+                                                'correctionType': type,
+                                                'correctedCheckIn': trimmedCheckIn,
+                                                'reason': trimmedReason,
+                                              }),
+                                            )
+                                            .timeout(const Duration(seconds: 15));
+                                        final body = jsonDecode(response.body);
+                                        final message = body is Map
+                                            ? body['message']?.toString()
+                                            : null;
+                                        if (response.statusCode >= 200 &&
+                                            response.statusCode < 300 &&
+                                            body is Map &&
+                                            body['success'] == true) {
+                                          if (!dialogContext.mounted) return;
+                                          Navigator.pop(dialogContext);
+                                          if (!mounted) return;
+                                          ScaffoldMessenger.of(this.context).showSnackBar(
+                                            SnackBar(content: Text(message ?? 'Correction request submitted.')),
+                                          );
+                                          _fetchMonthData();
+                                        } else {
+                                          if (dialogContext.mounted) {
+                                            setDialogState(() {
+                                              errorMessage = message ??
+                                                  'Unable to submit the correction request.';
+                                              isSubmitting = false;
+                                            });
+                                          }
+                                        }
+                                      } catch (_) {
+                                        if (dialogContext.mounted) {
+                                          setDialogState(() {
+                                            errorMessage =
+                                                'Unable to submit the correction request. Please retry.';
+                                            isSubmitting = false;
+                                          });
+                                        }
+                                      }
+                                    },
+                              style: FilledButton.styleFrom(
+                                backgroundColor: const Color(0xFF0969F9),
+                                padding: const EdgeInsets.symmetric(horizontal: 20),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12)),
+                                textStyle: const TextStyle(
+                                    fontSize: 13, fontWeight: FontWeight.w700),
+                              ),
+                              child: isSubmitting
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2, color: Colors.white),
+                                    )
+                                  : const Text('Submit'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+    reason.dispose();
+    checkIn.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final calendar = _CalendarCard(
       year: year,
       month: month,
       label: monthLabel,
+      onDayTap: (day) { final selected = DateTime(year, month, day); setState(() => _selectedDate = selected); final id = int.tryParse(context.read<AuthService>().userId ?? ''); if (id != null) showDialog<void>(context: context, builder: (_) => AttendanceDetailsDialog(employeeId: id, date: selected)); },
       mobile: widget.mobile,
       dataFor: dataFor,
       onPrevious: () => changeMonth(-1),
@@ -251,9 +575,8 @@ class _AttendanceViewState extends State<_AttendanceView> {
       ),
     ]);
 
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      if (_loading) const LinearProgressIndicator(),
-      if (widget.mobile) ...[
+    final content = widget.mobile
+        ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const MobileEmployeeHeader(showGreeting: false),
         const SizedBox(height: 24),
         const Text('Attendance Calendar',
@@ -268,8 +591,8 @@ class _AttendanceViewState extends State<_AttendanceView> {
         calendar,
         const SizedBox(height: 16),
         details,
-      ] else
-        LayoutBuilder(builder: (context, constraints) {
+      ])
+        : LayoutBuilder(builder: (context, constraints) {
           if (constraints.maxWidth < 980) {
             return Column(
                 children: [calendar, const SizedBox(height: 18), details]);
@@ -279,7 +602,31 @@ class _AttendanceViewState extends State<_AttendanceView> {
             const SizedBox(width: 20),
             Expanded(flex: 4, child: details),
           ]);
-        }),
+        });
+
+    if (widget.mobile) {
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        if (_loading) const LinearProgressIndicator(),
+        Align(
+          alignment: Alignment.centerRight,
+          child: FilledButton.icon(
+            onPressed: _requestCorrection,
+            style: FilledButton.styleFrom(
+              backgroundColor: employeeBlue,
+              foregroundColor: Colors.white,
+            ),
+            icon: const Icon(Icons.edit_calendar_outlined),
+            label: const Text('Request Correction'),
+          ),
+        ),
+        const SizedBox(height: 12),
+        content,
+      ]);
+    }
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      if (_loading) const LinearProgressIndicator(),
+      content,
     ]);
   }
 }
@@ -293,6 +640,7 @@ class _CalendarCard extends StatelessWidget {
     required this.dataFor,
     required this.onPrevious,
     required this.onNext,
+    required this.onDayTap,
   });
 
   final int year;
@@ -302,6 +650,7 @@ class _CalendarCard extends StatelessWidget {
   final Map<String, dynamic> Function(int day) dataFor;
   final VoidCallback onPrevious;
   final VoidCallback onNext;
+  final ValueChanged<int> onDayTap;
 
   @override
   Widget build(BuildContext context) => EmployeeCard(
@@ -325,7 +674,7 @@ class _CalendarCard extends StatelessWidget {
           const Divider(height: 1, color: employeeLine),
           const SizedBox(height: 8),
           _AttendanceCalendar(
-              year: year, month: month, mobile: mobile, dataFor: dataFor),
+              year: year, month: month, mobile: mobile, dataFor: dataFor, onDayTap: onDayTap),
           const SizedBox(height: 14),
           const Wrap(
               alignment: WrapAlignment.center,
@@ -349,12 +698,14 @@ class _AttendanceCalendar extends StatelessWidget {
     required this.month,
     required this.mobile,
     required this.dataFor,
+    required this.onDayTap,
   });
 
   final int year;
   final int month;
   final bool mobile;
   final Map<String, dynamic> Function(int day) dataFor;
+  final ValueChanged<int> onDayTap;
 
   @override
   Widget build(BuildContext context) {
@@ -372,6 +723,7 @@ class _AttendanceCalendar extends StatelessWidget {
           day: day,
           status: info['status']?.toString() ?? '',
           clockIn: info['clock_in']?.toString(),
+          onTap: () => onDayTap(day),
         );
       }),
       ...List.generate(trailing, (_) => const _EmptyCalendarDay()),
@@ -422,11 +774,13 @@ class _CalendarDay extends StatelessWidget {
     required this.day,
     required this.status,
     this.clockIn,
+    this.onTap,
   });
 
   final int day;
   final String status;
   final String? clockIn;
+  final VoidCallback? onTap;
 
   Color get color => switch (status) {
         'A' => const Color(0xFFF2212F),
@@ -455,7 +809,9 @@ class _CalendarDay extends StatelessWidget {
     final hasStatus = status.isNotEmpty;
     final timeStr = formattedTime;
 
-    return Container(
+    return InkWell(
+      onTap: onTap,
+      child: Container(
       decoration: BoxDecoration(
         color: status == 'OFF' ? const Color(0xFFF6F9FD) : Colors.white,
         border: Border.all(color: employeeLine, width: .7),
@@ -499,6 +855,7 @@ class _CalendarDay extends StatelessWidget {
             ),
           ],
         ],
+      ),
       ),
     );
   }
