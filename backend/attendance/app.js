@@ -5,6 +5,7 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const { createService } = require('./service');
 const attendanceController = require('../controllers/attendanceController');
+const leavePolicies = require('../controllers/leavePolicies');
 
 function createApp({ pool, jwtSecret, timeZone = 'Asia/Kolkata', clock = () => new Date(), basePath = '/api/attendance' }) {
   const app = express();
@@ -340,18 +341,49 @@ function createApp({ pool, jwtSecret, timeZone = 'Asia/Kolkata', clock = () => n
           active TINYINT(1) NOT NULL DEFAULT 1,
           UNIQUE KEY uniq_leave_policy_year (leave_type, effective_year))`);
         try { await pool.execute('ALTER TABLE hrms_leave_policies ADD COLUMN monthly_allowance DECIMAL(8,2) NOT NULL DEFAULT 0 AFTER annual_allowance'); } catch (_) {}
+        try { await pool.execute('ALTER TABLE hrms_leave_policies ADD COLUMN employee_card_visible TINYINT(1) NULL DEFAULT NULL AFTER active'); } catch (_) {}
+        try { await pool.execute("ALTER TABLE hrms_leave_policies ADD COLUMN employee_card_display_mode VARCHAR(32) NULL DEFAULT NULL AFTER employee_card_visible"); } catch (_) {}
+        try { await pool.execute("ALTER TABLE hrms_leave_policies ADD COLUMN payroll_mode VARCHAR(10) NULL DEFAULT NULL AFTER employee_card_display_mode"); } catch (_) {}
+        try { await pool.execute('ALTER TABLE hrms_leave_policies ADD COLUMN allow_half_day TINYINT(1) NULL DEFAULT NULL AFTER payroll_mode'); } catch (_) {}
+        await pool.execute(`UPDATE hrms_leave_policies
+          SET employee_card_visible = CASE WHEN leave_type IN ('Sick Leave', 'Earned Leave') THEN 1 ELSE 0 END
+          WHERE employee_card_visible IS NULL`);
+        await pool.execute(`UPDATE hrms_leave_policies
+          SET employee_card_display_mode = CASE WHEN leave_type = 'Sick Leave' THEN 'Usage only' ELSE 'Balance & usage' END
+          WHERE employee_card_display_mode IS NULL OR employee_card_display_mode = ''`);
+        await pool.execute(`UPDATE hrms_leave_policies
+          SET payroll_mode = CASE WHEN leave_type = 'Earned Leave' THEN 'paid' ELSE 'unpaid' END
+          WHERE payroll_mode IS NULL OR payroll_mode NOT IN ('paid', 'unpaid')`);
+        await pool.execute('UPDATE hrms_leave_policies SET allow_half_day = 1 WHERE allow_half_day IS NULL');
         const defaultLimits = [['Casual Leave', 12], ['Sick Leave', 8], ['Earned Leave', 12], ['Optional Holiday', 3]];
         for (const [type, limit] of defaultLimits) {
           await pool.execute('INSERT IGNORE INTO hrms_leave_policies (leave_type, annual_allowance, monthly_allowance, effective_year, active) VALUES (?, ?, 0, ?, 1)', [type, limit, year]);
         }
-        const [policyRows] = await pool.execute('SELECT leave_type, annual_allowance, monthly_allowance FROM hrms_leave_policies WHERE effective_year = ? AND active = 1 AND annual_allowance > 0', [year]);
+        await pool.execute(`UPDATE hrms_leave_policies
+          SET employee_card_visible = CASE WHEN leave_type IN ('Sick Leave', 'Earned Leave') THEN 1 ELSE 0 END
+          WHERE employee_card_visible IS NULL`);
+        await pool.execute(`UPDATE hrms_leave_policies
+          SET employee_card_display_mode = CASE WHEN leave_type = 'Sick Leave' THEN 'Usage only' ELSE 'Balance & usage' END
+          WHERE employee_card_display_mode IS NULL OR employee_card_display_mode = ''`);
+        await pool.execute(`UPDATE hrms_leave_policies
+          SET payroll_mode = CASE WHEN leave_type = 'Earned Leave' THEN 'paid' ELSE 'unpaid' END
+          WHERE payroll_mode IS NULL OR payroll_mode NOT IN ('paid', 'unpaid')`);
+        await pool.execute('UPDATE hrms_leave_policies SET allow_half_day = 1 WHERE allow_half_day IS NULL');
+        // The employee-card switch controls visibility only.  Availability
+        // for a new request remains governed by active status and allowance.
+        const [policyRows] = await pool.execute(`SELECT leave_type, annual_allowance, monthly_allowance, active,
+          employee_card_display_mode, payroll_mode, allow_half_day FROM hrms_leave_policies
+          WHERE effective_year = ? AND employee_card_visible = 1`, [year]);
         const balances = policyRows.map((row) => ({
           type: row.leave_type,
           used: consumed[row.leave_type] || 0,
           total: Number(row.annual_allowance),
           monthlyUsed: monthlyConsumed[row.leave_type] || 0,
           monthlyTotal: Number(row.monthly_allowance || 0),
-          isPaidLeave: row.leave_type === 'Earned Leave',
+          isPaidLeave: row.payroll_mode === 'paid',
+          displayMode: row.employee_card_display_mode || 'Balance & usage',
+          allowsHalfDay: Number(row.allow_half_day) === 1,
+          canApply: Number(row.active) === 1 && Number(row.annual_allowance) > 0,
         }));
 
         res.json({
@@ -368,6 +400,7 @@ function createApp({ pool, jwtSecret, timeZone = 'Asia/Kolkata', clock = () => n
 
     app.post(`${prefix}/leave/apply`, authMiddleware, async (req, res, next) => {
       try {
+        await leavePolicies.ensure();
         const empId = req.employee.id;
         const { leave_type, duration_type, from_date, to_date, reason } = req.body;
         if (!leave_type || !from_date || !to_date) {
@@ -375,12 +408,15 @@ function createApp({ pool, jwtSecret, timeZone = 'Asia/Kolkata', clock = () => n
         }
         const requestYear = Number(String(from_date).slice(0, 4));
         const [policyRows] = await pool.execute(
-          'SELECT annual_allowance, monthly_allowance FROM hrms_leave_policies WHERE leave_type = ? AND effective_year = ? AND active = 1',
+          'SELECT annual_allowance, monthly_allowance, payroll_mode, allow_half_day FROM hrms_leave_policies WHERE leave_type = ? AND effective_year = ? AND active = 1',
           [leave_type, requestYear]
         );
         const leavePolicy = policyRows[0];
         if (!leavePolicy || Number(leavePolicy.annual_allowance) <= 0) {
           return res.status(409).json({ success: false, message: 'This leave type is not available.' });
+        }
+        if (duration_type === 'Half Day' && Number(leavePolicy.allow_half_day) !== 1) {
+          return res.status(409).json({ success: false, message: 'Half-day leave is not available for this leave type.' });
         }
         const d1 = new Date(from_date);
         const d2 = new Date(to_date);
@@ -402,9 +438,9 @@ function createApp({ pool, jwtSecret, timeZone = 'Asia/Kolkata', clock = () => n
         if (Number(leavePolicy.monthly_allowance || 0) > 0 && Number(usage.monthly_used || 0) + days > Number(leavePolicy.monthly_allowance)) {
           return res.status(409).json({ success: false, message: 'Monthly leave limit has been reached.' });
         }
-        // Earned Leave is the company's paid-leave type. All Salary Master
-        // allowance and eligibility rules apply only to this leave type.
-        if (leave_type === 'Earned Leave') {
+        // Paid-leave eligibility is controlled by the same leave policy that
+        // is displayed in the Admin card settings.
+        if (leavePolicy.payroll_mode === 'paid') {
           try {
             await validatePaidLeaveAllowance(empId, from_date, days, duration_type);
           } catch (error) {
@@ -414,9 +450,12 @@ function createApp({ pool, jwtSecret, timeZone = 'Asia/Kolkata', clock = () => n
 
         const [result] = await pool.execute(
           `INSERT INTO employee_leaves
-            (employee_id, leave_type, duration_type, from_date, to_date, days_count, reason, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
-          [empId, leave_type, duration_type || 'Full Day', from_date, to_date, days, reason || '']
+            (employee_id, leave_type, duration_type, policy_payroll_mode, policy_allow_half_day,
+             from_date, to_date, days_count, reason, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
+          [empId, leave_type, duration_type || 'Full Day', leavePolicy.payroll_mode,
+            Number(leavePolicy.allow_half_day) === 1 ? 1 : 0,
+            from_date, to_date, days, reason || '']
         );
         await ensureLeaveApprovalLinks();
         const adminReason = `${leave_type} · ${duration_type || 'Full Day'} · ${from_date} to ${to_date}\n${reason || ''}`.trim();

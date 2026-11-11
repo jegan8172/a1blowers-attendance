@@ -26,6 +26,8 @@ class _LeavePolicyDialogState extends State<LeavePolicyDialog> {
   final Map<String, TextEditingController> _allowance = {};
   final Map<String, bool> _visible = {};
   final Map<String, String> _displayModes = {};
+  final Map<String, bool> _paid = {};
+  final Map<String, bool> _halfDay = {};
 
   static const _order = [
     'Sick Leave',
@@ -36,13 +38,13 @@ class _LeavePolicyDialogState extends State<LeavePolicyDialog> {
 
   static const _types = {
     'Sick Leave': _LeaveType('SL', Icons.medical_services_outlined,
-        Color(0xFFFFEAED), Color(0xFFFF4B55), false, true, 'Usage only'),
+        Color(0xFFFFEAED), Color(0xFFFF4B55)),
     'Earned Leave': _LeaveType('EL', Icons.eco_outlined, Color(0xFFDFF7F3),
-        Color(0xFF00A887), true, true, 'Balance & usage'),
+        Color(0xFF00A887)),
     'Casual Leave': _LeaveType('CL', Icons.beach_access_outlined,
-        Color(0xFFE7EEFF), Color(0xFF1769FF), false, false, 'Balance & usage'),
+        Color(0xFFE7EEFF), Color(0xFF1769FF)),
     'Optional Holiday': _LeaveType('OH', Icons.calendar_month_outlined,
-        Color(0xFFF0E8FF), Color(0xFF834AFF), true, false, 'Balance & usage'),
+        Color(0xFFF0E8FF), Color(0xFF834AFF)),
   };
 
   @override
@@ -88,17 +90,20 @@ class _LeavePolicyDialogState extends State<LeavePolicyDialog> {
       _allowance.clear();
       _visible.clear();
       _displayModes.clear();
+      _paid.clear();
+      _halfDay.clear();
       _rows = data.map((item) => Map<String, dynamic>.from(item)).toList()
         ..sort((a, b) => _rowOrder(a).compareTo(_rowOrder(b)));
       for (final row in _rows) {
         final id = '${row['id']}';
-        final type = _typeFor(row);
         final annual = row['annual_allowance'];
         _allowance[id] = TextEditingController(
           text: annual is num ? annual.toStringAsFixed(2) : '$annual',
         );
-        _visible[id] = type.defaultVisible;
-        _displayModes[id] = type.displayMode;
+        _visible[id] = row['employee_card_visible'] == true || row['employee_card_visible'] == 1;
+        _displayModes[id] = row['employee_card_display_mode']?.toString() ?? 'Balance & usage';
+        _paid[id] = row['payroll_mode']?.toString() == 'paid';
+        _halfDay[id] = row['allow_half_day'] == true || row['allow_half_day'] == 1;
       }
     } catch (error) {
       _error = error.toString().replaceFirst('Exception: ', '');
@@ -139,6 +144,10 @@ class _LeavePolicyDialogState extends State<LeavePolicyDialog> {
                 'monthly_allowance': row['monthly_allowance'] ?? 0,
                 'carry_forward': row['carry_forward'] == 1 || row['carry_forward'] == true,
                 'active': row['active'] == 1 || row['active'] == true,
+                'employee_card_visible': _visible['${row['id']}'] == true,
+                'employee_card_display_mode': _displayModes['${row['id']}'],
+                'payroll_mode': _paid['${row['id']}'] == true ? 'paid' : 'unpaid',
+                'allow_half_day': _halfDay['${row['id']}'] == true,
               }),
             )
             .timeout(const Duration(seconds: 12)));
@@ -266,7 +275,7 @@ class _LeavePolicyDialogState extends State<LeavePolicyDialog> {
         Expanded(flex: 16, child: _allowanceField(id)),
         Expanded(flex: 18, child: Align(alignment: Alignment.center, child: _toggle(id, visible))),
         Expanded(flex: 21, child: _displayMode(id)),
-        Expanded(flex: 18, child: _chips(type, visible)),
+        Expanded(flex: 18, child: _chips(id, visible)),
       ]),
     );
   }
@@ -342,20 +351,30 @@ class _LeavePolicyDialogState extends State<LeavePolicyDialog> {
         focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(4), borderSide: const BorderSide(color: _blue)),
       );
 
-  Widget _chips(_LeaveType type, bool visible) => Column(
+  Widget _chips(String id, bool visible) => Column(
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _chip(type.paid ? '▣  Paid leave' : '⌁  Unpaid (LOP)',
-              type.paid ? const Color(0xFFD9F7E8) : const Color(0xFFFFE8E9),
-              type.paid ? const Color(0xFF00854A) : const Color(0xFFD92934)),
+          _policyChip(_paid[id] == true ? '▣  Paid leave' : '⌁  Unpaid (LOP)',
+              _paid[id] == true ? const Color(0xFFD9F7E8) : const Color(0xFFFFE8E9),
+              _paid[id] == true ? const Color(0xFF00854A) : const Color(0xFFD92934),
+              () => setState(() => _paid[id] = !(_paid[id] ?? false))),
           const SizedBox(height: 3),
-          _chip('◉  Half day on', const Color(0xFFEAF2FF), _blue),
+          _policyChip(_halfDay[id] == true ? '◉  Half day on' : '⊘  Half day off',
+              _halfDay[id] == true ? const Color(0xFFEAF2FF) : const Color(0xFFECF0F6),
+              _halfDay[id] == true ? _blue : _muted,
+              () => setState(() => _halfDay[id] = !(_halfDay[id] ?? false))),
           const SizedBox(height: 3),
           _chip(visible ? '◉  Visible' : '⌧  Hidden',
               visible ? const Color(0xFFD9F7E8) : const Color(0xFFECF0F6),
               visible ? const Color(0xFF00854A) : const Color(0xFF63729A)),
         ],
+      );
+
+  Widget _policyChip(String label, Color background, Color color, VoidCallback onTap) => InkWell(
+        onTap: _saving ? null : onTap,
+        borderRadius: BorderRadius.circular(5),
+        child: _chip(label, background, color),
       );
 
   Widget _chip(String label, Color background, Color color) => Container(
@@ -409,14 +428,10 @@ class _Label extends StatelessWidget {
 }
 
 class _LeaveType {
-  const _LeaveType(this.code, this.icon, this.background, this.color, this.paid,
-      this.defaultVisible, this.displayMode);
+  const _LeaveType(this.code, this.icon, this.background, this.color);
 
   final String code;
   final IconData icon;
   final Color background;
   final Color color;
-  final bool paid;
-  final bool defaultVisible;
-  final String displayMode;
 }

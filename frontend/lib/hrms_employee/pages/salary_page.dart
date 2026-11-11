@@ -64,8 +64,6 @@ class _SalaryView extends StatelessWidget {
         const SizedBox(height: 16),
         const _SalaryOverviewCard(),
         const SizedBox(height: 16),
-        const _SalaryBreakdownCard(),
-        const SizedBox(height: 16),
         const _RecentPayslipsCard(),
         const SizedBox(height: 18),
         const Center(
@@ -87,16 +85,9 @@ class _SalaryView extends StatelessWidget {
       ),
       const SizedBox(height: 14),
       Row(crossAxisAlignment: CrossAxisAlignment.start, children: const [
-          Expanded(flex: 6, child: _NetPayBanner(mobile: false)),
+          Expanded(child: _NetPayBanner(mobile: false)),
           SizedBox(width: 20),
-          Expanded(
-            flex: 5,
-            child: Column(children: [
-              _SalaryOverviewCard(),
-              SizedBox(height: 18),
-              _SalaryBreakdownCard(),
-            ]),
-          ),
+          Expanded(child: _SalaryOverviewCard()),
         ]),
       const SizedBox(height: 20),
       const _RecentPayslipsCard(),
@@ -133,6 +124,7 @@ class _ViewPayslipButton extends StatelessWidget {
 
 String _money(dynamic value) => '₹${(num.tryParse('$value') ?? 0).toStringAsFixed(0)}';
 Map<String, dynamic> _dataMap(dynamic value) => value is Map ? Map<String, dynamic>.from(value) : const {};
+double _amount(dynamic value) => num.tryParse('$value')?.toDouble() ?? 0;
 
 class _NetPayBanner extends StatefulWidget {
   const _NetPayBanner({required this.mobile});
@@ -146,6 +138,7 @@ class _NetPayBannerState extends State<_NetPayBanner> {
   Widget build(BuildContext context) => FutureBuilder<Map<String, dynamic>>(future: _data, builder: (context, snapshot) {
     final payroll = _dataMap(snapshot.data?['payroll']);
     final paid = payroll['status'] == 'paid';
+    final updatedSalary = _amount(payroll['net_pay'] ?? payroll['updated_salary'] ?? payroll['monthly_salary']);
     return Container(
         constraints: BoxConstraints(minHeight: widget.mobile ? 190 : 285),
         padding: EdgeInsets.all(widget.mobile ? 22 : 34),
@@ -170,14 +163,17 @@ class _NetPayBannerState extends State<_NetPayBanner> {
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Net Pay',
+                Text('Updated Salary',
                     style: TextStyle(
                         color: Colors.white, fontSize: widget.mobile ? 18 : 22)),
                 const SizedBox(height: 10),
                 if (payroll.isEmpty)
                   Text(snapshot.data?['reviewRequired'] == true ? 'Payroll under review' : 'Payroll not generated', style: TextStyle(color: Colors.white, fontSize: widget.mobile ? 22 : 28, fontWeight: FontWeight.w700))
                 else ...[
-                  Text(_money(payroll['net_pay'] ?? payroll['updated_salary'] ?? payroll['monthly_salary']), maxLines: 1, style: TextStyle(color: Colors.white, fontSize: widget.mobile ? 38 : 50, fontWeight: FontWeight.w800)),
+                  Text(_money(updatedSalary), maxLines: 1, style: TextStyle(color: Colors.white, fontSize: widget.mobile ? 38 : 50, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 8),
+                  Text('Earned to Date: ${_money(updatedSalary)}',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 8),
                   Text('${payroll['pay_month']}/${payroll['pay_year']}',
                     style: TextStyle(
@@ -197,7 +193,7 @@ class _NetPayBannerState extends State<_NetPayBanner> {
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
                     CircleAvatar(radius: 5, backgroundColor: paid ? const Color(0xFF1DDA83) : const Color(0xFFB7C6DF)),
                     const SizedBox(width: 8),
-                    Text(paid ? 'PAID' : 'PENDING', style: TextStyle(color: paid ? const Color(0xFF2DE38E) : const Color(0xFFD6E0EF), fontWeight: FontWeight.w700)),
+                    Text(paid ? 'PAID' : 'UPDATES DAILY', style: TextStyle(color: paid ? const Color(0xFF2DE38E) : const Color(0xFFD6E0EF), fontWeight: FontWeight.w700)),
                   ]),
                 ),
               ],
@@ -364,21 +360,55 @@ class _SalaryOverviewCardState extends State<_SalaryOverviewCard> {
   @override
   Widget build(BuildContext context) => FutureBuilder<Map<String, dynamic>>(future: _data, builder: (context, snapshot) {
     final payroll = _dataMap(snapshot.data?['payroll']);
+    final monthlySalary = _amount(payroll['monthly_salary']);
+    final workingDays = _amount(payroll['working_days']);
+    final paidDays = _amount(payroll['paid_days']);
+    final lateDeduction = _amount(payroll['late_deductions']);
+    final absenceDeduction = _amount(payroll['absent_deductions'] ?? payroll['deductions']);
+    final totalDeduction = lateDeduction + absenceDeduction;
+    final deductionDays = _amount(payroll['lop_days']);
+    final updatedSalary = _amount(payroll['net_pay'] ?? payroll['updated_salary'] ?? payroll['monthly_salary']);
     return SizedBox(width: double.infinity, child: EmployeeCard(
-        padding: EdgeInsets.all(16),
+        padding: const EdgeInsets.all(18),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const _SalaryHeading('Salary Overview'), const SizedBox(height: 10),
+          const _SalaryHeading('Salary Overview'), const SizedBox(height: 16),
           if (payroll.isEmpty) Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: Text(snapshot.data?['reviewRequired'] == true ? 'Admin needs to correct an existing payroll record before salary payment details can be shown.' : 'Payroll has not been generated for this employee.', style: const TextStyle(color: employeeMuted))) else ...[
-            LabeledValue('Gross Salary', _money(payroll['monthly_salary'])), const Divider(height: 1, color: employeeLine),
-            LabeledValue('Late Deduction', '−${_money(payroll['late_deductions'] ?? 0)}'), const Divider(height: 1, color: employeeLine),
-            LabeledValue('Absent / Leave Deduction', '−${_money(payroll['absent_deductions'] ?? payroll['deductions'])}'), const Divider(height: 1, color: employeeLine),
-            LabeledValue('Net Pay', _money(payroll['net_pay'] ?? payroll['updated_salary'] ?? payroll['monthly_salary']), valueColor: employeeBlue),
-            const SizedBox(height: 12),
+            Row(children: [
+              Expanded(child: _OverviewMetric(label: 'Salary / Month', value: _money(monthlySalary))),
+              const _OverviewDivider(),
+              Expanded(child: _OverviewMetric(label: 'Deduction', value: totalDeduction > 0 ? '−${_money(totalDeduction)} / ${deductionDays.toStringAsFixed(0)} ${deductionDays == 1 ? 'day' : 'days'}' : '₹0')),
+              const _OverviewDivider(),
+              Expanded(child: Container(padding: const EdgeInsets.all(12), color: const Color(0xFFF0F6FF), child: _OverviewMetric(label: 'Updated Salary', value: _money(updatedSalary), valueColor: employeeBlue))),
+            ]),
+            const SizedBox(height: 14), const Divider(height: 1, color: employeeLine),
+            LabeledValue('Total Working Days', workingDays.toStringAsFixed(0)), const Divider(height: 1, color: employeeLine),
+            LabeledValue('Earned to Date', '${_money(updatedSalary)} / ${paidDays.toStringAsFixed(0)} ${paidDays == 1 ? 'day' : 'days'}'),
+            const SizedBox(height: 10),
             OutlinedButton.icon(onPressed: () => _showDeductionHistory(context), icon: const Icon(Icons.history_outlined), label: const Text('View deduction history')),
           ],
         ]),
       ));
   });
+}
+
+class _OverviewMetric extends StatelessWidget {
+  const _OverviewMetric({required this.label, required this.value, this.valueColor = employeeNavy});
+  final String label;
+  final String value;
+  final Color valueColor;
+
+  @override
+  Widget build(BuildContext context) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    Text(label, style: const TextStyle(color: employeeMuted, fontSize: 11)),
+    const SizedBox(height: 7),
+    Text(value, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: valueColor, fontSize: 15, fontWeight: FontWeight.w800)),
+  ]);
+}
+
+class _OverviewDivider extends StatelessWidget {
+  const _OverviewDivider();
+  @override
+  Widget build(BuildContext context) => const SizedBox(height: 62, child: VerticalDivider(width: 24, color: employeeLine));
 }
 
 class _SalaryBreakdownCard extends StatefulWidget {

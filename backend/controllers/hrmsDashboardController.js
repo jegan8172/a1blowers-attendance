@@ -2,6 +2,7 @@ const db = require('../config/db');
 const policy = require('../lib/attendancePolicy');
 const calendar = require('../lib/calendarWorkingDays');
 const weeklyOffTemplates = require('../lib/weeklyOffTemplates');
+const payroll = require('./hrmsPayrollController');
 
 function ok(res, data, message) {
   return res.json({ success: true, message: message || 'OK', data: data });
@@ -122,6 +123,8 @@ async function saveCalendarOverride(req, res) {
       await db.query(`INSERT INTO hrms_employee_calendar_notifications (employee_user_id, calendar_date, status, reason)
         SELECT employee_user_id, ?, ?, ? FROM hrms_employee_profiles WHERE employment_status <> 'Inactive'`, [date, status, reason]);
     }
+    const [year, month] = date.split('-').map(Number);
+    await payroll.generatePayrollRun(year, month, policy.todayIstDate());
     return ok(res, { date: date, status: status, scope: scope, reason: reason }, 'Calendar override saved');
   } catch (error) {
     return fail(res, 400, error.message);
@@ -148,6 +151,8 @@ async function saveCalendarWeeklyOff(req, res) {
     const days = weeklyOffTemplates.normalizeDays(req.body.weeklyOffDays);
     await getPayrollPolicy();
     await db.query('UPDATE hrms_payroll_policy SET weekly_off_days = ? WHERE id = 1', [JSON.stringify(days)]);
+    const [year, month] = policy.todayIstDate().split('-').map(Number);
+    await payroll.generatePayrollRun(year, month, policy.todayIstDate());
     return ok(res, { weeklyOffDays: days }, 'Default weekly off saved');
   } catch (error) {
     return fail(res, 400, error.message);
@@ -468,6 +473,30 @@ async function monthView(req, res) {
         afterLeaves: salaryNumber ? formatSalary(absentDeduction) : '–',
         updatedSalary: salaryNumber ? formatSalary(accruedSalary) : '–',
       };
+    });
+
+    // Share payroll's canonical counts and money fields with the dashboard.
+    // Calendar cells remain presentation data, while every leave/deduction
+    // total now comes from the same calculation used by Payroll and Payslips.
+    const projections = await payroll.computeRows(year, month, today);
+    const projectionByProfile = new Map(
+      projections.map(function (item) { return [Number(item.profileId), item]; })
+    );
+    employees.forEach(function (employee) {
+      const item = projectionByProfile.get(Number(employee.id));
+      if (!item) return;
+      employee.present = Number(item.presentDays || 0);
+      employee.late = Number(item.lateDays || 0);
+      employee.approvedLeave = Number(item.leaveDays || 0);
+      employee.absent = Number(item.absentDays || 0);
+      employee.unexcused = Number(item.lopDays || 0);
+      employee.salary = formatSalary(item.monthlySalary);
+      employee.salaryPerDay = item.dailySalary == null ? '–' : formatSalary(item.dailySalary);
+      employee.lateDeduction = formatSalary(item.lateDeductions || 0);
+      employee.absentDeduction = formatSalary(item.absentDeductions || 0);
+      employee.daysPaid = String(item.paidDays || 0);
+      employee.afterLeaves = formatSalary(item.absentDeductions || 0);
+      employee.updatedSalary = formatSalary(item.netPay || 0);
     });
 
     // Day-wise KPIs reflect *today* specifically (a live snapshot) rather

@@ -12,6 +12,20 @@ List<String> _attendanceBaseUrls() {
   return ['${ApiConfig.baseUrl}/attendance'];
 }
 
+// A visible card can be usage-only (for example, a zero-balance Sick Leave
+// card).  That card is informative, but it must not become an invalid option
+// in the application form.
+List<Map<String, dynamic>> _applicableLeavePolicies(List<dynamic> balances) => balances
+    .where((balance) {
+      if (balance is! Map) return false;
+      final canApply = balance['canApply'];
+      if (canApply is bool) return canApply;
+      if (canApply is num) return canApply != 0;
+      return (balance['total'] as num? ?? 0) > 0;
+    })
+    .map((balance) => Map<String, dynamic>.from(balance))
+    .toList();
+
 class EmployeeLeavePage extends StatefulWidget {
   const EmployeeLeavePage({super.key});
 
@@ -180,7 +194,7 @@ class _DesktopLeave extends StatelessWidget {
       children: [
         _LeaveBalance(balances: balances),
         const SizedBox(height: 20),
-        _LeaveForm(desktop: true, leaveTypes: balances.map((b) => '${b['type']}').toList(), onSuccess: onRefresh),
+        _LeaveForm(desktop: true, leavePolicies: _applicableLeavePolicies(balances), onSuccess: onRefresh),
       ],
     );
   }
@@ -222,6 +236,8 @@ class _LeaveBalance extends StatelessWidget {
                   ? (constraints.maxWidth - 16) / 2
                   : constraints.maxWidth;
               return Wrap(
+                alignment: WrapAlignment.center,
+                runAlignment: WrapAlignment.center,
                 spacing: 16,
                 runSpacing: 16,
                 children: balances.map((b) {
@@ -459,9 +475,9 @@ class _DesktopRequestRow extends StatelessWidget {
 }
 
 class _LeaveForm extends StatefulWidget {
-  const _LeaveForm({required this.desktop, required this.leaveTypes, required this.onSuccess});
+  const _LeaveForm({required this.desktop, required this.leavePolicies, required this.onSuccess});
   final bool desktop;
-  final List<String> leaveTypes;
+  final List<Map<String, dynamic>> leavePolicies;
   final VoidCallback onSuccess;
 
   @override
@@ -479,15 +495,22 @@ class _LeaveFormState extends State<_LeaveForm> {
   @override
   void initState() {
     super.initState();
-    if (widget.leaveTypes.isNotEmpty && !widget.leaveTypes.contains(type)) type = widget.leaveTypes.first;
+    if (widget.leavePolicies.isNotEmpty && !widget.leavePolicies.any((item) => '${item['type']}' == type)) type = '${widget.leavePolicies.first['type']}';
   }
 
   @override
   void didUpdateWidget(covariant _LeaveForm oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.leaveTypes.isNotEmpty && !widget.leaveTypes.contains(type)) {
-      setState(() => type = widget.leaveTypes.first);
+    if (widget.leavePolicies.isNotEmpty && !widget.leavePolicies.any((item) => '${item['type']}' == type)) {
+      setState(() => type = '${widget.leavePolicies.first['type']}');
     }
+  }
+
+  bool get _allowsHalfDay {
+    final policy = widget.leavePolicies.where((item) => '${item['type']}' == type).toList();
+    if (policy.isEmpty) return false;
+    final value = policy.first['allowsHalfDay'];
+    return value == true || value == 1;
   }
 
   Future<void> _pickDate(bool isFrom) async {
@@ -581,7 +604,7 @@ class _LeaveFormState extends State<_LeaveForm> {
     final fromStr = DateFormat('dd/MM/yyyy').format(fromDate);
     final toStr = DateFormat('dd/MM/yyyy').format(toDate);
 
-    if (widget.leaveTypes.isEmpty) {
+    if (widget.leavePolicies.isEmpty) {
       return const EmployeeCard(child: Text('No leave types are currently available. Please contact your administrator.'));
     }
 
@@ -598,24 +621,18 @@ class _LeaveFormState extends State<_LeaveForm> {
             Row(
               children: [
                 Expanded(
-                  child: _DropdownField('LEAVE TYPE', type, widget.leaveTypes, (v) => setState(() => type = v!)),
+                  child: _DropdownField('LEAVE TYPE', type, widget.leavePolicies.map((item) => '${item['type']}').toList(), (v) => setState(() { type = v!; if (!_allowsHalfDay && duration == 'Half Day') duration = 'Full Day'; })),
                 ),
                 const SizedBox(width: 18),
                 Expanded(
-                  child: _DropdownField('DURATION', duration, const [
-                    'Full Day',
-                    'Half Day',
-                  ], (v) => setState(() => duration = v!)),
+                  child: _DropdownField('DURATION', duration, _allowsHalfDay ? const ['Full Day', 'Half Day'] : const ['Full Day'], (v) => setState(() => duration = v!)),
                 ),
               ],
             )
           else ...[
-            _DropdownField('Leave Type', type, widget.leaveTypes, (v) => setState(() => type = v!)),
+            _DropdownField('Leave Type', type, widget.leavePolicies.map((item) => '${item['type']}').toList(), (v) => setState(() { type = v!; if (!_allowsHalfDay && duration == 'Half Day') duration = 'Full Day'; })),
             const SizedBox(height: 14),
-            _DropdownField('Duration', duration, const [
-              'Full Day',
-              'Half Day',
-            ], (v) => setState(() => duration = v!)),
+            _DropdownField('Duration', duration, _allowsHalfDay ? const ['Full Day', 'Half Day'] : const ['Full Day'], (v) => setState(() => duration = v!)),
           ],
           if (type == 'Earned Leave') ...[
             const SizedBox(height: 8),
@@ -978,7 +995,7 @@ class _MobileLeave extends StatelessWidget {
         const SizedBox(height: 18),
         _MobileLeaveBalance(balances: balances),
         const SizedBox(height: 18),
-        _LeaveForm(desktop: false, leaveTypes: balances.map((b) => '${b['type']}').toList(), onSuccess: onRefresh),
+        _LeaveForm(desktop: false, leavePolicies: _applicableLeavePolicies(balances), onSuccess: onRefresh),
       ],
     );
   }

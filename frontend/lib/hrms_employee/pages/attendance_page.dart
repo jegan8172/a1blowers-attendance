@@ -340,6 +340,7 @@ class _AttendanceViewState extends State<_AttendanceView> {
     }
     final reason = TextEditingController();
     final checkIn = TextEditingController();
+    final checkOut = TextEditingController();
     String type = 'incorrect_automatic_absence';
     bool isSubmitting = false;
     String? errorMessage;
@@ -362,6 +363,24 @@ class _AttendanceViewState extends State<_AttendanceView> {
               borderSide: const BorderSide(color: Color(0xFF0969F9)),
             ),
           );
+          Future<void> pickTime(TextEditingController controller, String label) async {
+            if (isSubmitting) return;
+            final match = RegExp(r'^(\d{1,2}):(\d{2})$').firstMatch(controller.text.trim());
+            final hour = int.tryParse(match?.group(1) ?? '');
+            final minute = int.tryParse(match?.group(2) ?? '');
+            final selected = await showTimePicker(
+              context: dialogContext,
+              initialTime: hour != null && minute != null && hour < 24 && minute < 60
+                  ? TimeOfDay(hour: hour, minute: minute)
+                  : TimeOfDay.now(),
+              helpText: 'SELECT $label',
+            );
+            if (selected == null || !mounted) return;
+            setDialogState(() {
+              controller.text = '${selected.hour.toString().padLeft(2, '0')}:${selected.minute.toString().padLeft(2, '0')}';
+              errorMessage = null;
+            });
+          }
 
           return Dialog(
             insetPadding: const EdgeInsets.symmetric(horizontal: 24),
@@ -453,7 +472,7 @@ class _AttendanceViewState extends State<_AttendanceView> {
                           DropdownMenuItem(
                               value: 'missing_check_out',
                               child: Text('Missing check-out')),
-                          DropdownMenuItem(value: 'other', child: Text('Other')),
+                          DropdownMenuItem(value: 'incorrect_time', child: Text('Incorrect time')),
                         ],
                         onChanged: isSubmitting
                             ? null
@@ -461,23 +480,48 @@ class _AttendanceViewState extends State<_AttendanceView> {
                       ),
                     ),
                     const SizedBox(height: 13),
-                    SizedBox(
+                    if (type == 'missing_check_in' || type == 'incorrect_time') SizedBox(
                       height: 56,
                       child: TextField(
                         controller: checkIn,
                         enabled: !isSubmitting,
-                        keyboardType: TextInputType.datetime,
+                        readOnly: true,
+                        onTap: () => pickTime(checkIn, 'CHECK-IN TIME'),
                         style: const TextStyle(fontSize: 16),
                         decoration: fieldDecoration.copyWith(
                           hintText: 'Correct check-in time (HH:MM)',
                           hintStyle: const TextStyle(
                               color: Color(0xFF667089), fontSize: 16),
-                          suffixIcon: const Icon(Icons.schedule_outlined,
-                              color: Color(0xFF0969F9), size: 23),
+                          suffixIcon: IconButton(
+                            tooltip: 'Select time',
+                            onPressed: isSubmitting ? null : () => pickTime(checkIn, 'CHECK-IN TIME'),
+                            icon: const Icon(Icons.schedule_outlined,
+                                color: Color(0xFF0969F9), size: 23),
+                          ),
                         ),
                       ),
                     ),
-                    const SizedBox(height: 13),
+                    if (type == 'missing_check_in' || type == 'incorrect_time') const SizedBox(height: 13),
+                    if (type == 'missing_check_out' || type == 'incorrect_time') SizedBox(
+                      height: 56,
+                      child: TextField(
+                        controller: checkOut,
+                        enabled: !isSubmitting,
+                        readOnly: true,
+                        onTap: () => pickTime(checkOut, 'CHECK-OUT TIME'),
+                        style: const TextStyle(fontSize: 16),
+                        decoration: fieldDecoration.copyWith(
+                          hintText: 'Correct check-out time (HH:MM)',
+                          hintStyle: const TextStyle(color: Color(0xFF667089), fontSize: 16),
+                          suffixIcon: IconButton(
+                            tooltip: 'Select time',
+                            onPressed: isSubmitting ? null : () => pickTime(checkOut, 'CHECK-OUT TIME'),
+                            icon: const Icon(Icons.schedule_outlined, color: Color(0xFF0969F9), size: 23),
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (type == 'missing_check_out' || type == 'incorrect_time') const SizedBox(height: 13),
                     SizedBox(
                       height: 70,
                       child: TextField(
@@ -527,8 +571,9 @@ class _AttendanceViewState extends State<_AttendanceView> {
                                   : () async {
                                       final trimmedReason = reason.text.trim();
                                       final trimmedCheckIn = checkIn.text.trim();
-                                      final needsCheckIn = type == 'missing_check_in' ||
-                                          type == 'incorrect_check_in_time';
+                                      final trimmedCheckOut = checkOut.text.trim();
+                                      final needsCheckIn = type == 'missing_check_in' || type == 'incorrect_time';
+                                      final needsCheckOut = type == 'missing_check_out' || type == 'incorrect_time';
                                       if (trimmedReason.length < 3) {
                                         setDialogState(() => errorMessage =
                                             'Enter a reason of at least 3 characters.');
@@ -539,6 +584,14 @@ class _AttendanceViewState extends State<_AttendanceView> {
                                               .hasMatch(trimmedCheckIn)) {
                                         setDialogState(() => errorMessage =
                                             'Enter the corrected check-in time as HH:MM.');
+                                        return;
+                                      }
+                                      if (needsCheckOut && !RegExp(r'^\d{2}:\d{2}$').hasMatch(trimmedCheckOut)) {
+                                        setDialogState(() => errorMessage = 'Enter the corrected check-out time as HH:MM.');
+                                        return;
+                                      }
+                                      if (trimmedCheckIn.isNotEmpty && trimmedCheckOut.isNotEmpty && trimmedCheckOut.compareTo(trimmedCheckIn) <= 0) {
+                                        setDialogState(() => errorMessage = 'Corrected check-out must be after check-in.');
                                         return;
                                       }
 
@@ -554,13 +607,15 @@ class _AttendanceViewState extends State<_AttendanceView> {
                                                   'Missing check-in',
                                               'missing_check_out':
                                                   'Missing check-out',
-                                              'other': 'Other',
+                                              'incorrect_time': 'Incorrect time',
                                             }[type] ??
                                             'Other';
                                         final requestReason = [
                                           'Correction type: $correctionLabel',
                                           if (trimmedCheckIn.isNotEmpty)
                                             'Corrected check-in: $trimmedCheckIn',
+                                          if (trimmedCheckOut.isNotEmpty)
+                                            'Corrected check-out: $trimmedCheckOut',
                                           'Reason: $trimmedReason',
                                         ].join('\n');
                                         final token = _token;
@@ -578,6 +633,11 @@ class _AttendanceViewState extends State<_AttendanceView> {
                                                     'attendance_regularization',
                                                 'date': DateFormat('yyyy-MM-dd')
                                                     .format(date),
+                                                'correction_kind': type,
+                                                if (trimmedCheckIn.isNotEmpty)
+                                                  'corrected_check_in': trimmedCheckIn,
+                                                if (trimmedCheckOut.isNotEmpty)
+                                                  'corrected_check_out': trimmedCheckOut,
                                                 'reason': requestReason,
                                               }),
                                             )
@@ -647,6 +707,7 @@ class _AttendanceViewState extends State<_AttendanceView> {
     );
     reason.dispose();
     checkIn.dispose();
+    checkOut.dispose();
   }
 
   @override

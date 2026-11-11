@@ -11,6 +11,7 @@ Future<void> showAttendanceCorrectionDrawer(
   required int employeeId,
   required String employeeName,
   required String staffId,
+  required String employeeRole,
   required DateTime initialMonth,
   required VoidCallback onChanged,
 }) => showGeneralDialog<void>(
@@ -25,6 +26,7 @@ Future<void> showAttendanceCorrectionDrawer(
       employeeId: employeeId,
       employeeName: employeeName,
       staffId: staffId,
+      employeeRole: employeeRole,
       initialMonth: initialMonth,
       onChanged: onChanged,
     ),
@@ -42,12 +44,14 @@ class _AttendanceCorrectionDrawer extends StatefulWidget {
     required this.employeeId,
     required this.employeeName,
     required this.staffId,
+    required this.employeeRole,
     required this.initialMonth,
     required this.onChanged,
   });
   final int employeeId;
   final String employeeName;
   final String staffId;
+  final String employeeRole;
   final DateTime initialMonth;
   final VoidCallback onChanged;
 
@@ -63,6 +67,7 @@ class _AttendanceCorrectionDrawerState extends State<_AttendanceCorrectionDrawer
   List<Map<String, dynamic>> _days = const [];
   Map<String, dynamic>? _selected;
   String _chosenStatus = 'present';
+  String? _notice;
   final _reason = TextEditingController();
 
   @override
@@ -108,6 +113,7 @@ class _AttendanceCorrectionDrawerState extends State<_AttendanceCorrectionDrawer
       _selected = day;
       _chosenStatus = status == 'present' ? 'absent' : 'present';
       _reason.clear();
+      _notice = null;
     });
   }
 
@@ -133,9 +139,9 @@ class _AttendanceCorrectionDrawerState extends State<_AttendanceCorrectionDrawer
       if (!mounted) return;
       widget.onChanged();
       final warning = result['data'] is Map ? result['data']['warning']?.toString() : null;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(warning ?? result['message']?.toString() ?? 'Attendance status corrected.'),
-      ));
+      setState(() {
+        _notice = warning ?? result['message']?.toString() ?? 'Attendance status corrected.';
+      });
       await _load();
     } catch (error) {
       if (mounted) setState(() => _error = error.toString().replaceFirst('Exception: ', ''));
@@ -178,7 +184,13 @@ class _AttendanceCorrectionDrawerState extends State<_AttendanceCorrectionDrawer
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(color: Color(0xFF303B50), fontSize: 20, fontWeight: FontWeight.w700)),
         const SizedBox(height: 4),
-        Text('Employee ID: ${widget.staffId}', style: const TextStyle(color: Color(0xFF6374A5), fontSize: 12)),
+        Text(
+          [
+            if (widget.employeeRole.trim().isNotEmpty) widget.employeeRole,
+            'Employee ID: ${widget.staffId}',
+          ].join(' · '),
+          style: const TextStyle(color: Color(0xFF6374A5), fontSize: 12),
+        ),
       ])),
       IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close, color: Color(0xFF657080))),
     ]),
@@ -246,7 +258,23 @@ class _AttendanceCorrectionDrawerState extends State<_AttendanceCorrectionDrawer
 
   Widget _correctionPanel() {
     final day = _selected;
-    if (day == null) return _message('Select a date to see its attendance and make a correction.');
+    if (day == null) {
+      return Column(children: [
+        if (_notice != null) ...[
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFE6F8EF),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(_notice!, style: const TextStyle(color: Color(0xFF078A48), fontSize: 13)),
+          ),
+        ],
+        _message('Select a date to see its attendance and make a correction.'),
+      ]);
+    }
     if (day['editable'] != true) return _message('This date cannot be corrected here\n(future date, leave, holiday, weekly off, or outside employment date).');
     final status = '${day['status']}';
     return Container(

@@ -66,7 +66,8 @@ class _QuickApprovalsDialogState extends State<_QuickApprovalsDialog> {
     if (id == null) { setState(() => _error = 'Request ID is missing.'); return; }
     String? salaryMode;
     final leaveType = '${item['leaveType'] ?? ''}';
-    if (approve && widget.category == QuickApprovalCategory.leave && leaveType.isNotEmpty && leaveType != 'Earned Leave') {
+    final hasPolicySnapshot = item['hasPolicySnapshot'] == true;
+    if (approve && widget.category == QuickApprovalCategory.leave && leaveType.isNotEmpty && leaveType != 'Earned Leave' && !hasPolicySnapshot) {
       salaryMode = await showDialog<String>(context: context, builder: (context) => AlertDialog(
         title: Text('$leaveType salary decision'),
         content: const Text('Choose whether this approved leave is paid or unpaid.'),

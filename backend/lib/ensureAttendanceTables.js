@@ -86,7 +86,10 @@ async function ensureAttendanceTables(db) {
   const permissionRequired = {
     permission_start_time: 'TIME NULL',
     permission_end_time: 'TIME NULL',
-    salary_mode: 'VARCHAR(16) NULL'
+    salary_mode: 'VARCHAR(16) NULL',
+    correction_kind: 'VARCHAR(48) NULL',
+    corrected_check_in_time: 'TIME NULL',
+    corrected_check_out_time: 'TIME NULL'
   };
   for (const [name, definition] of Object.entries(permissionRequired)) {
     if (!permissionExisting.has(name)) {

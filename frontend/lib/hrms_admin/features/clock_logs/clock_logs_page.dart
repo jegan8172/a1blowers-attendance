@@ -1676,8 +1676,9 @@ class _ClockWorkspaceState extends State<_ClockWorkspace> {
     showAttendanceCorrectionDrawer(
       context,
       employeeId: employeeId,
-      employeeName: '${log['employeeName'] ?? 'Employee'}',
+      employeeName: '${log['employeeName'] ?? ''}',
       staffId: '${log['staffId'] ?? employeeId}',
+      employeeRole: '${log['role'] ?? ''}',
       initialMonth: DateTime.tryParse('${log['date'] ?? ''}') ?? DateTime.now(),
       onChanged: widget.onRetry,
     );
@@ -2543,8 +2544,9 @@ class _ClockWorkspaceState extends State<_ClockWorkspace> {
                 showAttendanceCorrectionDrawer(
                   context,
                   employeeId: employeeId,
-                  employeeName: '${log['employeeName'] ?? 'Employee'}',
+                  employeeName: '${log['employeeName'] ?? ''}',
                   staffId: '${log['staffId'] ?? employeeId}',
+                  employeeRole: '${log['role'] ?? ''}',
                   initialMonth: DateTime.tryParse('${log['date'] ?? ''}') ?? DateTime.now(),
                   onChanged: widget.onRetry,
                 );

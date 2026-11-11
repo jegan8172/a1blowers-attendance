@@ -32,6 +32,7 @@ class AttendanceDayMark {
 }
 
 class AttendanceRowData {
+  final int employeeId;
   final String name;
   final String designation;
   final List<AttendanceDayMark> days;
@@ -53,6 +54,7 @@ class AttendanceRowData {
   final String updatedSalary;
 
   const AttendanceRowData({
+    required this.employeeId,
     required this.name,
     required this.designation,
     required this.days,
@@ -84,6 +86,7 @@ class AttendanceGrid extends StatefulWidget {
   final bool expanded;
   final VoidCallback? onToggleExpanded;
   final Widget? toolbarLeading;
+  final void Function(AttendanceRowData row, int day)? onDayTap;
 
   const AttendanceGrid({
     super.key,
@@ -94,6 +97,7 @@ class AttendanceGrid extends StatefulWidget {
     this.expanded = false,
     this.onToggleExpanded,
     this.toolbarLeading,
+    this.onDayTap,
   });
 
   @override
@@ -404,10 +408,11 @@ class _AttendanceGridState extends State<AttendanceGrid> {
                 for (final index in visibleIndexes)
                   _BodyCell(
                     width: colWidth,
-                    child: _MarkChip(
-                      mark: index < row.days.length
-                          ? row.days[index]
-                          : const AttendanceDayMark(''),
+                    child: SizedBox.expand(
+                      child: InkWell(
+                        onTap: widget.onDayTap == null ? null : () => widget.onDayTap!(row, widget.days[index]),
+                        child: _MarkChip(mark: index < row.days.length ? row.days[index] : const AttendanceDayMark('')),
+                      ),
                     ),
                   ),
               ],
@@ -632,7 +637,7 @@ class _BodyCell extends StatelessWidget {
           bottom: BorderSide(color: Theme.of(context).colorScheme.outline, width: .7),
         ),
       ),
-      child: child is _MarkChip
+      child: child is _MarkChip || child is SizedBox
           ? child
           : FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.center, child: child),
     );

@@ -14,6 +14,7 @@ import '../../../services/hrms_employees_api.dart';
 import '../../shared/widgets/admin_top_nav.dart';
 import '../../shared/widgets/admin_pattern_background.dart';
 import 'widgets/attendance_grid.dart';
+import 'widgets/attendance_details_dialog.dart';
 import 'widgets/manage_calendar_dialog.dart';
 import 'widgets/manage_time_dialog.dart';
 import 'widgets/quick_approvals_dialog.dart';
@@ -954,6 +955,13 @@ class _AttendanceTable extends StatelessWidget {
       showSummary: showSummary,
       expanded: expanded,
       onToggleExpanded: onToggleExpanded,
+      onDayTap: (row, day) => showDialog<void>(
+        context: context,
+        builder: (_) => AttendanceDetailsDialog(
+          employeeId: row.employeeId,
+          date: DateTime(year, month, day),
+        ),
+      ),
       days: days,
       dayLabels: [
         for (final day in days)
@@ -962,6 +970,7 @@ class _AttendanceTable extends StatelessWidget {
       rows: [
         for (final employee in employees)
           AttendanceRowData(
+            employeeId: employee.id,
             name: employee.name,
             designation: employee.designation,
             days: [
@@ -1058,6 +1067,7 @@ class _YearlyAttendanceSummary extends StatelessWidget {
 
 class _EmployeeAttendance {
   const _EmployeeAttendance({
+    required this.id,
     required this.name,
     required this.designation,
     required this.present,
@@ -1081,6 +1091,7 @@ class _EmployeeAttendance {
   });
 
   final String name;
+  final int id;
   final String designation;
   final int present;
   final int absent;
@@ -1105,6 +1116,7 @@ class _EmployeeAttendance {
     int asInt(dynamic value) =>
         value is int ? value : int.tryParse('$value') ?? 0;
     return _EmployeeAttendance(
+      id: asInt(json['id'] ?? json['employeeId']),
       name: (json['name'] ?? '').toString(),
       designation: (json['designation'] ?? '').toString(),
       present: asInt(json['present']),

@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const weeklyOffTemplates = require('../lib/weeklyOffTemplates');
 const calendarWorkingDays = require('../lib/calendarWorkingDays');
+const payrollController = require('./hrmsPayrollController');
 
 const ok = (res, data, message) => res.json({ success: true, message: message || 'OK', data });
 const fail = (res, status, message) => res.status(status).json({ success: false, message });
@@ -82,46 +83,33 @@ async function summary(req, res) {
         AND (NOT(p.employee_user_id <=> e.employee_user_id) OR (p.status = 'paid' AND COALESCE(p.monthly_salary, 0) <= 0))
       LIMIT 1`, [req.user.id, req.user.id]);
 
-    // Live payroll: compute earnedToDate = days_attended_so_far × daily_rate
-    let livePayroll = null;
-    const monthlySalary = Number(compensation && compensation.monthly_salary || (payroll && payroll.monthly_salary) || 0);
-    if (monthlySalary > 0) {
-      const now = new Date();
-      const year = now.getUTCFullYear();
-      const month = now.getUTCMonth() + 1;
-      const monthStart = _ymd(new Date(Date.UTC(year, month - 1, 1)));
-      const monthEnd = _ymd(new Date(Date.UTC(year, month, 0)));
-      const today = _ymd(now);
-      const cutoff = today < monthEnd ? today : monthEnd;
-      const periodWorkingDays = Math.max(1, _countWorkingDays(monthStart, monthEnd));
-      const dailyRate = monthlySalary / periodWorkingDays;
-
-      // Count days with check-in up to today
-      const [[attRow]] = await db.query(`SELECT COUNT(DISTINCT DATE(check_in_at)) AS present_days
-        FROM attendance_records
-        WHERE employee_id = ? AND DATE(check_in_at) BETWEEN ? AND ? AND check_in_at IS NOT NULL`,
-        [req.user.id, monthStart, cutoff]);
-      const paidDaysToDate = Number(attRow && attRow.present_days || 0);
-      const earnedToDate = Math.round(paidDaysToDate * dailyRate * 100) / 100;
-      const savedDeductions = payroll && Number(payroll.deductions) > 0 ? Number(payroll.deductions) : 0;
-
-      livePayroll = {
-        monthlySalary: monthlySalary,
-        dailyRate: Math.round(dailyRate * 100) / 100,
-        dailyRateLabel: _formatMoney(dailyRate),
-        workingDays: periodWorkingDays,
-        paidDaysToDate: paidDaysToDate,
-        earnedToDate: earnedToDate,
-        earnedToDateLabel: _formatMoney(earnedToDate),
-        deductions: savedDeductions,
-        deductionsLabel: _formatMoney(savedDeductions),
-        netPay: earnedToDate,
-        netPayLabel: _formatMoney(earnedToDate),
-        periodStart: monthStart,
-        periodEnd: monthEnd,
-        status: payroll && payroll.status === 'paid' ? 'paid' : 'pending',
-      };
-    }
+    // The employee home salary card now uses payroll's shared projection.
+    // This includes approved paid leave, regularization, holidays, employee
+    // weekly-off templates, deductions and paid-period immutability.
+    const now = new Date();
+    const projection = await payrollController.projectionForEmployee(
+      req.user.id,
+      now.getUTCFullYear(),
+      now.getUTCMonth() + 1
+    );
+    const livePayroll = projection && Number(projection.monthlySalary || 0) > 0
+      ? {
+          monthlySalary: Number(projection.monthlySalary),
+          dailyRate: Number(projection.dailySalary || 0),
+          dailyRateLabel: _formatMoney(projection.dailySalary),
+          workingDays: Number(projection.workingDays || 0),
+          paidDaysToDate: Number(projection.paidDays || 0),
+          earnedToDate: Number(projection.netPay || 0) + Number(projection.deductions || 0),
+          earnedToDateLabel: _formatMoney(Number(projection.netPay || 0) + Number(projection.deductions || 0)),
+          deductions: Number(projection.deductions || 0),
+          deductionsLabel: _formatMoney(projection.deductions),
+          netPay: Number(projection.netPay || 0),
+          netPayLabel: _formatMoney(projection.netPay),
+          periodStart: projection.periodStart,
+          periodEnd: projection.periodEnd,
+          status: String(projection.status || 'Pending').toLowerCase(),
+        }
+      : null;
 
     return ok(res, { compensation: compensation || null, payroll: payroll || null, livePayroll, reviewRequired: Boolean(invalid) });
   } catch (error) { return fail(res, 500, error.message); }
@@ -147,6 +135,7 @@ async function saveCompensation(req, res) {
     const [result] = await db.query(`INSERT INTO hrms_employee_compensation (profile_id, employee_user_id, monthly_salary, effective_from, created_by) VALUES (?, ?, ?, ?, ?)`, [profile ? profile.id : null, employeeUserId, monthlySalary, effectiveFrom, req.user.id]);
     // Profile is the live Admin/dashboard source; the history row remains the payroll source.
     if (profile) await db.query('UPDATE hrms_employee_profiles SET monthly_salary = ? WHERE id = ?', [monthlySalary, profile.id]);
+    await payrollController.refreshUnpaidForEmployee(employeeUserId, effectiveFrom);
     return ok(res, { id: result.insertId }, 'Compensation saved');
   } catch (error) { return fail(res, 500, error.message); }
 }
@@ -195,6 +184,7 @@ async function myHistory(req, res) {
     const cutoff = month === fallback && _ymd(now) < end ? _ymd(now) : end;
     const [[profile]] = await db.query('SELECT id, monthly_salary FROM hrms_employee_profiles WHERE employee_user_id = ? LIMIT 1', [req.user.id]);
     if (!profile) return fail(res, 404, 'Employee profile not found');
+    const projection = await payrollController.projectionForEmployee(req.user.id, year, monthNumber);
     await weeklyOffTemplates.ensureWeeklyOffTemplateTables(db);
     const weeklyResolver = await weeklyOffTemplates.offDaysForProfileByDate(db, profile.id, start, end, [0]);
     const calendarOverrides = await calendarWorkingDays.overridesForPeriod(start, end);
@@ -232,7 +222,20 @@ async function myHistory(req, res) {
     let balance = 0;
     rows.forEach((r) => { if (r.status === 'Present') balance += r.salary; else if (r.status === 'Late') balance += r.salary - r.late_deduction; r.updated_salary = balance; });
     rows.reverse();
-    return ok(res, { month, summary: payroll || { monthly_salary: monthlySalary, working_days: workingDays, net_pay: balance }, items: rows });
+    const sharedSummary = projection
+      ? {
+          monthly_salary: Number(projection.monthlySalary || 0),
+          working_days: Number(projection.workingDays || 0),
+          paid_days: Number(projection.paidDays || 0),
+          lop_days: Number(projection.lopDays || 0),
+          deductions: Number(projection.deductions || 0),
+          late_deductions: Number(projection.lateDeductions || 0),
+          absent_deductions: Number(projection.absentDeductions || 0),
+          net_pay: Number(projection.netPay || 0),
+          status: String(projection.status || 'Pending').toLowerCase(),
+        }
+      : { monthly_salary: monthlySalary, working_days: workingDays, net_pay: balance };
+    return ok(res, { month, summary: payroll || sharedSummary, items: rows });
   } catch (error) { return fail(res, 500, error.message); }
 }
 

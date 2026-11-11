@@ -696,6 +696,10 @@ async function clockLogCalendar(req, res) {
       else if (context.holiday) status = 'Holiday';
       else if (context.weeklyOff) status = 'Weekly Off';
       else if (context.onLeave) status = 'Leave';
+      // The employee calendar treats a completed working day with no record
+      // as Absent. Admin must show the exact same effective status instead
+      // of hiding it as "No record".
+      else if (status === 'No record' && date < policy.todayIstDate()) status = 'Absent';
       days.push({
         date, day, status, editable: context.editable, hasRecord: Boolean(context.record),
         checkIn: context.record ? policy.formatDisplayTime(sqlDateTime(context.record.check_in_at)) : null,
@@ -703,7 +707,7 @@ async function clockLogCalendar(req, res) {
         adminReason: context.record && context.record.admin_override_reason || null,
       });
     }
-    return ok(res, { employee: { id: employeeId, name: person.full_name, staffId: person.staff_id }, month, days });
+    return ok(res, { employee: { id: employeeId, name: person.full_name, staffId: person.staff_id, role: person.role || null }, month, days });
   } catch (error) {
     console.error('GET /attendance/clock-logs/calendar', error);
     return fail(res, 500, 'Unable to load the attendance calendar. Please try again.');
@@ -944,7 +948,7 @@ async function employeeDashboard(req, res) {
       !String(currentBreak.exceeded_comment || '').trim();
 
     const [monthRows] = await db.query(
-      `SELECT id, employee_id, attendance_date, check_in_at, check_out_at, is_late, attendance_status
+      `SELECT id, employee_id, attendance_date, check_in_at, check_out_at, is_late, attendance_status, admin_status_override
        FROM attendance_records
        WHERE employee_id = ?
          AND attendance_date >= ?
@@ -996,7 +1000,10 @@ async function employeeDashboard(req, res) {
         clock_in_at: row.check_in_at ? sqlDateTime(row.check_in_at) : null,
         clock_out_at: row.check_out_at ? sqlDateTime(row.check_out_at) : null,
         is_late: Boolean(Number(row.is_late)),
-        attendance_status: row.attendance_status || (row.check_in_at ? 'present' : 'absent'),
+        // An admin correction is the final status for both portals. It can
+        // intentionally exist without a fabricated clock-in timestamp.
+        attendance_status: row.admin_status_override || row.attendance_status || (row.check_in_at ? 'present' : 'absent'),
+        admin_status_override: row.admin_status_override || null,
       };
       calendarData[item.work_date] = item;
       return item;
@@ -1112,7 +1119,7 @@ async function employeeDashboard(req, res) {
       item.approved_regularization = String(request.salary_mode).toLowerCase() === 'paid';
       item.is_late = false;
     });
-    presentDays = monthRecords.filter((item) => (Boolean(item.clock_in_at) || item.approved_regularization) && item.attendance_status !== 'weekly_off' && item.attendance_status !== 'holiday' && item.attendance_status !== 'absent').length;
+    presentDays = monthRecords.filter((item) => (Boolean(item.clock_in_at) || item.approved_regularization || String(item.admin_status_override).toLowerCase() === 'present') && item.attendance_status !== 'weekly_off' && item.attendance_status !== 'holiday' && item.attendance_status !== 'absent').length;
     lateDays = monthRecords.filter((item) => Boolean(item.is_late) && item.attendance_status !== 'weekly_off' && item.attendance_status !== 'holiday' && item.attendance_status !== 'absent').length;
     absentDays = monthRecords.filter((item) => item.attendance_status === 'absent').length;
 
@@ -1126,7 +1133,7 @@ async function employeeDashboard(req, res) {
     }
 
     return ok(res, {
-      employee: { id: person.id, name: person.full_name, staff_id: person.staff_id },
+      employee: { id: person.id, name: person.full_name, staff_id: person.staff_id, role: person.role || null },
       work_mode: profileRows[0] && profileRows[0].work_mode || null,
       date: date,
       status: checkedIn ? 'checked_in' : (checkedOut ? 'checked_out' : 'not_checked_in'),
@@ -1639,6 +1646,18 @@ async function ensurePermissionTimeColumns() {
   if (!endColumns.length) {
     await db.query('ALTER TABLE attendance_permission_requests ADD COLUMN permission_end_time TIME NULL AFTER permission_start_time');
   }
+  const [correctionColumns] = await db.query("SHOW COLUMNS FROM attendance_permission_requests LIKE 'correction_kind'");
+  if (!correctionColumns.length) {
+    await db.query('ALTER TABLE attendance_permission_requests ADD COLUMN correction_kind VARCHAR(48) NULL AFTER salary_mode');
+  }
+  const [checkInColumns] = await db.query("SHOW COLUMNS FROM attendance_permission_requests LIKE 'corrected_check_in_time'");
+  if (!checkInColumns.length) {
+    await db.query('ALTER TABLE attendance_permission_requests ADD COLUMN corrected_check_in_time TIME NULL AFTER correction_kind');
+  }
+  const [checkOutColumns] = await db.query("SHOW COLUMNS FROM attendance_permission_requests LIKE 'corrected_check_out_time'");
+  if (!checkOutColumns.length) {
+    await db.query('ALTER TABLE attendance_permission_requests ADD COLUMN corrected_check_out_time TIME NULL AFTER corrected_check_in_time');
+  }
 }
 
 async function createPermission(req, res) {
@@ -1660,11 +1679,27 @@ async function createPermission(req, res) {
     const reason = String((req.body && req.body.reason) || '').trim();
     const startTime = String((req.body && req.body.start_time) || '').trim();
     const endTime = String((req.body && req.body.end_time) || '').trim();
+    const correctionKind = String((req.body && req.body.correction_kind) || '').trim().toLowerCase();
+    const correctedCheckIn = String((req.body && req.body.corrected_check_in) || '').trim();
+    const correctedCheckOut = String((req.body && req.body.corrected_check_out) || '').trim();
     if (type === 'permission' && (!/^\d{2}:\d{2}$/.test(startTime) || !/^\d{2}:\d{2}$/.test(endTime) || startTime >= endTime)) {
       return fail(res, 400, 'Permission start and end times are required, and the end time must be later');
     }
     if (type === 'attendance_regularization' && (reason.length < 3 || reason.length > 350)) {
       return fail(res, 400, 'Enter a reason between 3 and 350 characters');
+    }
+    if (type === 'attendance_regularization') {
+      const allowedCorrectionKinds = ['incorrect_automatic_absence', 'missing_check_in', 'missing_check_out', 'incorrect_time'];
+      if (!allowedCorrectionKinds.includes(correctionKind)) return fail(res, 400, 'Choose a valid correction type');
+      const needsCheckIn = correctionKind === 'missing_check_in' || correctionKind === 'incorrect_time';
+      const needsCheckOut = correctionKind === 'missing_check_out' || correctionKind === 'incorrect_time';
+      if ((needsCheckIn && !/^\d{2}:\d{2}$/.test(correctedCheckIn)) ||
+          (needsCheckOut && !/^\d{2}:\d{2}$/.test(correctedCheckOut))) {
+        return fail(res, 400, 'Enter the requested corrected time in HH:MM format');
+      }
+      if (correctedCheckIn && correctedCheckOut && correctedCheckOut <= correctedCheckIn) {
+        return fail(res, 400, 'Corrected check-out must be after check-in');
+      }
     }
     if (type === 'attendance_regularization') {
       const [existing] = await db.query(
@@ -1678,10 +1713,10 @@ async function createPermission(req, res) {
     await ensurePermissionTimeColumns();
 
     const [result] = await db.query(
-      "INSERT INTO attendance_permission_requests (employee_id, request_type, request_date, permission_start_time, permission_end_time, reason, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')",
-      [req.user.id, type, date, type === 'permission' ? startTime + ':00' : null, type === 'permission' ? endTime + ':00' : null, reason || null]
+      "INSERT INTO attendance_permission_requests (employee_id, request_type, request_date, permission_start_time, permission_end_time, correction_kind, corrected_check_in_time, corrected_check_out_time, reason, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
+      [req.user.id, type, date, type === 'permission' ? startTime + ':00' : null, type === 'permission' ? endTime + ':00' : null, type === 'attendance_regularization' ? correctionKind : null, type === 'attendance_regularization' && correctedCheckIn ? correctedCheckIn + ':00' : null, type === 'attendance_regularization' && correctedCheckOut ? correctedCheckOut + ':00' : null, reason || null]
     );
-    return ok(res, { id: result.insertId, type: type, date: date, start_time: startTime || null, end_time: endTime || null, reason: reason, status: 'Pending' }, 'Request submitted');
+    return ok(res, { id: result.insertId, type: type, date: date, correction_kind: correctionKind || null, corrected_check_in: correctedCheckIn || null, corrected_check_out: correctedCheckOut || null, reason: reason, status: 'Pending' }, 'Request submitted');
   } catch (error) {
     console.error('POST /attendance/permissions', error);
     return fail(res, 500, error.message);

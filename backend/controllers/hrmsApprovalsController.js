@@ -1,6 +1,8 @@
 const db = require('../config/db');
 const policy = require('../lib/attendancePolicy');
 const staff = require('../lib/staffDirectory');
+const payroll = require('./hrmsPayrollController');
+const leavePolicies = require('./leavePolicies');
 
 function ok(res, data, message) {
   return res.json({ success: true, message: message || 'OK', data: data });
@@ -8,6 +10,47 @@ function ok(res, data, message) {
 
 function fail(res, status, message) {
   return res.status(status).json({ success: false, message: message });
+}
+
+async function ensureRegularizationColumns() {
+  const columns = [
+    ['correction_kind', 'VARCHAR(48) NULL'],
+    ['corrected_check_in_time', 'TIME NULL'],
+    ['corrected_check_out_time', 'TIME NULL'],
+  ];
+  for (const [name, definition] of columns) {
+    const [existing] = await db.query(`SHOW COLUMNS FROM attendance_permission_requests LIKE '${name}'`);
+    if (!existing.length) await db.query(`ALTER TABLE attendance_permission_requests ADD COLUMN \`${name}\` ${definition}`);
+  }
+}
+
+function dateTimeFor(date, value) {
+  if (!date || !value) return null;
+  return `${String(date).slice(0, 10)} ${String(value).slice(0, 8).padEnd(8, ':00')}`;
+}
+
+async function applyApprovedRegularization(request) {
+  const kind = String(request.correction_kind || '').toLowerCase();
+  if (!['missing_check_in', 'missing_check_out', 'incorrect_time'].includes(kind)) return;
+  const [[record]] = await db.query(`SELECT a.*, DATE_FORMAT(a.check_in_at, '%Y-%m-%d %H:%i:%s') AS check_in_value,
+    DATE_FORMAT(a.check_out_at, '%Y-%m-%d %H:%i:%s') AS check_out_value
+    FROM attendance_records a WHERE employee_id = ? AND attendance_date = ? LIMIT 1`, [request.employee_id, request.request_date]);
+  const checkIn = dateTimeFor(request.request_date, request.corrected_check_in_time) || (record && record.check_in_value ? record.check_in_value : null);
+  const checkOut = dateTimeFor(request.request_date, request.corrected_check_out_time) || (record && record.check_out_value ? record.check_out_value : null);
+  if (!checkIn || !checkOut) throw new Error('Both check-in and check-out are required before this correction can be applied');
+  const [[profile]] = await db.query('SELECT gender FROM hrms_employee_profiles WHERE employee_user_id = ? LIMIT 1', [request.employee_id]);
+  await policy.getTimeSettings(db);
+  const [[breaks]] = await db.query("SELECT COALESCE(SUM(duration_minutes), 0) AS minutes FROM attendance_breaks WHERE attendance_id = ? AND status IN ('completed', 'auto_closed')", [record ? record.id : 0]);
+  const workingMinutes = Math.max(0, policy.minutesBetween(checkIn, checkOut) - Number(breaks && breaks.minutes || 0));
+  const gender = profile && profile.gender ? profile.gender : 'Male';
+  const isAbsent = policy.isAbsentCheckIn(checkIn, gender);
+  const isLate = !isAbsent && policy.isLateCheckIn(checkIn, gender);
+  const attendanceStatus = isAbsent ? 'absent' : (policy.isEarlyExit(workingMinutes) ? 'early_exit' : (isLate ? 'late' : 'present'));
+  if (record) {
+    await db.query(`UPDATE attendance_records SET check_in_at = ?, check_out_at = ?, working_minutes = ?, is_late = ?, attendance_status = ?, session_status = 'completed', admin_status_override = NULL, admin_override_reason = NULL, admin_override_by = NULL, admin_override_at = NULL WHERE id = ?`, [checkIn, checkOut, workingMinutes, isLate ? 1 : 0, attendanceStatus, record.id]);
+  } else {
+    await db.query(`INSERT INTO attendance_records (employee_id, attendance_date, check_in_at, check_out_at, attendance_status, session_status, check_in_method, is_late, working_minutes) VALUES (?, ?, ?, ?, ?, 'completed', 'manual', ?, ?)`, [request.employee_id, request.request_date, checkIn, checkOut, attendanceStatus, isLate ? 1 : 0, workingMinutes]);
+  }
 }
 
 function requireAdmin(req, res, next) {
@@ -102,7 +145,11 @@ function toUi(row) {
     salaryMode: row.salary_mode || null,
     permissionStartTime: row.permission_start_time || null,
     permissionEndTime: row.permission_end_time || null,
+    correctionKind: row.correction_kind || null,
+    correctedCheckIn: row.corrected_check_in_time || null,
+    correctedCheckOut: row.corrected_check_out_time || null,
     leaveType: row.leave_type || null,
+    hasPolicySnapshot: row.policy_payroll_mode === 'paid' || row.policy_payroll_mode === 'unpaid',
     icon: meta.icon,
     color: meta.color,
     tab: extra ? 'extra' : 'leave',
@@ -184,6 +231,10 @@ async function markAllNotificationsRead(req, res) {
 }
 async function list(req, res) {
   try {
+    // The list reads the leave-request policy snapshot, so make sure the
+    // additive migration has completed before this first query.
+    await leavePolicies.ensure();
+    await ensureRegularizationColumns();
     const tab = String(req.query.tab || 'leave').toLowerCase();
     const status = String(req.query.status || '').trim();
     const employee = String(req.query.employee || '').trim();
@@ -210,11 +261,12 @@ async function list(req, res) {
 
     const [rows] = await db.query(
       `SELECT p.id, p.employee_id, p.request_type, p.reason, p.status, p.salary_mode,
-              p.permission_start_time, p.permission_end_time,
+              p.permission_start_time, p.permission_end_time, p.correction_kind,
+              p.corrected_check_in_time, p.corrected_check_out_time,
               DATE_FORMAT(p.request_date, '%Y-%m-%d') AS request_date,
               DATE_FORMAT(leave_request.from_date, '%Y-%m-%d') AS from_date,
               DATE_FORMAT(leave_request.to_date, '%Y-%m-%d') AS to_date,
-              leave_request.leave_type, leave_request.duration_type,
+              leave_request.leave_type, leave_request.duration_type, leave_request.policy_payroll_mode,
               s.${staff.quote(staff.STAFF.name)} AS full_name,
               s.${staff.quote(staff.STAFF.staffCode)} AS staff_id
        FROM attendance_permission_requests p
@@ -250,6 +302,8 @@ async function list(req, res) {
 
 async function review(req, res) {
   try {
+    await leavePolicies.ensure();
+    await ensureRegularizationColumns();
     const id = Number(req.params.id);
     const status = String((req.body && req.body.status) || '').toLowerCase();
     const salaryMode = String((req.body && req.body.salaryMode) || '').toLowerCase();
@@ -265,8 +319,9 @@ async function review(req, res) {
       )
     `);
     const [[pendingRequest]] = await db.query(
-      `SELECT p.id, p.employee_id, p.request_type, p.request_date,
-              leave_request.leave_type
+      `SELECT p.id, p.employee_id, p.request_type, DATE_FORMAT(p.request_date, '%Y-%m-%d') AS request_date, p.correction_kind,
+              p.corrected_check_in_time, p.corrected_check_out_time,
+              leave_request.leave_type, leave_request.policy_payroll_mode
        FROM attendance_permission_requests p
        LEFT JOIN hrms_leave_approval_links link ON link.approval_request_id = p.id
        LEFT JOIN employee_leaves leave_request ON leave_request.id = link.leave_id
@@ -284,7 +339,11 @@ async function review(req, res) {
       return fail(res, 400, 'Choose paid or unpaid attendance regularization before approving');
     }
     if (status === 'approved' && pendingRequest.leave_type) {
-      if (pendingRequest.leave_type === 'Earned Leave') {
+      const snapshot = String(pendingRequest.policy_payroll_mode || '').toLowerCase();
+      if (snapshot === 'paid' || snapshot === 'unpaid') {
+        approvedSalaryMode = snapshot;
+      } else if (pendingRequest.leave_type === 'Earned Leave') {
+        // Legacy request created before snapshots were introduced.
         approvedSalaryMode = 'paid';
       } else if (salaryMode === 'paid' || salaryMode === 'unpaid') {
         approvedSalaryMode = salaryMode;
@@ -296,9 +355,11 @@ async function review(req, res) {
     } else if (status === 'approved' && pendingRequest.request_type === 'attendance_regularization') {
       approvedSalaryMode = salaryMode;
     }
-    // Approval intentionally does not rewrite attendance. It unlocks a single
-    // additional Clock In; that Clock In reopens the same session while keeping
-    // the original Clock In timestamp for the full workday calculation.
+    // Validate and apply requested clock values before finalizing the approval,
+    // so an invalid correction cannot become an approved request.
+    if (status === 'approved' && pendingRequest.request_type === 'attendance_regularization') {
+      await applyApprovedRegularization(pendingRequest);
+    }
     const at = policy.nowIstDateTime();
     const [result] = await db.query(
       `UPDATE attendance_permission_requests
@@ -312,13 +373,21 @@ async function review(req, res) {
        SET l.status = ?
        WHERE link.approval_request_id = ?`,
       [status === 'approved' ? 'APPROVED' : 'DENIED', id]
-    );    const [rows] = await db.query(
+    );
+    if (pendingRequest.employee_id) {
+      await payroll.refreshUnpaidForEmployee(
+        Number(pendingRequest.employee_id),
+        pendingRequest.request_date
+      );
+    }
+    const [rows] = await db.query(
       `SELECT p.id, p.employee_id, p.request_type, p.reason, p.status, p.salary_mode,
-              p.permission_start_time, p.permission_end_time,
+              p.permission_start_time, p.permission_end_time, p.correction_kind,
+              p.corrected_check_in_time, p.corrected_check_out_time,
               DATE_FORMAT(p.request_date, '%Y-%m-%d') AS request_date,
               DATE_FORMAT(leave_request.from_date, '%Y-%m-%d') AS from_date,
               DATE_FORMAT(leave_request.to_date, '%Y-%m-%d') AS to_date,
-              leave_request.leave_type, leave_request.duration_type,
+              leave_request.leave_type, leave_request.duration_type, leave_request.policy_payroll_mode,
               s.${staff.quote(staff.STAFF.name)} AS full_name,
               s.${staff.quote(staff.STAFF.staffCode)} AS staff_id
        FROM attendance_permission_requests p

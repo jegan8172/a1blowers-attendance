@@ -354,16 +354,16 @@ async function computeRows(year, month, today, options) {
 
   const [leaves] = userIds.length
     ? await db.query(
-        `SELECT l.employee_id, DATE_FORMAT(l.from_date, '%Y-%m-%d') AS request_date
+        `SELECT l.employee_id, DATE_FORMAT(l.from_date, '%Y-%m-%d') AS from_date,
+                DATE_FORMAT(l.to_date, '%Y-%m-%d') AS to_date, l.duration_type
          FROM employee_leaves l
          LEFT JOIN hrms_leave_approval_links link ON link.leave_id = l.id
          LEFT JOIN attendance_permission_requests approval ON approval.id = link.approval_request_id
          WHERE l.status = 'APPROVED'
-           AND (l.leave_type = 'Earned Leave' OR approval.salary_mode = 'paid')
-           AND l.from_date = l.to_date AND LOWER(l.duration_type) = 'full day'
-           AND l.from_date BETWEEN ? AND ?
+           AND (approval.salary_mode = 'paid' OR (approval.salary_mode IS NULL AND l.leave_type = 'Earned Leave'))
+           AND l.from_date <= ? AND l.to_date >= ?
            AND l.employee_id IN (?)`,
-        [queryStart, queryEnd, userIds]
+        [queryEnd, queryStart, userIds]
       )
     : [[]];
   const [paidRegularizations] = userIds.length
@@ -397,10 +397,15 @@ async function computeRows(year, month, today, options) {
   records.forEach(function (row) {
     recordMap.set(row.employee_id + '|' + isoDate(row.attendance_date), row);
   });
-  const leaveSet = new Set();
+  const paidLeaveUnits = new Map();
   const paidRegularizationSet = new Set();
   leaves.forEach(function (row) {
-    leaveSet.add(row.employee_id + '|' + isoDate(row.request_date));
+    const start = isoDate(row.from_date);
+    const end = isoDate(row.to_date);
+    const units = String(row.duration_type || '').toLowerCase() === 'half day' ? 0.5 : 1;
+    for (let date = start; date && end && date <= end; date = nextDate(date)) {
+      if (date >= queryStart && date <= queryEnd) paidLeaveUnits.set(row.employee_id + '|' + date, units);
+    }
   });
   paidRegularizations.forEach(function (row) {
     const regularizationKey = row.employee_id + '|' + isoDate(row.request_date);
@@ -460,6 +465,10 @@ async function computeRows(year, month, today, options) {
         // absence, without manufacturing a clock-in timestamp.
         present += 1;
         earnedDays += 1;
+      } else if (key && paidLeaveUnits.has(key)) {
+        const units = paidLeaveUnits.get(key);
+        leaveDays += units;
+        earnedDays += units;
       } else if (attStatus === 'half_leave') {
         unpaidHalfDays += 0.5;
         absentEntries.push({ date: date, days: 0.5 });
@@ -476,10 +485,6 @@ async function computeRows(year, month, today, options) {
         const lateMinutes = Math.max(0, Math.floor((attendanceTimeSeconds(record.check_in_at) - timeSeconds(schedule.lateAfter)) / 60));
         if (lateMinutes > 0) lateEntries.push({ date: date, minutes: lateMinutes });
         else present += 1;
-        earnedDays += 1;
-      } else if (key && leaveSet.has(key)) {
-        // Approved leave
-        leaveDays += 1;
         earnedDays += 1;
       } else {
         // A completed working day with no attendance is always absent. Its
@@ -678,6 +683,8 @@ async function savePolicy(req, res) {
       : body.autoGenerate === true || body.autoGenerate === 1 || body.autoGenerate === '1';
     const values = [JSON.stringify(weekly), body.deductApprovedLeave ? 1 : 0, body.deductExplicitAbsence ? 1 : 0, body.missingAttendanceIsAbsent ? 1 : 0, autoGenerate ? 1 : 0, req.user.id];
     await db.query(`UPDATE hrms_payroll_policy SET weekly_off_days = ?, deduct_approved_leave = ?, deduct_explicit_absence = ?, missing_attendance_is_absent = ?, auto_generate = ?, updated_by = ? WHERE id = 1`, values);
+    const [year, month] = policy.todayIstDate().split('-').map(Number);
+    await generatePayrollRun(year, month, policy.todayIstDate());
     return ok(res, await payrollPolicy(), 'Payroll policy saved');
   } catch (error) { return fail(res, 500, error.message); }
 }
@@ -794,6 +801,51 @@ async function generatePayrollRun(year, month, today, options) {
     };
 }
 
+// Shared read model for every leave/payroll UI.  Payroll remains the single
+// owner of calculation rules; callers must not re-count attendance or leave.
+async function projectionForEmployee(employeeUserId, year, month, today) {
+  const [[profile]] = await db.query(
+    'SELECT id FROM hrms_employee_profiles WHERE employee_user_id = ? LIMIT 1',
+    [employeeUserId]
+  );
+  if (!profile) return null;
+  const rows = await computeRows(year, month, today || policy.todayIstDate(), {
+    profileIds: [Number(profile.id)],
+  });
+  return rows[0] || null;
+}
+
+// Persist the current result for one employee only when the impacted payroll
+// period is still unpaid. Paid payroll is deliberately immutable.
+async function refreshUnpaidForEmployee(employeeUserId, referenceDate) {
+  const [[profile]] = await db.query(
+    `SELECT id, salary_type, flexible_cycle_start_date, flexible_cycle_end_date,
+            flexible_cycle_start_day, flexible_cycle_end_day
+       FROM hrms_employee_profiles WHERE employee_user_id = ? LIMIT 1`,
+    [employeeUserId]
+  );
+  if (!profile) return null;
+  const date = isoDate(referenceDate) || policy.todayIstDate();
+  const parts = date.split('-').map(Number);
+  let year = parts[0];
+  let month = parts[1];
+  if (String(profile.salary_type || 'Standard') === 'Flexible') {
+    const flexible = flexiblePeriodContaining(profile, date);
+    if (!flexible) return null;
+    year = flexible.year;
+    month = flexible.month;
+  }
+  const [[saved]] = await db.query(
+    `SELECT status FROM hrms_payroll_items
+     WHERE profile_id = ? AND pay_year = ? AND pay_month = ? LIMIT 1`,
+    [profile.id, year, month]
+  );
+  if (saved && String(saved.status).toLowerCase() === 'paid') return null;
+  return generatePayrollRun(year, month, policy.todayIstDate(), {
+    profileIds: [Number(profile.id)],
+  });
+}
+
 async function markPaid(req, res) {
   try {
     const id = Number(req.params.id);
@@ -871,6 +923,13 @@ async function saveCycleOverride(req, res) {
        ON DUPLICATE KEY UPDATE period_start = VALUES(period_start), period_end = VALUES(period_end), updated_by = VALUES(updated_by)`,
       [profileId, year, month, periodStart, periodEnd, req.user.id]
     );
+    const [[owner]] = await db.query(
+      'SELECT employee_user_id FROM hrms_employee_profiles WHERE id = ? LIMIT 1',
+      [profileId]
+    );
+    if (owner && owner.employee_user_id) {
+      await refreshUnpaidForEmployee(Number(owner.employee_user_id), periodEnd);
+    }
     return ok(res, { profileId, year, month, periodStart, periodEnd }, 'Custom payroll cycle saved.');
   } catch (error) {
     console.error('PUT /hrms/payroll/:profileId/cycle-override', error);
@@ -1013,6 +1072,9 @@ module.exports = {
   getPolicy,
   savePolicy,
   generatePayrollRun,
+  computeRows,
+  projectionForEmployee,
+  refreshUnpaidForEmployee,
   runAutomaticPayroll,
   payrollPeriod,
   flexiblePeriodContaining,
