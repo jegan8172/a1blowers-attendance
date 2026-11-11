@@ -46,7 +46,7 @@ router.post('/clock-out', attendance.checkOut);
 router.post('/reclock-in-request', attendance.createReclockInRequest);
 router.get('/permissions/mine', attendance.myPermissions);
 router.post('/permissions', attendance.createPermission);
-router.get('/corrections', attendance.correctionStatus);
+router.get('/corrections', attendance.correctionRequestStatus);
 router.post('/corrections', attendance.createCorrection);
 
 module.exports = router;

@@ -1699,7 +1699,7 @@ async function ensureCorrectionTable() {
     reviewed_at DATETIME NULL, reviewed_by INT NULL, KEY correction_employee_date (employee_id, attendance_date)
   )`);
 }
-async function correctionStatus(req, res) {
+async function correctionRequestStatus(req, res) {
   try { await ensureCorrectionTable(); const date = parseDateParam(req.query.date); if (!date) return fail(res, 400, 'date must be YYYY-MM-DD');
     const employeeId = Number(req.query.employeeId || req.user.id); const isAdmin = String(req.user.userType).toLowerCase() === 'admin';
     if (!isAdmin && employeeId !== req.user.id) return fail(res, 403, 'You can view only your own corrections');
@@ -1911,7 +1911,7 @@ module.exports = {
   autoClockoutResponse: autoClockoutResponse,
   myPermissions: myPermissions,
   createPermission: createPermission,
-  correctionStatus: correctionStatus,
+  correctionRequestStatus: correctionRequestStatus,
   createCorrection: createCorrection,
   createReclockInRequest: createReclockInRequest,
   adminPermissions: adminPermissions,
