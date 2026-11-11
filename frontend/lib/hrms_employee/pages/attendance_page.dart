@@ -8,7 +8,6 @@ import 'package:provider/provider.dart';
 import '../../services/api_config.dart';
 import '../../services/auth_service.dart';
 import '../shared/employee_ui.dart';
-import '../../hrms_admin/features/dashboard/widgets/attendance_details_dialog.dart';
 
 class EmployeeAttendancePage extends StatefulWidget {
   const EmployeeAttendancePage({super.key});
@@ -144,6 +143,7 @@ class _AttendanceViewState extends State<_AttendanceView> {
                 daysMap[dayNum] = {
                   'status': leaveCode ?? (isHoliday ? 'H' : (isWeeklyOff ? 'OFF' : (isHalfLeave ? 'HL' : (isAbsent ? 'A' : (isLate ? 'L' : 'P'))))),
                   'clock_in': item['clock_in_at'] ?? item['checkInAt'],
+                  'clock_out': item['clock_out_at'] ?? item['checkOutAt'],
                 };
               }
             }
@@ -162,6 +162,7 @@ class _AttendanceViewState extends State<_AttendanceView> {
                     ? 'H'
                     : ((statusStr == 'weekly_off' || statusStr == 'weekly off') ? 'OFF' : (statusStr == 'half_leave' ? 'HL' : (statusStr == 'absent' ? 'A' : (isLate ? 'L' : 'P')))),
                 'clock_in': rawRecord['checkInAt'] ?? rawRecord['checkIn'],
+                  'clock_out': rawRecord['checkOutAt'] ?? rawRecord['checkOut'],
               };
             });
           }
@@ -195,6 +196,7 @@ class _AttendanceViewState extends State<_AttendanceView> {
                             ? 'HL'
                           : (statusStr == 'absent' ? 'A' : (isLate ? 'L' : 'P')))),
                     'clock_in': item['checkInAt'] ?? item['clock_in_at'],
+                    'clock_out': item['checkOutAt'] ?? item['clock_out_at'],
                   };
                 }
               }
@@ -241,6 +243,90 @@ class _AttendanceViewState extends State<_AttendanceView> {
       return {'status': 'OFF', 'clock_in': null};
     }
     return {'status': '', 'clock_in': null};
+  }
+
+  String _formatClock(dynamic value) {
+    if (value == null || '$value'.trim().isEmpty) return '—';
+    final raw = '$value'.trim();
+    final match = RegExp(r'(?:^|[ T])(\d{2}):(\d{2})').firstMatch(raw);
+    if (match == null) return raw;
+    final hour = int.tryParse(match.group(1)!) ?? 0;
+    final minute = match.group(2)!;
+    return '${((hour + 11) % 12 + 1).toString().padLeft(2, '0')}:$minute ${hour >= 12 ? 'PM' : 'AM'}';
+  }
+
+  String _statusLabel(String status) => switch (status) {
+    'P' => 'Present',
+    'L' => 'Late',
+    'A' => 'Absent',
+    'HL' => 'Half leave',
+    'OFF' => 'Weekly off',
+    'H' => 'Holiday',
+    'EL' => 'Earned leave',
+    'CL' => 'Casual leave',
+    'SL' => 'Sick leave',
+    'OL' => 'Optional holiday',
+    'AR' => 'Attendance regularization',
+    _ => 'No attendance record',
+  };
+
+  void _showAttendanceDetails(int day) {
+    final selected = DateTime(year, month, day);
+    final info = dataFor(day);
+    final status = '${info['status'] ?? ''}';
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.calendar_month_outlined, color: employeeBlue),
+            const SizedBox(width: 10),
+            const Expanded(child: Text('Attendance details')),
+            IconButton(
+              tooltip: 'Close',
+              onPressed: () => Navigator.pop(dialogContext),
+              icon: const Icon(Icons.close),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: 380,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                DateFormat('EEEE, d MMMM yyyy').format(selected),
+                style: const TextStyle(
+                  color: employeeNavy,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 16),
+              _AttendanceDetailLine(
+                label: 'Status',
+                value: _statusLabel(status),
+              ),
+              _AttendanceDetailLine(
+                label: 'Check in',
+                value: _formatClock(info['clock_in']),
+              ),
+              _AttendanceDetailLine(
+                label: 'Check out',
+                value: _formatClock(info['clock_out']),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _requestCorrection() async {
@@ -461,10 +547,26 @@ class _AttendanceViewState extends State<_AttendanceView> {
                                         errorMessage = null;
                                       });
                                       try {
+                                        final correctionLabel = {
+                                              'incorrect_automatic_absence':
+                                                  'Incorrect automatic absence',
+                                              'missing_check_in':
+                                                  'Missing check-in',
+                                              'missing_check_out':
+                                                  'Missing check-out',
+                                              'other': 'Other',
+                                            }[type] ??
+                                            'Other';
+                                        final requestReason = [
+                                          'Correction type: $correctionLabel',
+                                          if (trimmedCheckIn.isNotEmpty)
+                                            'Corrected check-in: $trimmedCheckIn',
+                                          'Reason: $trimmedReason',
+                                        ].join('\n');
                                         final token = _token;
                                         final response = await http
                                             .post(
-                                              Uri.parse('${ApiConfig.baseUrl}/attendance/corrections'),
+                                              Uri.parse('${ApiConfig.baseUrl}/attendance/permissions'),
                                               headers: {
                                                 'Content-Type': 'application/json',
                                                 'Accept': 'application/json',
@@ -472,11 +574,11 @@ class _AttendanceViewState extends State<_AttendanceView> {
                                                   'Authorization': 'Bearer $token',
                                               },
                                               body: jsonEncode({
-                                                'attendanceDate':
-                                                    DateFormat('yyyy-MM-dd').format(date),
-                                                'correctionType': type,
-                                                'correctedCheckIn': trimmedCheckIn,
-                                                'reason': trimmedReason,
+                                                'type':
+                                                    'attendance_regularization',
+                                                'date': DateFormat('yyyy-MM-dd')
+                                                    .format(date),
+                                                'reason': requestReason,
                                               }),
                                             )
                                             .timeout(const Duration(seconds: 15));
@@ -553,7 +655,10 @@ class _AttendanceViewState extends State<_AttendanceView> {
       year: year,
       month: month,
       label: monthLabel,
-      onDayTap: (day) { final selected = DateTime(year, month, day); setState(() => _selectedDate = selected); final id = int.tryParse(context.read<AuthService>().userId ?? ''); if (id != null) showDialog<void>(context: context, builder: (_) => AttendanceDetailsDialog(employeeId: id, date: selected)); },
+      onDayTap: (day) {
+        setState(() => _selectedDate = DateTime(year, month, day));
+        _showAttendanceDetails(day);
+      },
       mobile: widget.mobile,
       dataFor: dataFor,
       onPrevious: () => changeMonth(-1),
@@ -755,6 +860,38 @@ class _AttendanceCalendar extends StatelessWidget {
       ),
     ]);
   }
+}
+
+class _AttendanceDetailLine extends StatelessWidget {
+  const _AttendanceDetailLine({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    margin: const EdgeInsets.only(bottom: 8),
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+    decoration: BoxDecoration(
+      color: const Color(0xFFF7F9FD),
+      border: Border.all(color: employeeLine),
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Row(
+      children: [
+        Text(label, style: const TextStyle(color: employeeMuted)),
+        const Spacer(),
+        Text(
+          value,
+          style: const TextStyle(
+            color: employeeNavy,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _EmptyCalendarDay extends StatelessWidget {
