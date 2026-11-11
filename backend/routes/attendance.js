@@ -17,6 +17,9 @@ router.get('/dashboard', function (req, res, next) {
   return attendance.employeeDashboard(req, res, next);
 });
 router.get('/clock-logs', attendance.requireAdmin, attendance.clockLogs);
+router.get('/clock-logs/calendar', attendance.requireAdmin, attendance.clockLogCalendar);
+router.patch('/clock-logs/status', attendance.requireAdmin, attendance.correctClockLogStatus);
+router.get('/details', attendance.attendanceDetails);
 router.get('/clock-logs/:id/remarks', attendance.requireAdmin, attendance.clockLogRemarks);
 router.post('/clock-logs/:id/remarks', attendance.requireAdmin, attendance.addClockLogRemark);
 router.get('/overtime/my', attendance.myOvertime);
@@ -43,5 +46,7 @@ router.post('/clock-out', attendance.checkOut);
 router.post('/reclock-in-request', attendance.createReclockInRequest);
 router.get('/permissions/mine', attendance.myPermissions);
 router.post('/permissions', attendance.createPermission);
+router.get('/corrections', attendance.correctionStatus);
+router.post('/corrections', attendance.createCorrection);
 
 module.exports = router;

@@ -7,6 +7,7 @@ import '../../shared/theme/admin_surface_palette.dart';
 
 import '../../shared/widgets/admin_top_nav.dart';
 import '../../../../services/hrms_clock_logs_api.dart';
+import 'attendance_correction_drawer.dart';
 
 const _blue = Color(0xFF1769E0);
 const _navy = Color(0xFF081B3C);
@@ -1661,8 +1662,26 @@ class _ClockWorkspaceState extends State<_ClockWorkspace> {
   String status = 'All statuses';
   String role = 'All designations';
   int page = 0;
-  String? selectedId;
   static const perPage = 10;
+
+  void _openAttendanceCorrection(Map<String, dynamic> log) {
+    final employeeId = int.tryParse('${log['employeeId']}') ?? 0;
+    if (employeeId <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This clock log has no employee record.')),
+      );
+      return;
+    }
+
+    showAttendanceCorrectionDrawer(
+      context,
+      employeeId: employeeId,
+      employeeName: '${log['employeeName'] ?? 'Employee'}',
+      staffId: '${log['staffId'] ?? employeeId}',
+      initialMonth: DateTime.tryParse('${log['date'] ?? ''}') ?? DateTime.now(),
+      onChanged: widget.onRetry,
+    );
+  }
 
   Future<void> _showRemarks(Map<String, dynamic> log) async {
     final id = '${log['id']}';
@@ -1814,9 +1833,6 @@ class _ClockWorkspaceState extends State<_ClockWorkspace> {
     final pages = filtered.isEmpty ? 1 : (filtered.length / perPage).ceil();
     final current = page.clamp(0, pages - 1);
     final shown = filtered.skip(current * perPage).take(perPage).toList();
-    final selected = filtered
-        .where((e) => '${e['id']}' == selectedId)
-        .firstOrNull;
     final missing = filtered
         .where((e) => _clockStatus(e) == 'Missing out')
         .length;
@@ -1827,8 +1843,7 @@ class _ClockWorkspaceState extends State<_ClockWorkspace> {
         )
         .length;
     return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 1050;
+      builder: (context, _) {
         return Padding(
           padding: const EdgeInsets.fromLTRB(18, 12, 18, 12),
           child: Column(
@@ -2134,53 +2149,8 @@ class _ClockWorkspaceState extends State<_ClockWorkspace> {
                                                     (entry) {
                                                       final log = entry.value;
                                                       return DataRow(
-                                                      selected:
-                                                          '${log['id']}' ==
-                                                          selectedId,
-                                                      onSelectChanged: (_) {
-                                                        if (compact) {
-                                                          showDialog<void>(
-                                                            context: context,
-                                                            builder: (context) => Dialog(
-                                                              child: SizedBox(
-                                                                width: 400,
-                                                                height:
-                                                                    MediaQuery.sizeOf(
-                                                                      context,
-                                                                    ).height *
-                                                                    .85,
-                                                                child: LayoutBuilder(
-                                                                  builder:
-                                                                      (
-                                                                        context,
-                                                                        panel,
-                                                                      ) => FittedBox(
-                                                                        fit: BoxFit
-                                                                            .scaleDown,
-                                                                        alignment:
-                                                                            Alignment.topCenter,
-                                                                        child: SizedBox(
-                                                                          width:
-                                                                              panel.maxWidth,
-                                                                          child: _details(
-                                                                            log,
-                                                                            () => Navigator.pop(
-                                                                              context,
-                                                                            ),
-                                                                          ),
-                                                                        ),
-                                                                      ),
-                                                                ),
-                                                              ),
-                                                            ),
-                                                          );
-                                                        } else {
-                                                          setState(
-                                                            () => selectedId =
-                                                                '${log['id']}',
-                                                          );
-                                                        }
-                                                      },
+                                                      onSelectChanged: (_) =>
+                                                          _openAttendanceCorrection(log),
                                                       cells: [
                                                         DataCell(Text('${current * perPage + entry.key + 1}')),
                                                         DataCell(Text('${log['employeeName'] ?? '-'}')),
@@ -2274,54 +2244,6 @@ class _ClockWorkspaceState extends State<_ClockWorkspace> {
                                 ),
                               ),
                             ],
-                          ),
-                        ),
-                      ),
-                      AnimatedContainer(
-                        duration: MediaQuery.disableAnimationsOf(context)
-                            ? Duration.zero
-                            : const Duration(milliseconds: 280),
-                        curve: Curves.easeInOutCubic,
-                        width: selected != null && !compact
-                            ? (constraints.maxWidth * .32).clamp(380.0, 600.0) + 14
-                            : 0,
-                        child: ClipRect(
-                          child: OverflowBox(
-                            alignment: Alignment.centerRight,
-                            minWidth: (constraints.maxWidth * .32).clamp(380.0, 600.0),
-                            maxWidth: (constraints.maxWidth * .32).clamp(380.0, 600.0),
-                            child: LayoutBuilder(
-                              builder: (context, panel) => SingleChildScrollView(
-                                child: AnimatedSwitcher(
-                                  duration: MediaQuery.disableAnimationsOf(context)
-                                      ? Duration.zero
-                                      : const Duration(milliseconds: 220),
-                                  transitionBuilder: (child, animation) => FadeTransition(
-                                    opacity: animation,
-                                    child: SlideTransition(
-                                      position: Tween<Offset>(
-                                        begin: const Offset(0.025, 0),
-                                        end: Offset.zero,
-                                      ).animate(animation),
-                                      child: child,
-                                    ),
-                                  ),
-                                  child: selected == null || compact
-                                      ? const SizedBox.shrink(key: ValueKey('empty'))
-                                      : ConstrainedBox(
-                                          key: ValueKey(selectedId),
-                                          constraints: BoxConstraints(
-                                            minHeight: panel.maxHeight,
-                                            minWidth: panel.maxWidth,
-                                          ),
-                                          child: _details(
-                                            selected,
-                                            () => setState(() => selectedId = null),
-                                          ),
-                                        ),
-                                ),
-                              ),
-                            ),
                           ),
                         ),
                       ),
@@ -2614,6 +2536,22 @@ class _ClockWorkspaceState extends State<_ClockWorkspace> {
           spacing: 8,
           runSpacing: 8,
           children: [
+            OutlinedButton.icon(
+              onPressed: () {
+                final employeeId = int.tryParse('${log['employeeId']}') ?? 0;
+                if (employeeId <= 0) return;
+                showAttendanceCorrectionDrawer(
+                  context,
+                  employeeId: employeeId,
+                  employeeName: '${log['employeeName'] ?? 'Employee'}',
+                  staffId: '${log['staffId'] ?? employeeId}',
+                  initialMonth: DateTime.tryParse('${log['date'] ?? ''}') ?? DateTime.now(),
+                  onChanged: widget.onRetry,
+                );
+              },
+              icon: const Icon(Icons.edit_calendar_outlined, size: 17),
+              label: const Text('Correct Attendance'),
+            ),
             OutlinedButton.icon(
               onPressed: () => _showRemarks(log),
               icon: const Icon(Icons.chat_bubble_outline, size: 17),

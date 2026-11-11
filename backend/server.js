@@ -55,9 +55,16 @@ async function start() {
   await ensureHrmsEmployeeTables(db);
   await ensureHrmsTrackingTables(db);
   await ensureWeeklyOffTemplateTables(db);
+
+  // The API must become available as soon as its schema is ready. Payroll
+  // generation can be slow on a large database, so it must not block every
+  // attendance endpoint during server startup.
+  app.listen(port, () => console.log(`Attendance API running at http://localhost:${port}`));
+
   // Run once on startup so a restart after midnight can catch up. The
   // scheduled job below is the normal daily trigger.
-  await payroll.runAutomaticPayroll();
+  payroll.runAutomaticPayroll().catch((error) =>
+    console.error('Automatic payroll startup failed:', error.message));
   // 00:01 every day in the business timezone. runAutomaticPayroll() checks
   // the policy switch and the last-generated date, so retries are idempotent.
   cron.schedule('1 0 * * *', () => {
@@ -70,7 +77,6 @@ async function start() {
     clockOutReminder.processAll(db).catch((error) =>
       console.error('Clock-out reminder scheduler failed:', error.message));
   }, 60 * 1000).unref();
-  app.listen(port, () => console.log(`Attendance API running at http://localhost:${port}`));
 }
 
 start().catch((error) => {

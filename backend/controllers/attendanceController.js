@@ -6,6 +6,7 @@ const autoClockoutService = require('../lib/autoClockout');
 const clockOutReminder = require('../lib/clockOutReminder');
 const calendar = require('../lib/calendarWorkingDays');
 const weeklyOffTemplates = require('../lib/weeklyOffTemplates');
+const payrollController = require('./hrmsPayrollController');
 
 function ok(res, data, message) {
   message = message || 'OK';
@@ -605,6 +606,226 @@ async function clockLogs(req, res) {
   } catch (error) {
     console.error('GET /attendance/clock-logs', error);
     return fail(res, 500, error.message);
+  }
+}
+
+async function ensureAdminCorrectionStorage() {
+  const [columns] = await db.query(`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance_records'`);
+  const names = new Set(columns.map((column) => column.COLUMN_NAME));
+  const additions = {
+    admin_status_override: 'VARCHAR(16) NULL',
+    admin_override_reason: 'TEXT NULL',
+    admin_override_by: 'INT NULL',
+    admin_override_at: 'DATETIME NULL'
+  };
+  for (const [name, definition] of Object.entries(additions)) {
+    if (!names.has(name)) await db.query(`ALTER TABLE attendance_records ADD COLUMN \`${name}\` ${definition}`);
+  }
+  await db.query(`CREATE TABLE IF NOT EXISTS attendance_admin_corrections (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    attendance_id BIGINT UNSIGNED NOT NULL, employee_id INT NOT NULL,
+    attendance_date DATE NOT NULL, previous_status VARCHAR(32) NOT NULL,
+    corrected_status VARCHAR(16) NOT NULL, reason TEXT NOT NULL,
+    admin_id INT NOT NULL, created_at DATETIME NOT NULL,
+    KEY admin_correction_employee_date (employee_id, attendance_date)
+  )`);
+}
+
+function validIsoDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false;
+  const [year, month, day] = String(value).split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+function correctionStatus(record) {
+  if (record && record.admin_status_override) {
+    return String(record.admin_status_override).toLowerCase() === 'present' ? 'Present' : 'Absent';
+  }
+  if (!record) return 'No record';
+  return policy.displayStatus({ status: record.attendance_status, isLate: Number(record.is_late), checkInAt: record.check_in_at, checkOutAt: record.check_out_at });
+}
+
+async function correctionContext(employeeId, date, profile, resolver, overrides, executor = db, lock = false) {
+  const [records] = await executor.query(
+    `SELECT * FROM attendance_records WHERE employee_id = ? AND attendance_date = ? LIMIT 1${lock ? ' FOR UPDATE' : ''}`,
+    [employeeId, date]
+  );
+  const record = records[0] || null;
+  const override = overrides.get(date);
+  const [leaveRows] = await executor.query(
+    `SELECT l.id FROM employee_leaves l
+     WHERE l.employee_id = ? AND l.status = 'APPROVED' AND ? BETWEEN l.from_date AND l.to_date LIMIT 1`,
+    [employeeId, date]
+  );
+  const outsideEmployment = Boolean(profile.joining_date && date < sqlDate(profile.joining_date) && !record);
+  const future = date > policy.todayIstDate();
+  const holiday = override === 'Holiday';
+  const weeklyOff = !holiday && !calendar.isEmployeeWorkingDay(date, resolver, overrides);
+  const onLeave = leaveRows.length > 0;
+  return {
+    record, future, holiday, weeklyOff, onLeave, outsideEmployment,
+    editable: !future && !holiday && !weeklyOff && !onLeave && !outsideEmployment,
+  };
+}
+
+async function clockLogCalendar(req, res) {
+  try {
+    const employeeId = Number(req.query.employeeId);
+    const month = parseMonthParam(req.query.month);
+    if (!Number.isSafeInteger(employeeId) || employeeId <= 0) return fail(res, 400, 'A valid employeeId is required');
+    if (!month) return fail(res, 400, 'month must be YYYY-MM');
+    await ensureAdminCorrectionStorage();
+    const person = await staff.findStaffById(db, employeeId);
+    if (!person) return fail(res, 404, 'Employee not found');
+    const [[profile]] = await db.query(`SELECT id, joining_date FROM hrms_employee_profiles WHERE employee_user_id = ? LIMIT 1`, [employeeId]);
+    if (!profile) return fail(res, 404, 'Employee profile not found');
+    const start = `${month}-01`;
+    const [year, monthNumber] = month.split('-').map(Number);
+    const end = `${month}-${String(new Date(Date.UTC(year, monthNumber, 0)).getUTCDate()).padStart(2, '0')}`;
+    const overrides = await calendar.overridesForPeriod(start, end);
+    const resolver = await weeklyOffTemplates.offDaysForProfileByDate(db, Number(profile.id), start, end, [0]);
+    const days = [];
+    for (let day = 1; day <= Number(end.slice(-2)); day += 1) {
+      const date = `${month}-${String(day).padStart(2, '0')}`;
+      const context = await correctionContext(employeeId, date, profile, resolver, overrides);
+      let status = correctionStatus(context.record);
+      if (context.future) status = 'Future';
+      else if (context.outsideEmployment) status = 'Outside employment';
+      else if (context.holiday) status = 'Holiday';
+      else if (context.weeklyOff) status = 'Weekly Off';
+      else if (context.onLeave) status = 'Leave';
+      days.push({
+        date, day, status, editable: context.editable, hasRecord: Boolean(context.record),
+        checkIn: context.record ? policy.formatDisplayTime(sqlDateTime(context.record.check_in_at)) : null,
+        checkOut: context.record ? policy.formatDisplayTime(sqlDateTime(context.record.check_out_at)) : null,
+        adminReason: context.record && context.record.admin_override_reason || null,
+      });
+    }
+    return ok(res, { employee: { id: employeeId, name: person.full_name, staffId: person.staff_id }, month, days });
+  } catch (error) {
+    console.error('GET /attendance/clock-logs/calendar', error);
+    return fail(res, 500, 'Unable to load the attendance calendar. Please try again.');
+  }
+}
+
+async function correctClockLogStatus(req, res) {
+  const employeeId = Number(req.body && req.body.employeeId);
+  const date = String(req.body && req.body.date || '');
+  const status = String(req.body && req.body.status || '').toLowerCase();
+  const reason = String(req.body && req.body.reason || '').trim();
+  if (!Number.isSafeInteger(employeeId) || employeeId <= 0) return fail(res, 400, 'A valid employee is required');
+  if (!validIsoDate(date)) return fail(res, 400, 'Choose a valid attendance date');
+  if (date > policy.todayIstDate()) return fail(res, 400, 'Future dates cannot be corrected');
+  if (status !== 'present' && status !== 'absent') return fail(res, 400, 'Status must be Present or Absent');
+  if (!reason || reason.length > 1000) return fail(res, 400, 'Enter an admin reason of up to 1,000 characters');
+  let connection;
+  try {
+    await ensureAdminCorrectionStorage();
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    const [[profile]] = await connection.query(`SELECT id, joining_date, salary_type,
+      flexible_cycle_start_day, flexible_cycle_end_day, flexible_cycle_start_date, flexible_cycle_end_date
+      FROM hrms_employee_profiles WHERE employee_user_id = ? LIMIT 1`, [employeeId]);
+    if (!profile) throw Object.assign(new Error('Employee not found'), { status: 404 });
+    const month = date.slice(0, 7);
+    const overrides = await calendar.overridesForPeriod(`${month}-01`, date);
+    const resolver = await weeklyOffTemplates.offDaysForProfileByDate(db, Number(profile.id), `${month}-01`, date, [0]);
+    const context = await correctionContext(employeeId, date, profile, resolver, overrides, connection, true);
+    if (!context.editable) throw Object.assign(new Error('This date cannot be corrected here.'), { status: 409 });
+    if (context.record && context.record.check_in_at && !context.record.check_out_at) {
+      throw Object.assign(new Error('The employee has an active check-in for this date.'), { status: 409 });
+    }
+    const [paidRows] = await connection.query(`SELECT id FROM hrms_payroll_items
+      WHERE employee_user_id = ? AND status = 'paid' AND ? BETWEEN period_start AND period_end LIMIT 1`, [employeeId, date]);
+    if (paidRows.length) throw Object.assign(new Error('Payroll is already paid for this date. Reopen payroll first.'), { status: 409 });
+    const previous = correctionStatus(context.record).toLowerCase();
+    if (previous === status) throw Object.assign(new Error('Choose a status different from the current status.'), { status: 409 });
+    let attendanceId = context.record && context.record.id;
+    if (!attendanceId) {
+      const [created] = await connection.query(`INSERT INTO attendance_records
+        (employee_id, attendance_date, attendance_status, session_status, is_late, admin_status_override, admin_override_reason, admin_override_by, admin_override_at)
+        VALUES (?, ?, ?, 'closed', 0, ?, ?, ?, ?)`,
+        [employeeId, date, status, status, reason, req.user.id, policy.nowIstDateTime()]);
+      attendanceId = created.insertId;
+    } else {
+      await connection.query(`UPDATE attendance_records SET attendance_status = ?, admin_status_override = ?,
+        admin_override_reason = ?, admin_override_by = ?, admin_override_at = ?, session_status = 'closed', is_late = 0 WHERE id = ?`,
+        [status, status, reason, req.user.id, policy.nowIstDateTime(), attendanceId]);
+    }
+    await connection.query(`INSERT INTO attendance_admin_corrections
+      (attendance_id, employee_id, attendance_date, previous_status, corrected_status, reason, admin_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [attendanceId, employeeId, date, previous || 'no_record', status, reason, req.user.id, policy.nowIstDateTime()]);
+    await connection.commit();
+    let warning = null;
+    try {
+      const period = String(profile.salary_type || 'Standard') === 'Flexible'
+        ? payrollController.flexiblePeriodContaining(profile, date)
+        : null;
+      const payrollMonth = period ? { year: period.year, month: period.month } : { year: Number(date.slice(0, 4)), month: Number(date.slice(5, 7)) };
+      await payrollController.generatePayrollRun(payrollMonth.year, payrollMonth.month, policy.todayIstDate(), { profileIds: [Number(profile.id)] });
+    } catch (_) {
+      warning = 'Attendance saved, but payroll refresh failed. Regenerate the unpaid payroll before payment.';
+    }
+    return ok(res, { employeeId, date, status, reason, warning }, warning || 'Attendance status corrected');
+  } catch (error) {
+    if (connection) await connection.rollback();
+    return fail(res, error.status || 500, error.status ? error.message : 'Unable to save attendance correction. Please try again.');
+  } finally {
+    if (connection) connection.release();
+  }
+}
+
+async function attendanceDetails(req, res) {
+  const employeeId = Number(req.query.employeeId);
+  const date = parseDateParam(req.query.date);
+  if (!Number.isSafeInteger(employeeId) || employeeId <= 0) return fail(res, 400, 'A valid employeeId is required');
+  if (!date) return fail(res, 400, 'date must be YYYY-MM-DD');
+  if (String(req.user && req.user.userType).toLowerCase() !== 'admin' && employeeId !== Number(req.user && req.user.id)) return fail(res, 403, 'You can view only your own attendance');
+  try {
+    const person = await staff.findStaffById(db, employeeId);
+    if (!person) return fail(res, 404, 'Employee not found');
+    const record = await getRecord(employeeId, date);
+    if (!record) {
+      return ok(res, { date, status: 'Absent', checkInAt: null, checkOutAt: null, workingMinutes: 0, breakMinutes: 0, breaks: [], employeeName: person.full_name, employeeId, staffId: person.staff_id, workMode: null, checkInLocation: null, checkOutLocation: null, record: null });
+    }
+    const [breakRows] = await db.query(
+      `SELECT started_at, ended_at, duration_minutes, exceeded_comment
+       FROM attendance_breaks WHERE attendance_id = ? ORDER BY started_at ASC`, [record.id]
+    );
+    const [[profile]] = await db.query(
+      'SELECT work_mode FROM hrms_employee_profiles WHERE employee_user_id = ? LIMIT 1', [employeeId]
+    );
+    const workingMinutes = await persistedWorkedMinutes(record);
+    const breakTotal = breakRows.reduce((total, item) => total + Number(item.duration_minutes || 0), 0);
+    const location = (latitude, longitude) => latitude == null || longitude == null
+      ? null : { latitude: Number(latitude), longitude: Number(longitude), accuracy: null };
+    return ok(res, {
+      date,
+      status: correctionStatus(record),
+      checkInAt: sqlDateTime(record.check_in_at),
+      checkOutAt: sqlDateTime(record.check_out_at),
+      workingMinutes,
+      breakMinutes: breakTotal,
+      breaks: breakRows.map((item) => ({
+        startedAt: sqlDateTime(item.started_at), endedAt: sqlDateTime(item.ended_at),
+        durationMinutes: Number(item.duration_minutes || 0), reason: item.exceeded_comment || null
+      })),
+      employeeName: person.full_name, employeeId, staffId: person.staff_id,
+      workMode: profile && profile.work_mode || record.check_in_method || null,
+      checkInLocation: location(record.check_in_latitude, record.check_in_longitude),
+      checkOutLocation: location(record.check_out_latitude, record.check_out_longitude),
+      adminCorrection: record.admin_status_override ? {
+        status: record.admin_status_override,
+        reason: record.admin_override_reason,
+        correctedAt: sqlDateTime(record.admin_override_at)
+      } : null
+    });
+  } catch (error) {
+    console.error('GET /attendance/details', error);
+    return fail(res, 500, 'Unable to load attendance details. Please try again.');
   }
 }
 
@@ -1467,6 +1688,39 @@ async function createPermission(req, res) {
   }
 }
 
+async function ensureCorrectionTable() {
+  await db.query(`CREATE TABLE IF NOT EXISTS attendance_correction_requests (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, employee_id INT NOT NULL,
+    attendance_date DATE NOT NULL, correction_type VARCHAR(64) NOT NULL,
+    corrected_check_in TIME NULL, corrected_check_out TIME NULL, corrected_location JSON NULL,
+    reason TEXT NOT NULL, attachment_path VARCHAR(500) NULL, original_values JSON NULL,
+    status ENUM('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+    rejection_reason TEXT NULL, requested_at DATETIME NOT NULL, requested_by INT NOT NULL,
+    reviewed_at DATETIME NULL, reviewed_by INT NULL, KEY correction_employee_date (employee_id, attendance_date)
+  )`);
+}
+async function correctionStatus(req, res) {
+  try { await ensureCorrectionTable(); const date = parseDateParam(req.query.date); if (!date) return fail(res, 400, 'date must be YYYY-MM-DD');
+    const employeeId = Number(req.query.employeeId || req.user.id); const isAdmin = String(req.user.userType).toLowerCase() === 'admin';
+    if (!isAdmin && employeeId !== req.user.id) return fail(res, 403, 'You can view only your own corrections');
+    const record = await getRecord(employeeId, date);
+    const [rows] = await db.query('SELECT id, correction_type, status, reason, requested_at, rejection_reason FROM attendance_correction_requests WHERE employee_id = ? AND attendance_date = ? ORDER BY requested_at DESC', [employeeId, date]);
+    return ok(res, { record: record ? serializeRecord(record, await staff.findStaffById(db, employeeId)) : null, requests: rows });
+  } catch (error) { return fail(res, 500, 'Unable to load correction details. Please try again.'); }
+}
+async function createCorrection(req, res) {
+  try { await ensureCorrectionTable(); const body = req.body || {}; const date = parseDateParam(body.attendanceDate); const type = String(body.correctionType || '').trim(); const reason = String(body.reason || '').trim();
+    const allowed = ['incorrect_automatic_absence','missing_check_in','missing_check_out','incorrect_check_in_time','incorrect_check_out_time','incorrect_work_location','other'];
+    if (!date || date >= policy.todayIstDate()) return fail(res, 400, 'Choose a valid past attendance date'); if (!allowed.includes(type)) return fail(res, 400, 'Choose a correction type'); if (reason.length < 3) return fail(res, 400, 'Enter a reason of at least 3 characters');
+    const inTime = String(body.correctedCheckIn || ''); const outTime = String(body.correctedCheckOut || ''); const needsIn = type === 'missing_check_in' || type === 'incorrect_check_in_time'; const needsOut = type === 'missing_check_out' || type === 'incorrect_check_out_time';
+    if ((needsIn && !/^\d{2}:\d{2}$/.test(inTime)) || (needsOut && !/^\d{2}:\d{2}$/.test(outTime))) return fail(res, 400, 'Enter a valid corrected time in HH:MM format'); if (inTime && outTime && outTime < inTime) return fail(res, 400, 'Corrected check-out cannot be earlier than check-in');
+    const [pending] = await db.query("SELECT id FROM attendance_correction_requests WHERE employee_id=? AND attendance_date=? AND correction_type=? AND status='pending'", [req.user.id, date, type]); if (pending.length) return fail(res, 409, 'A pending request for this correction already exists');
+    const record = await getRecord(req.user.id, date); const original = record ? { checkInAt: sqlDateTime(record.check_in_at), checkOutAt: sqlDateTime(record.check_out_at), status: record.attendance_status } : null;
+    const [result] = await db.query('INSERT INTO attendance_correction_requests (employee_id,attendance_date,correction_type,corrected_check_in,corrected_check_out,corrected_location,reason,attachment_path,original_values,status,requested_at,requested_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', [req.user.id,date,type,inTime || null,outTime || null,body.correctedLocation ? JSON.stringify(body.correctedLocation) : null,reason,body.attachment || null,JSON.stringify(original),'pending',policy.nowIstDateTime(),req.user.id]);
+    return ok(res, { id: result.insertId, status: 'Pending' }, 'Correction request submitted');
+  } catch (error) { return fail(res, 500, 'Unable to submit correction request. Please retry.'); }
+}
+
 // A completed same-day attendance session can be reopened only after an Admin
 // approves this request.  The saved timestamps are included in the request
 // reason so the existing Approvals screen can show the full context without a
@@ -1636,6 +1890,9 @@ module.exports = {
   requireAdmin: requireAdmin,
   dashboard: dashboard,
   clockLogs: clockLogs,
+  clockLogCalendar: clockLogCalendar,
+  correctClockLogStatus: correctClockLogStatus,
+  attendanceDetails: attendanceDetails,
   clockLogRemarks: clockLogRemarks,
   addClockLogRemark: addClockLogRemark,
   myOvertime: myOvertime,
@@ -1654,6 +1911,8 @@ module.exports = {
   autoClockoutResponse: autoClockoutResponse,
   myPermissions: myPermissions,
   createPermission: createPermission,
+  correctionStatus: correctionStatus,
+  createCorrection: createCorrection,
   createReclockInRequest: createReclockInRequest,
   adminPermissions: adminPermissions,
   reviewPermission: reviewPermission,

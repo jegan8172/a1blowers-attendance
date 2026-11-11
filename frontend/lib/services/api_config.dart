@@ -10,9 +10,13 @@ class ApiConfig {
 
   static String get baseUrl {
     if (kIsWeb) {
-      if (Uri.base.host == 'localhost' ||
+      if (kDebugMode ||
+          (Uri.base.port != 0 && Uri.base.port != 80 && Uri.base.port != 443) ||
+          Uri.base.host == 'localhost' ||
           Uri.base.host == '127.0.0.1') {
-        return 'http://localhost:3000/api';
+        // Use IPv4 explicitly in local web development. On this machine,
+        // `localhost` resolves to a different stale service over IPv6.
+        return 'http://127.0.0.1:3001/api';
       }
 
       return '/api';
@@ -24,9 +28,11 @@ class ApiConfig {
 
   static String get socketUrl {
     if (kIsWeb) {
-      if (Uri.base.host == 'localhost' ||
+      if (kDebugMode ||
+          (Uri.base.port != 0 && Uri.base.port != 80 && Uri.base.port != 443) ||
+          Uri.base.host == 'localhost' ||
           Uri.base.host == '127.0.0.1') {
-        return 'http://localhost:3000';
+        return 'http://127.0.0.1:3001';
       }
 
       return Uri.base.origin;

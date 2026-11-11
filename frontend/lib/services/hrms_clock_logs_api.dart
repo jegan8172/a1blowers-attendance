@@ -6,6 +6,74 @@ import 'api_config.dart';
 import 'auth_storage.dart';
 
 abstract final class HrmsClockLogsApi {
+  static Future<Map<String, dynamic>> calendar({
+    required int employeeId,
+    required DateTime month,
+  }) async {
+    final token = await AuthStorage.getString('auth_token');
+    final response = await http.get(
+      Uri.parse('${ApiConfig.baseUrl}/attendance/clock-logs/calendar').replace(
+        queryParameters: {
+          'employeeId': '$employeeId',
+          'month': '${month.year}-${month.month.toString().padLeft(2, '0')}',
+        },
+      ),
+      headers: {if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token'},
+    );
+    final decoded = response.body.isEmpty ? <String, dynamic>{} : jsonDecode(response.body);
+    final result = decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{};
+    if (response.statusCode >= 400 || result['success'] == false) {
+      throw Exception(result['message']?.toString() ?? 'Could not load attendance calendar');
+    }
+    return result['data'] is Map ? Map<String, dynamic>.from(result['data']) : <String, dynamic>{};
+  }
+
+  static Future<Map<String, dynamic>> correctStatus({
+    required int employeeId,
+    required DateTime date,
+    required String status,
+    required String reason,
+  }) async {
+    final token = await AuthStorage.getString('auth_token');
+    final response = await http.patch(
+      Uri.parse('${ApiConfig.baseUrl}/attendance/clock-logs/status'),
+      headers: {
+        'Content-Type': 'application/json',
+        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({
+        'employeeId': employeeId,
+        'date': _date(date),
+        'status': status,
+        'reason': reason,
+      }),
+    );
+    final decoded = response.body.isEmpty ? <String, dynamic>{} : jsonDecode(response.body);
+    final result = decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{};
+    if (response.statusCode >= 400 || result['success'] == false) {
+      throw Exception(result['message']?.toString() ?? 'Could not save attendance correction');
+    }
+    return result;
+  }
+
+  static Future<Map<String, dynamic>> attendanceDetails({
+    required int employeeId,
+    required DateTime date,
+  }) async {
+    final token = await AuthStorage.getString('auth_token');
+    final response = await http.get(
+      Uri.parse('${ApiConfig.baseUrl}/attendance/details').replace(
+        queryParameters: {'employeeId': '$employeeId', 'date': _date(date)},
+      ),
+      headers: {if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token'},
+    );
+    final decoded = response.body.isEmpty ? <String, dynamic>{} : jsonDecode(response.body);
+    final map = decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{};
+    if (response.statusCode >= 400 || map['success'] == false) {
+      throw Exception(map['message']?.toString() ?? 'Could not load attendance details');
+    }
+    return map['data'] is Map ? Map<String, dynamic>.from(map['data']) : <String, dynamic>{};
+  }
   static Future<List<Map<String, dynamic>>> remarks(String id) async {
     final token = await AuthStorage.getString('auth_token');
     final response = await http.get(

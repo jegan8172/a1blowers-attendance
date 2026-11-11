@@ -344,7 +344,7 @@ async function computeRows(year, month, today, options) {
     ? await db.query(
         `SELECT employee_id, DATE_FORMAT(attendance_date, '%Y-%m-%d') AS attendance_date,
                 DATE_FORMAT(check_in_at, '%Y-%m-%d %H:%i:%s') AS check_in_at,
-                is_late, attendance_status
+                is_late, attendance_status, admin_status_override
          FROM attendance_records
          WHERE attendance_date BETWEEN ? AND ?
            AND employee_id IN (?)`,
@@ -449,7 +449,13 @@ async function computeRows(year, month, today, options) {
       // 1. Safely read the status to ignore case (e.g., 'Absent' vs 'absent')
       const attStatus = record && record.attendance_status ? String(record.attendance_status).toLowerCase().trim() : '';
 
-      if (key && paidRegularizationSet.has(key)) {
+      if (String(record && record.admin_status_override || '').toLowerCase() === 'present') {
+        present += 1;
+        earnedDays += 1;
+      } else if (String(record && record.admin_status_override || '').toLowerCase() === 'absent') {
+        absent += 1;
+        absentEntries.push({ date: date, days: 1 });
+      } else if (key && paidRegularizationSet.has(key)) {
         // An approved paid regularization wins over a generated/explicit
         // absence, without manufacturing a clock-in timestamp.
         present += 1;
