@@ -259,10 +259,6 @@ class _TrackingPageState extends State<TrackingPage> {
   }
 
   Future<void> _openEmployeeDetails(_TrackedEmployee employee) async {
-    if (employee.mode == 'Office') {
-      _viewRoute(employee);
-      return;
-    }
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -2567,7 +2563,7 @@ class _EmployeeTrackingDetailsDialogState
     insetPadding: const EdgeInsets.all(24),
     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
     child: ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 1400, maxHeight: 900),
+      constraints: const BoxConstraints(maxWidth: 1400, maxHeight: 760),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(24, 20, 24, 18),
         child: Column(
@@ -2740,7 +2736,7 @@ class _EmployeeTrackingDetailsDialogState
         ),
         const SizedBox(height: 10),
         SizedBox(
-          height: 520,
+          height: 340,
           child: LayoutBuilder(
             builder: (_, constraints) {
               final stacked = constraints.maxWidth < 720;
@@ -3012,33 +3008,35 @@ class _EmployeeTrackingDetailsDialogState
     ],
   );
 
-  List<Widget> _routeHistoryRows() =>
-      _activityPoints.asMap().entries.map((entry) {
-        final point = entry.value;
-        final isStart = entry.key == 0;
-        final isEnd =
-            _sessionStoppedOnSelectedDate &&
-            entry.key == _activityPoints.length - 1;
-        return _historyRow(
-          time: point.time,
-          title: isStart
-              ? 'Start'
-              : isEnd
-              ? 'End'
-              : 'Location update',
-          detail: point.location,
-          icon: isStart
-              ? Icons.play_circle_fill
-              : isEnd
-              ? Icons.stop_circle
-              : Icons.location_on_outlined,
-          color: isStart
-              ? const Color(0xFF00A878)
-              : isEnd
-              ? Colors.red
-              : HrmsColors.blue,
-        );
-      }).toList();
+  List<Widget> _routeHistoryRows() {
+    final recentPoints = _activityPoints.length > 3
+        ? _activityPoints.sublist(_activityPoints.length - 3)
+        : _activityPoints;
+    return recentPoints.map((point) {
+      final isStart = point == _activityPoints.first;
+      final isEnd =
+          _sessionStoppedOnSelectedDate && point == _activityPoints.last;
+      return _historyRow(
+        time: point.time,
+        title: isStart
+            ? 'Start'
+            : isEnd
+            ? 'End'
+            : 'Location update',
+        detail: point.location,
+        icon: isStart
+            ? Icons.play_circle_fill
+            : isEnd
+            ? Icons.stop_circle
+            : Icons.location_on_outlined,
+        color: isStart
+            ? const Color(0xFF00A878)
+            : isEnd
+            ? Colors.red
+            : HrmsColors.blue,
+      );
+    }).toList();
+  }
 
   List<Widget> _waitingReasonRows() => _waitingReasons
       .map(
@@ -3132,7 +3130,7 @@ class _EmployeeTrackingDetailsDialogState
 
   Widget _tabs() {
     const labels = [
-      'Route History',
+      'Latest 3 pings',
       'Waiting Popup Comments',
       'Permanent Comments',
     ];
@@ -3195,29 +3193,7 @@ class _EmployeeTrackingDetailsDialogState
   Widget _tabContent() {
     if (_tab == 0) {
       return _historyList(
-        _activityPoints
-            .map(
-              (point) => _historyRow(
-                time: point.time,
-                title: point == _activityPoints.first
-                    ? 'Start'
-                    : point == _activityPoints.last
-                    ? 'End'
-                    : 'Location update',
-                detail: point.location,
-                icon: point == _activityPoints.first
-                    ? Icons.play_circle_fill
-                    : point == _activityPoints.last
-                    ? Icons.stop_circle
-                    : Icons.location_on_outlined,
-                color: point == _activityPoints.first
-                    ? const Color(0xFF00A878)
-                    : point == _activityPoints.last
-                    ? Colors.red
-                    : HrmsColors.blue,
-              ),
-            )
-            .toList(),
+        _routeHistoryRows(),
         'No location updates were recorded on this date.',
       );
     }
