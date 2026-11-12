@@ -475,9 +475,10 @@ async function monthView(req, res) {
       };
     });
 
-    // Share payroll's canonical counts and money fields with the dashboard.
-    // Calendar cells remain presentation data, while every leave/deduction
-    // total now comes from the same calculation used by Payroll and Payslips.
+    // Share payroll's canonical counts, money fields, and per-day status with
+    // the dashboard.  The history/payslip ledger can contain an approved
+    // Present day without a physical check-in timestamp, so rebuilding grid
+    // cells from attendance_records alone would incorrectly show it as absent.
     const projections = await payroll.computeRows(year, month, today);
     const projectionByProfile = new Map(
       projections.map(function (item) { return [Number(item.profileId), item]; })
@@ -497,6 +498,42 @@ async function monthView(req, res) {
       employee.daysPaid = String(item.paidDays || 0);
       employee.afterLeaves = formatSalary(item.absentDeductions || 0);
       employee.updatedSalary = formatSalary(item.netPay || 0);
+
+      // Keep the compact dashboard summary readable without changing any
+      // payroll math. These values come from the same daily ledger used by
+      // payroll history, so a paid Half Leave with a late deduction is shown
+      // under Half Leave rather than being misleadingly attached to Late.
+      const dailyEntries = Array.isArray(item.dailyEntries) ? item.dailyEntries : [];
+      const sumPresentAmount = function (status) {
+        return dailyEntries
+          .filter(function (entry) { return entry.status === status; })
+          .reduce(function (sum, entry) { return sum + Number(entry.presentAmount || 0); }, 0);
+      };
+      employee.presentSalary = formatSalary(sumPresentAmount('Present'));
+      employee.halfLeave = dailyEntries.filter(function (entry) {
+        return entry.status === 'Half Leave';
+      }).length;
+      employee.halfLeaveEarnings = formatSalary(sumPresentAmount('Half Leave'));
+      employee.timeDeductionDays = dailyEntries.filter(function (entry) {
+        return Number(entry.lateDeduction || 0) > 0 || Number(entry.earlyExitDeduction || 0) > 0;
+      }).length;
+
+      const dayMarks = {
+        'Present': 'P',
+        'Late': 'L',
+        'Half Leave': 'HL',
+        'On Leave': 'LV',
+        'Early Exit': 'E',
+        'Absent': 'A',
+        'In Progress': '–',
+      };
+      for (let day = 1; day <= totalDays; day += 1) {
+        const date = ymd(year, month, day);
+        const status = item.dayStatuses && item.dayStatuses[date];
+        if (Object.prototype.hasOwnProperty.call(dayMarks, status)) {
+          employee.days[day - 1] = dayMarks[status];
+        }
+      }
     });
 
     // Day-wise KPIs reflect *today* specifically (a live snapshot) rather

@@ -991,6 +991,7 @@ class _AttendanceTable extends StatelessWidget {
             absentDeduction: employee.absentDeduction,
             late: employee.late,
             lateDeduction: employee.lateDeduction,
+            timeDeductionDays: employee.timeDeductionDays,
             excused: employee.excused,
             unexcused: employee.unexcused,
             halfLeave: employee.halfLeave,
@@ -999,9 +1000,8 @@ class _AttendanceTable extends StatelessWidget {
             salaryPerMonth: employee.salary,
             salaryPerDay: employee.salaryPerDay,
             presentSalary: employee.presentSalary,
-            lateSalary: employee.lateSalary,
-            totalSalaryAfterLeaves:
-                '${employee.daysPaid} ${employee.afterLeaves}',
+            halfLeaveEarnings: employee.halfLeaveEarnings,
+            paidDays: employee.daysPaid,
             updatedSalary: employee.updatedSalary,
           ),
       ],
@@ -1075,6 +1075,7 @@ class _EmployeeAttendance {
     required this.absentDeduction,
     required this.late,
     required this.lateDeduction,
+    required this.timeDeductionDays,
     required this.halfLeave,
     required this.earnedLeave,
     required this.approvedLeave,
@@ -1083,7 +1084,7 @@ class _EmployeeAttendance {
     required this.salary,
     required this.salaryPerDay,
     required this.presentSalary,
-    required this.lateSalary,
+    required this.halfLeaveEarnings,
     required this.daysPaid,
     required this.afterLeaves,
     required this.updatedSalary,
@@ -1098,6 +1099,7 @@ class _EmployeeAttendance {
   final String absentDeduction;
   final int late;
   final String lateDeduction;
+  final int timeDeductionDays;
   final int halfLeave;
   final int earnedLeave;
   final int approvedLeave;
@@ -1106,7 +1108,7 @@ class _EmployeeAttendance {
   final String salary;
   final String salaryPerDay;
   final String presentSalary;
-  final String lateSalary;
+  final String halfLeaveEarnings;
   final String daysPaid;
   final String afterLeaves;
   final String updatedSalary;
@@ -1126,6 +1128,7 @@ class _EmployeeAttendance {
       absentDeduction: (json['absentDeduction'] ?? '–').toString(),
       late: asInt(json['late']),
       lateDeduction: (json['lateDeduction'] ?? '₹0').toString(),
+      timeDeductionDays: asInt(json['timeDeductionDays']),
       halfLeave: asInt(json['halfLeave']),
       earnedLeave: asInt(json['earnedLeave']),
       approvedLeave: asInt(json['approvedLeave']),
@@ -1134,7 +1137,7 @@ class _EmployeeAttendance {
       salary: (json['salary'] ?? 'Not Set').toString(),
       salaryPerDay: (json['salaryPerDay'] ?? '–').toString(),
       presentSalary: (json['presentSalary'] ?? '–').toString(),
-      lateSalary: (json['lateSalary'] ?? '–').toString(),
+      halfLeaveEarnings: (json['halfLeaveEarnings'] ?? '–').toString(),
       daysPaid: (json['daysPaid'] ?? '0').toString(),
       afterLeaves: (json['afterLeaves'] ?? '–').toString(),
       updatedSalary: (json['updatedSalary'] ?? 'Not Set').toString(),

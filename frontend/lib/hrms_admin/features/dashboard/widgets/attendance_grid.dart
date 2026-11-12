@@ -41,6 +41,7 @@ class AttendanceRowData {
   final String absentDeduction;
   final int late;
   final String lateDeduction;
+  final int timeDeductionDays;
   final int excused;
   final int unexcused;
   final int halfLeave;
@@ -49,8 +50,8 @@ class AttendanceRowData {
   final String salaryPerMonth;
   final String salaryPerDay;
   final String presentSalary;
-  final String lateSalary;
-  final String totalSalaryAfterLeaves;
+  final String halfLeaveEarnings;
+  final String paidDays;
   final String updatedSalary;
 
   const AttendanceRowData({
@@ -63,6 +64,7 @@ class AttendanceRowData {
     required this.absentDeduction,
     required this.late,
     required this.lateDeduction,
+    required this.timeDeductionDays,
     required this.excused,
     required this.unexcused,
     required this.halfLeave,
@@ -71,8 +73,8 @@ class AttendanceRowData {
     required this.salaryPerMonth,
     required this.salaryPerDay,
     required this.presentSalary,
-    required this.lateSalary,
-    required this.totalSalaryAfterLeaves,
+    required this.halfLeaveEarnings,
+    required this.paidDays,
     required this.updatedSalary,
   });
 }
@@ -116,15 +118,15 @@ class _AttendanceGridState extends State<AttendanceGrid> {
   static const double _designationWidth = 82;
   static const double _frozenWidth = 40 + 142 + _designationWidth;
   static const _summaryWidths = [
+    52.0,
+    58.0,
     44.0,
-    44.0,
-    44.0,
-    48.0,
+    62.0,
     48.0,
     58.0,
     60.0,
     58.0,
-    54.0,
+    62.0,
   ];
   int _windowStart = 0;
 
@@ -423,15 +425,15 @@ class _AttendanceGridState extends State<AttendanceGrid> {
   }
 
   static const _summaryLabels = [
-    'Present',
-    'Late',
+    'Full\nPresent',
+    'Time\nDeduction',
     'Leave',
     'Half\nLeave',
     'Earned\nLeave',
     'Salary\nPer\nMonth',
     'Salary\nPer\nDay',
     'Absent\nDeduction',
-    'Updated\nSalary',
+    'Net\nEarned',
   ];
   static const _summaryColors = [
     HrmsColors.success,
@@ -444,7 +446,7 @@ class _AttendanceGridState extends State<AttendanceGrid> {
     HrmsColors.danger,
     Color(0xFF07186F),
   ];
-  static const _summaryPanelWidth = 458.0;
+  static const _summaryPanelWidth = 502.0;
 
   Widget _summaryHeaderRow(double scale) => SizedBox(
     width: _summaryPanelWidth * scale,
@@ -473,13 +475,23 @@ class _AttendanceGridState extends State<AttendanceGrid> {
                 _BodyCell(
                   width: _summaryWidths[0] * scale,
                   child: Center(
-                    child: _statText('${row.present} (${row.presentSalary})', HrmsColors.success),
+                    child: _twoLineStat(
+                      '${row.present}',
+                      row.presentSalary,
+                      HrmsColors.success,
+                    ),
                   ),
                 ),
                 _BodyCell(
                   width: _summaryWidths[1] * scale,
                   child: Center(
-                    child: _statText('${row.late} (${row.lateSalary})', HrmsColors.warning),
+                    child: _twoLineStat(
+                      row.timeDeductionDays == 0
+                          ? '—'
+                          : '${row.timeDeductionDays} day${row.timeDeductionDays == 1 ? '' : 's'}',
+                      row.lateDeduction == '₹0' ? '—' : '−${row.lateDeduction}',
+                      HrmsColors.warning,
+                    ),
                   ),
                 ),
                 _BodyCell(
@@ -494,8 +506,9 @@ class _AttendanceGridState extends State<AttendanceGrid> {
                 _BodyCell(
                   width: _summaryWidths[3] * scale,
                   child: Center(
-                    child: _statText(
+                    child: _twoLineStat(
                       '${row.halfLeave}',
+                      row.halfLeave == 0 ? '—' : row.halfLeaveEarnings,
                       HrmsColors.accentPurple,
                     ),
                   ),
@@ -543,7 +556,7 @@ class _AttendanceGridState extends State<AttendanceGrid> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Text(
-                          '${row.present + row.late} days',
+                          '${row.paidDays} paid days',
                           maxLines: 1,
                           style: TextStyle(
                             color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -573,6 +586,22 @@ class _AttendanceGridState extends State<AttendanceGrid> {
       style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700),
     );
   }
+
+  Widget _twoLineStat(String primary, String secondary, Color color) => Column(
+    mainAxisAlignment: MainAxisAlignment.center,
+    children: [
+      Text(
+        primary,
+        maxLines: 1,
+        style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700),
+      ),
+      Text(
+        secondary,
+        maxLines: 1,
+        style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w600),
+      ),
+    ],
+  );
 
   static const _moneyStyle = TextStyle(
     color: Color(0xFF07186F),
