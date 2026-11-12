@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
@@ -19,6 +20,36 @@ abstract final class HrmsColors {
   static const navy = Color(0xFF081B3C);
   static const page = Color(0xFFF7F8FA);
 }
+
+/// The command-center themes deliberately only affect cartography.  Employee
+/// locations, routes and geofences always come from the live tracking API.
+enum _CommandMapTheme { silver, retro, standard }
+
+const String _silverCommandMapStyle = '''
+[
+  {"elementType":"geometry","stylers":[{"color":"#f1f4f8"}]},
+  {"elementType":"labels.text.fill","stylers":[{"color":"#64748b"}]},
+  {"elementType":"labels.text.stroke","stylers":[{"color":"#f8fafc"}]},
+  {"featureType":"poi","elementType":"geometry","stylers":[{"color":"#e8eef5"}]},
+  {"featureType":"poi.park","elementType":"geometry","stylers":[{"color":"#dff3e8"}]},
+  {"featureType":"road","elementType":"geometry","stylers":[{"color":"#ffffff"}]},
+  {"featureType":"road.highway","elementType":"geometry","stylers":[{"color":"#d8e1ee"}]},
+  {"featureType":"water","elementType":"geometry","stylers":[{"color":"#cce8f8"}]}
+]
+''';
+
+const String _retroCommandMapStyle = '''
+[
+  {"elementType":"geometry","stylers":[{"color":"#ebe3cd"}]},
+  {"elementType":"labels.text.fill","stylers":[{"color":"#523735"}]},
+  {"elementType":"labels.text.stroke","stylers":[{"color":"#f5f1e6"}]},
+  {"featureType":"landscape.natural","elementType":"geometry","stylers":[{"color":"#dfd2ae"}]},
+  {"featureType":"poi.park","elementType":"geometry.fill","stylers":[{"color":"#a5b076"}]},
+  {"featureType":"road","elementType":"geometry","stylers":[{"color":"#f5f1e6"}]},
+  {"featureType":"road.highway","elementType":"geometry","stylers":[{"color":"#f8c967"}]},
+  {"featureType":"water","elementType":"geometry.fill","stylers":[{"color":"#b9d3c2"}]}
+]
+''';
 
 Future<BitmapDescriptor> _adminRouteMarkerIcon(
   Color color,
@@ -54,6 +85,36 @@ Future<BitmapDescriptor> _adminRouteMarkerIcon(
   return BitmapDescriptor.bytes(
     Uint8List.fromList(bytes!.buffer.asUint8List()),
   );
+}
+
+Future<BitmapDescriptor> _adminGeofenceLabelIcon(
+  Color color,
+  String name,
+) async {
+  final title = name.length > 28 ? '${name.substring(0, 27)}…' : name;
+  final painter = TextPainter(
+    text: TextSpan(
+      text: title,
+      style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800),
+    ),
+    textDirection: ui.TextDirection.ltr,
+  )..layout(maxWidth: 230);
+  final width = max(120, min(250, painter.width.ceil() + 42));
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+  canvas.drawRRect(
+    RRect.fromRectAndRadius(Rect.fromLTWH(2, 4, width - 4, 32), const Radius.circular(9)),
+    Paint()..color = const Color(0x33081B3C),
+  );
+  canvas.drawRRect(
+    RRect.fromRectAndRadius(Rect.fromLTWH(0, 0, width - 4, 31), const Radius.circular(9)),
+    Paint()..color = color,
+  );
+  canvas.drawCircle(const Offset(16, 15.5), 4, Paint()..color = Colors.white);
+  painter.paint(canvas, const Offset(28, 7));
+  final image = await recorder.endRecording().toImage(width, 38);
+  final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+  return BitmapDescriptor.bytes(Uint8List.fromList(bytes!.buffer.asUint8List()));
 }
 
 class TrackingPage extends StatefulWidget {
@@ -248,13 +309,6 @@ class _TrackingPageState extends State<TrackingPage> {
   }
 
   void _viewRoute(_TrackedEmployee employee) {
-    if (employee.mode == 'Office') {
-      setState(() {
-        selectedEmployee = null;
-        officeFocusRequest += 1;
-      });
-      return;
-    }
     setState(() => selectedEmployee = employee);
   }
 
@@ -277,6 +331,9 @@ class _TrackingPageState extends State<TrackingPage> {
   Widget build(BuildContext context) {
     if (widget.inSettingsDialog) return const SizedBox.shrink();
     final mobile = MediaQuery.sizeOf(context).width < 600;
+    // Desktop tracking is a viewport workspace, not a scrolling document.
+    final desktopWorkspaceHeight =
+        (MediaQuery.sizeOf(context).height - 84).clamp(520.0, 760.0).toDouble();
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       bottomNavigationBar: mobile
@@ -289,26 +346,32 @@ class _TrackingPageState extends State<TrackingPage> {
             child: RefreshIndicator(
               onRefresh: _load,
               child: SingleChildScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
+                physics: mobile
+                    ? const AlwaysScrollableScrollPhysics()
+                    : const NeverScrollableScrollPhysics(),
                 padding: EdgeInsets.fromLTRB(
-                  mobile ? 16 : 29,
-                  18,
-                  mobile ? 16 : 29,
-                  28,
+                  mobile ? 16 : 0,
+                  mobile ? 18 : 0,
+                  mobile ? 16 : 0,
+                  mobile ? 28 : 0,
                 ),
                 child: Center(
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 1580),
+                    constraints: BoxConstraints(
+                      maxWidth: mobile ? 1580 : double.infinity,
+                    ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _TrackingHeader(
-                          onRefresh: _load,
-                          onViewReasons: _openFieldWaitingReasons,
-                          onHomeApprovals: _openHomeApprovals,
-                          homeTrackingEnabled: homeTrackingEnabled,
-                        ),
-                        const SizedBox(height: 14),
+                        if (mobile) ...[
+                          _TrackingHeader(
+                            onRefresh: _load,
+                            onViewReasons: _openFieldWaitingReasons,
+                            onHomeApprovals: _openHomeApprovals,
+                            homeTrackingEnabled: homeTrackingEnabled,
+                          ),
+                          const SizedBox(height: 14),
+                        ],
                         if (loading && employees.isEmpty)
                           const Padding(
                             padding: EdgeInsets.symmetric(vertical: 80),
@@ -317,7 +380,7 @@ class _TrackingPageState extends State<TrackingPage> {
                         else if (error != null && employees.isEmpty)
                           _TrackingErrorState(message: error!, onRetry: _load)
                         else ...[
-                          _TrackingKpis(counts: counts),
+                          if (mobile) _TrackingKpis(counts: counts),
                           if (mobile) ...[
                             const SizedBox(height: 16),
                             _TrackingMobileActions(
@@ -326,10 +389,12 @@ class _TrackingPageState extends State<TrackingPage> {
                               onRefresh: _load,
                             ),
                           ],
-                          const SizedBox(height: 20),
+                          SizedBox(height: mobile ? 20 : 0),
                           _TrackingWorkspace(
+                            desktopHeight: desktopWorkspaceHeight,
                             mode: mode,
-                            employees: _visibleEmployees,
+                            counts: counts,
+                            employees: employees,
                             lastLoadedAt: lastLoadedAt,
                             onModeChanged: (value) => _setMode(value),
                             onViewRoute: _viewRoute,
@@ -338,6 +403,10 @@ class _TrackingPageState extends State<TrackingPage> {
                             selectedEmployee: selectedEmployee,
                             officeLocation: officeLocation,
                             officeFocusRequest: officeFocusRequest,
+                            onRefresh: _load,
+                            onViewReasons: _openFieldWaitingReasons,
+                            onHomeApprovals: _openHomeApprovals,
+                            homeTrackingEnabled: homeTrackingEnabled,
                           ),
                         ],
                       ],
@@ -974,7 +1043,9 @@ class _TrackingKpi extends StatelessWidget {
 
 class _TrackingWorkspace extends StatelessWidget {
   const _TrackingWorkspace({
+    required this.desktopHeight,
     required this.mode,
+    required this.counts,
     required this.employees,
     required this.lastLoadedAt,
     required this.onModeChanged,
@@ -984,8 +1055,14 @@ class _TrackingWorkspace extends StatelessWidget {
     required this.selectedEmployee,
     required this.officeLocation,
     required this.officeFocusRequest,
+    required this.onRefresh,
+    required this.onViewReasons,
+    required this.onHomeApprovals,
+    required this.homeTrackingEnabled,
   });
+  final double desktopHeight;
   final String mode;
+  final _TrackingCounts counts;
   final List<_TrackedEmployee> employees;
   final DateTime? lastLoadedAt;
   final ValueChanged<String> onModeChanged;
@@ -995,28 +1072,43 @@ class _TrackingWorkspace extends StatelessWidget {
   final _TrackedEmployee? selectedEmployee;
   final LatLng? officeLocation;
   final int officeFocusRequest;
+  final Future<void> Function() onRefresh;
+  final VoidCallback onViewReasons;
+  final VoidCallback onHomeApprovals;
+  final bool homeTrackingEnabled;
 
   @override
-  Widget build(BuildContext context) => Container(
-    decoration: BoxDecoration(
-      color: AdminSurfacePalette.of(context).surface,
-      border: Border.all(color: AdminSurfacePalette.of(context).border),
-      borderRadius: BorderRadius.circular(14),
-      boxShadow: const [
-        BoxShadow(
-          color: Color(0x08071A72),
-          blurRadius: 15,
-          offset: Offset(0, 6),
-        ),
-      ],
-    ),
-    clipBehavior: Clip.antiAlias,
-    child: LayoutBuilder(
+  Widget build(BuildContext context) {
+    final commandSurface = MediaQuery.sizeOf(context).width >= 1000;
+    return Container(
+      decoration: commandSurface
+          ? null
+          : BoxDecoration(
+              color: AdminSurfacePalette.of(context).surface,
+              border: Border.all(color: AdminSurfacePalette.of(context).border),
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x08071A72),
+                  blurRadius: 15,
+                  offset: Offset(0, 6),
+                ),
+              ],
+            ),
+      clipBehavior: commandSurface ? Clip.none : Clip.antiAlias,
+      child: LayoutBuilder(
       builder: (_, constraints) {
-        final stacked = constraints.maxWidth < 1050;
+        // Browser zoom and Windows display scaling can make a physically wide
+        // monitor report a much smaller Flutter width. Keep the command center
+        // available at the same width where the previous side-by-side layout
+        // was already usable.
+        final stacked = constraints.maxWidth < 1000;
+        final modeEmployees = employees
+            .where((employee) => employee.mode == mode)
+            .toList(growable: false);
         final map = _MapPanel(
           mode: mode,
-          employees: employees,
+          employees: modeEmployees,
           onModeChanged: onModeChanged,
           onViewRoute: onViewRoute,
           selectedEmployee: selectedEmployee,
@@ -1026,7 +1118,7 @@ class _TrackingWorkspace extends StatelessWidget {
         );
         final table = _TrackedEmployeesPanel(
           mode: mode,
-          employees: employees,
+          employees: modeEmployees,
           lastLoadedAt: lastLoadedAt,
           onViewRoute: onViewRoute,
           onOpenEmployee: onOpenEmployee,
@@ -1042,16 +1134,846 @@ class _TrackingWorkspace extends StatelessWidget {
           );
         }
         return SizedBox(
-          height: 615,
-          child: Row(
-            children: [
-              Expanded(flex: 10, child: table),
-              const VerticalDivider(width: 1, color: Color(0xFFE3E7EF)),
-              Expanded(flex: 11, child: map),
-            ],
+          height: desktopHeight,
+          child: _MapCommandCenter(
+            mode: mode,
+            counts: counts,
+            employees: employees,
+            lastLoadedAt: lastLoadedAt,
+            onModeChanged: onModeChanged,
+            onViewRoute: onViewRoute,
+            onOpenEmployee: onOpenEmployee,
+            onViewActivity: onViewActivity,
+            selectedEmployee: selectedEmployee,
+            officeLocation: officeLocation,
+            officeFocusRequest: officeFocusRequest,
+            onRefresh: onRefresh,
+            onViewReasons: onViewReasons,
+            onHomeApprovals: onHomeApprovals,
+            homeTrackingEnabled: homeTrackingEnabled,
           ),
         );
       },
+      ),
+    );
+  }
+}
+
+/// Desktop command-center view: the map remains the spatial source of truth,
+/// while the floating drawer supplies the live employee telemetry.
+class _MapCommandCenter extends StatelessWidget {
+  const _MapCommandCenter({
+    required this.mode,
+    required this.counts,
+    required this.employees,
+    required this.lastLoadedAt,
+    required this.onModeChanged,
+    required this.onViewRoute,
+    required this.onOpenEmployee,
+    required this.onViewActivity,
+    required this.selectedEmployee,
+    required this.officeLocation,
+    required this.officeFocusRequest,
+    required this.onRefresh,
+    required this.onViewReasons,
+    required this.onHomeApprovals,
+    required this.homeTrackingEnabled,
+  });
+
+  final String mode;
+  final _TrackingCounts counts;
+  final List<_TrackedEmployee> employees;
+  final DateTime? lastLoadedAt;
+  final ValueChanged<String> onModeChanged;
+  final ValueChanged<_TrackedEmployee> onViewRoute;
+  final ValueChanged<_TrackedEmployee> onOpenEmployee;
+  final ValueChanged<_TrackedEmployee> onViewActivity;
+  final _TrackedEmployee? selectedEmployee;
+  final LatLng? officeLocation;
+  final int officeFocusRequest;
+  final Future<void> Function() onRefresh;
+  final VoidCallback onViewReasons;
+  final VoidCallback onHomeApprovals;
+  final bool homeTrackingEnabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final mapEmployees = employees
+        .where((employee) => employee.mode == mode)
+        .toList(growable: false);
+    final map = selectedEmployee == null
+        ? _LiveMap(
+            employees: mapEmployees,
+            onViewRoute: onViewRoute,
+            officeLocation: officeLocation,
+            officeFocusRequest: officeFocusRequest,
+            showCommandControls: true,
+          )
+        : _SelectedRouteMap(employee: selectedEmployee!, commandMode: true);
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Positioned.fill(child: map),
+        Positioned(
+          top: 20,
+          left: 20,
+          right: 450,
+          child: _CommandTopBar(
+            counts: counts,
+            onRefresh: onRefresh,
+            onViewReasons: onViewReasons,
+            onHomeApprovals: onHomeApprovals,
+            homeTrackingEnabled: homeTrackingEnabled,
+          ),
+        ),
+        Positioned(
+          top: 20,
+          right: 20,
+          bottom: 20,
+          width: 430,
+          child: _CommandTelemetryDrawer(
+            mode: mode,
+            employees: employees,
+            lastLoadedAt: lastLoadedAt,
+            onModeChanged: onModeChanged,
+            onViewRoute: onViewRoute,
+            onOpenEmployee: onOpenEmployee,
+            onViewActivity: onViewActivity,
+          ),
+        ),
+        if (selectedEmployee != null)
+          Positioned(
+            left: 28,
+            bottom: 28,
+            child: _SelectedMapLabel(employee: selectedEmployee!),
+          ),
+      ],
+    );
+  }
+}
+
+class _CommandTopBar extends StatelessWidget {
+  const _CommandTopBar({
+    required this.counts,
+    required this.onRefresh,
+    required this.onViewReasons,
+    required this.onHomeApprovals,
+    required this.homeTrackingEnabled,
+  });
+  final _TrackingCounts counts;
+  final Future<void> Function() onRefresh;
+  final VoidCallback onViewReasons;
+  final VoidCallback onHomeApprovals;
+  final bool homeTrackingEnabled;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Container(
+        height: 62,
+        padding: const EdgeInsets.symmetric(horizontal: 18),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: .96),
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(color: const Color(0xFFDDE6F3)),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x22081B3C),
+              blurRadius: 18,
+              offset: Offset(0, 7),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.circle, color: HrmsColors.blue, size: 13),
+            const SizedBox(width: 8),
+            const Text(
+              'Command Center',
+              style: TextStyle(
+                color: HrmsColors.navy,
+                fontSize: 16,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12),
+              child: VerticalDivider(width: 1, color: Color(0xFFDCE5F0)),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEBF3FE),
+                borderRadius: BorderRadius.circular(7),
+              ),
+              child: const Text(
+                'Live Geolocation',
+                style: TextStyle(
+                  color: HrmsColors.blue,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              tooltip: 'Waiting reasons',
+              visualDensity: VisualDensity.compact,
+              onPressed: onViewReasons,
+              icon: const Icon(Icons.fact_check_outlined, size: 20),
+            ),
+            if (homeTrackingEnabled)
+              IconButton(
+                tooltip: 'Home approvals',
+                visualDensity: VisualDensity.compact,
+                onPressed: onHomeApprovals,
+                icon: const Icon(Icons.home_work_outlined, size: 20),
+              ),
+            IconButton(
+              tooltip: 'Refresh map',
+              visualDensity: VisualDensity.compact,
+              onPressed: () => onRefresh(),
+              icon: const Icon(Icons.refresh_rounded, size: 21),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(width: 14),
+      _CommandMetric(icon: Icons.apartment_rounded, label: 'Office', value: counts.office, color: HrmsColors.blue),
+      const SizedBox(width: 10),
+      _CommandMetric(icon: Icons.directions_walk_rounded, label: 'Field', value: counts.field, color: const Color(0xFFFF6500)),
+      const SizedBox(width: 10),
+      _CommandMetric(icon: Icons.home_outlined, label: 'Home', value: counts.home, color: const Color(0xFF64748B)),
+      const SizedBox(width: 10),
+      _CommandMetric(icon: Icons.wifi_rounded, label: 'Active now', value: counts.activeNow, color: const Color(0xFF10B981)),
+    ],
+  );
+}
+
+class _CommandMetric extends StatelessWidget {
+  const _CommandMetric({required this.icon, required this.label, required this.value, required this.color});
+  final IconData icon;
+  final String label;
+  final int value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: 140,
+    height: 82,
+    padding: const EdgeInsets.all(10),
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: .96),
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: color.withValues(alpha: .25)),
+      boxShadow: const [BoxShadow(color: Color(0x16081B3C), blurRadius: 14, offset: Offset(0, 5))],
+    ),
+    child: Row(
+      children: [
+        Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(color: color.withValues(alpha: .10), borderRadius: BorderRadius.circular(11)),
+          child: Icon(icon, color: color, size: 21),
+        ),
+        const SizedBox(width: 8),
+        Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label.toUpperCase(), style: const TextStyle(color: Color(0xFF657087), fontSize: 9, fontWeight: FontWeight.w800)),
+            Text('$value', style: const TextStyle(color: HrmsColors.navy, fontSize: 23, fontWeight: FontWeight.w900)),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+class _SelectedMapLabel extends StatelessWidget {
+  const _SelectedMapLabel({required this.employee});
+  final _TrackedEmployee employee;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+    decoration: BoxDecoration(
+      color: HrmsColors.navy.withValues(alpha: .94),
+      borderRadius: BorderRadius.circular(10),
+      boxShadow: const [BoxShadow(color: Color(0x33081B3C), blurRadius: 16, offset: Offset(0, 6))],
+    ),
+    child: Text(
+      '${employee.name} • ${employee.commandActive ? 'Active' : employee.updatedLabel}',
+      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12),
+    ),
+  );
+}
+
+class _CommandMapHud extends StatelessWidget {
+  const _CommandMapHud({
+    required this.mode,
+    required this.counts,
+    required this.onModeChanged,
+    required this.selectedEmployee,
+  });
+  final String mode;
+  final _TrackingCounts counts;
+  final ValueChanged<String> onModeChanged;
+  final _TrackedEmployee? selectedEmployee;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: 360,
+    padding: const EdgeInsets.all(8),
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: .96),
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: const Color(0xFFDCE5F2)),
+      boxShadow: const [
+        BoxShadow(
+          color: Color(0x26081B3C),
+          blurRadius: 22,
+          offset: Offset(0, 8),
+        ),
+      ],
+    ),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.radar_rounded, size: 18, color: HrmsColors.blue),
+            const SizedBox(width: 7),
+            const Expanded(
+              child: Text(
+                'Live map command',
+                style: TextStyle(
+                  color: HrmsColors.navy,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            const Icon(Icons.circle, size: 9, color: Color(0xFF10B981)),
+            const SizedBox(width: 5),
+            Text(
+              '${counts.activeNow} active',
+              style: const TextStyle(color: Color(0xFF516078), fontSize: 11),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: _CommandModeChip(
+                label: 'Office ${counts.office}',
+                active: mode == 'Office',
+                onTap: () => onModeChanged('Office'),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: _CommandModeChip(
+                label: 'Field ${counts.field}',
+                active: mode == 'Field',
+                onTap: () => onModeChanged('Field'),
+              ),
+            ),
+          ],
+        ),
+        if (selectedEmployee != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            'Viewing ${selectedEmployee!.name}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Color(0xFF516078), fontSize: 11),
+          ),
+        ],
+      ],
+    ),
+  );
+}
+
+class _CommandModeChip extends StatelessWidget {
+  const _CommandModeChip({
+    required this.label,
+    required this.active,
+    required this.onTap,
+  });
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(9),
+    child: AnimatedContainer(
+      duration: const Duration(milliseconds: 160),
+      height: 34,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: active ? HrmsColors.blue : const Color(0xFFF3F6FB),
+        borderRadius: BorderRadius.circular(9),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: active ? Colors.white : HrmsColors.navy,
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    ),
+  );
+}
+
+class _CommandTelemetryDrawer extends StatefulWidget {
+  const _CommandTelemetryDrawer({
+    required this.mode,
+    required this.employees,
+    required this.lastLoadedAt,
+    required this.onModeChanged,
+    required this.onViewRoute,
+    required this.onOpenEmployee,
+    required this.onViewActivity,
+  });
+  final String mode;
+  final List<_TrackedEmployee> employees;
+  final DateTime? lastLoadedAt;
+  final ValueChanged<String> onModeChanged;
+  final ValueChanged<_TrackedEmployee> onViewRoute;
+  final ValueChanged<_TrackedEmployee> onOpenEmployee;
+  final ValueChanged<_TrackedEmployee> onViewActivity;
+
+  @override
+  State<_CommandTelemetryDrawer> createState() =>
+      _CommandTelemetryDrawerState();
+}
+
+class _CommandTelemetryDrawerState extends State<_CommandTelemetryDrawer> {
+  String _search = '';
+  String _filter = 'All';
+
+  String get _updatedLabel {
+    if (widget.lastLoadedAt == null) return 'Connecting…';
+    final seconds = DateTime.now().difference(widget.lastLoadedAt!).inSeconds;
+    return seconds < 5 ? 'Updated just now' : 'Updated ${seconds}s ago';
+  }
+
+  List<_TrackedEmployee> get _filteredEmployees {
+    final query = _search.trim().toLowerCase();
+    final result = widget.employees.where((employee) {
+      final matchesFilter = switch (_filter) {
+        'Office' => employee.mode == 'Office',
+        'Field' => employee.mode == 'Field',
+        'Offline' => !employee.commandActive,
+        _ => true,
+      };
+      final matchesSearch = query.isEmpty ||
+          employee.name.toLowerCase().contains(query) ||
+          employee.id.toLowerCase().contains(query) ||
+          (employee.address?.toLowerCase().contains(query) ?? false);
+      return matchesFilter && matchesSearch;
+    }).toList();
+    result.sort((a, b) {
+      if (a.commandActive != b.commandActive) {
+        return a.commandActive ? -1 : 1;
+      }
+      if (a.active != b.active) return a.active ? -1 : 1;
+      final aTime = a.lastUpdated?.millisecondsSinceEpoch ?? 0;
+      final bTime = b.lastUpdated?.millisecondsSinceEpoch ?? 0;
+      return bTime.compareTo(aTime);
+    });
+    return result;
+  }
+
+  @override
+  Widget build(BuildContext context) => Container(
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: .97),
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: const Color(0xFFDCE5F2)),
+      boxShadow: const [
+        BoxShadow(
+          color: Color(0x26081B3C),
+          blurRadius: 24,
+          offset: Offset(0, 10),
+        ),
+      ],
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 15, 14, 12),
+          child: Row(
+            children: [
+              Container(
+                width: 33,
+                height: 33,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFEBF3FE),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  widget.mode == 'Office'
+                      ? Icons.apartment_rounded
+                      : Icons.route_rounded,
+                  color: HrmsColors.blue,
+                  size: 19,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Live Personnel',
+                      style: const TextStyle(
+                        color: HrmsColors.navy,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${widget.employees.length} total • $_updatedLabel',
+                      style: const TextStyle(
+                        color: Color(0xFF657087),
+                        fontSize: 10,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.tune_rounded, color: Color(0xFF657087), size: 19),
+            ],
+          ),
+        ),
+        const Divider(height: 1, color: Color(0xFFE7ECF4)),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 9),
+          child: TextField(
+            onChanged: (value) => setState(() => _search = value),
+            style: const TextStyle(fontSize: 12, color: HrmsColors.navy),
+            decoration: InputDecoration(
+              hintText: 'Search by name, ID or location…',
+              hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF8A99B2)),
+              prefixIcon: const Icon(Icons.search_rounded, size: 19),
+              isDense: true,
+              filled: true,
+              fillColor: const Color(0xFFF8FAFD),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(11),
+                borderSide: const BorderSide(color: Color(0xFFDDE6F2)),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(11),
+                borderSide: const BorderSide(color: Color(0xFFDDE6F2)),
+              ),
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+          child: Row(
+            children: [
+              _DrawerFilterChip(label: 'All', active: _filter == 'All', onTap: () => setState(() => _filter = 'All')),
+              const SizedBox(width: 6),
+              _DrawerFilterChip(label: 'Office', active: _filter == 'Office', onTap: () { setState(() => _filter = 'Office'); widget.onModeChanged('Office'); }),
+              const SizedBox(width: 6),
+              _DrawerFilterChip(label: 'Field', active: _filter == 'Field', onTap: () { setState(() => _filter = 'Field'); widget.onModeChanged('Field'); }),
+              const SizedBox(width: 6),
+              _DrawerFilterChip(label: 'Offline', active: _filter == 'Offline', onTap: () => setState(() => _filter = 'Offline')),
+            ],
+          ),
+        ),
+        Expanded(
+          child: _filteredEmployees.isEmpty
+              ? const _EmptyTrackedState()
+              : ListView.separated(
+                  padding: const EdgeInsets.all(8),
+                  itemCount: _filteredEmployees.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 4),
+                  itemBuilder: (_, index) => _CommandEmployeeTile(
+                    employee: _filteredEmployees[index],
+                    onViewRoute: widget.onViewRoute,
+                    onOpenEmployee: widget.onOpenEmployee,
+                    onViewActivity: widget.onViewActivity,
+                  ),
+                ),
+        ),
+        Container(
+          height: 42,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          decoration: const BoxDecoration(
+            color: Color(0xFFF8FAFD),
+            border: Border(top: BorderSide(color: Color(0xFFE7ECF4))),
+            borderRadius: BorderRadius.vertical(bottom: Radius.circular(16)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.circle, size: 10, color: Color(0xFF10B981)),
+              const SizedBox(width: 7),
+              Text(
+                '${widget.employees.where((employee) => employee.commandActive).length} active signal${widget.employees.where((employee) => employee.commandActive).length == 1 ? '' : 's'} transmitted',
+                style: const TextStyle(
+                  color: Color(0xFF64748B),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const Spacer(),
+              const Text(
+                'Full Directory →',
+                style: TextStyle(
+                  color: HrmsColors.blue,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _CommandEmployeeTile extends StatelessWidget {
+  const _CommandEmployeeTile({
+    required this.employee,
+    required this.onViewRoute,
+    required this.onOpenEmployee,
+    required this.onViewActivity,
+  });
+  final _TrackedEmployee employee;
+  final ValueChanged<_TrackedEmployee> onViewRoute;
+  final ValueChanged<_TrackedEmployee> onOpenEmployee;
+  final ValueChanged<_TrackedEmployee> onViewActivity;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: Colors.transparent,
+    child: InkWell(
+      onTap: () => onViewRoute(employee),
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+        decoration: BoxDecoration(
+          color: employee.commandActive
+              ? const Color(0xFFF6FFFB)
+              : Colors.transparent,
+          border: Border.all(
+            color: employee.commandActive
+                ? const Color(0xFF34C995)
+                : Colors.transparent,
+          ),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 18,
+              backgroundColor: employee.commandActive
+                  ? const Color(0xFFEBF8F0)
+                  : const Color(0xFFF0F3F8),
+              child: Text(
+                employee.name.isEmpty ? '?' : employee.name.substring(0, 1).toUpperCase(),
+                style: TextStyle(
+                  color: employee.commandActive ? const Color(0xFF10B981) : HrmsColors.navy,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: InkWell(
+                          onTap: () => onOpenEmployee(employee),
+                          child: Text(
+                            employee.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: HrmsColors.navy,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ),
+                      if (employee.commandActive) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFE6F8EE),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            employee.trackingActive ? 'Live' : 'Active',
+                            style: TextStyle(
+                              color: Color(0xFF07895F),
+                              fontSize: 9,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                    ),
+                  const SizedBox(height: 2),
+                  if (employee.commandActive)
+                    Text(
+                      [
+                        employee.id,
+                        if (employee.designation != null) employee.designation!,
+                        employee.mode,
+                        if (employee.trackingActive && employee.speedKmph != null)
+                          '${employee.speedKmph!.toStringAsFixed(0)} km/h',
+                        if (employee.trackingActive && employee.batteryPercent != null)
+                          '${employee.batteryPercent}%',
+                      ].join(' • '),
+                      style: const TextStyle(
+                        color: Color(0xFF66758C),
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  if (employee.commandActive) const SizedBox(height: 3),
+                  Text(
+                    employee.address ?? employee.updatedLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Color(0xFF657087), fontSize: 11),
+                  ),
+                  if (employee.commandActive) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      '${employee.trackingActive ? 'Live GPS' : 'Checked in'} • ${employee.updatedLabel}',
+                      style: const TextStyle(
+                        color: Color(0xFF07895F),
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _TelemetryActionButton(
+                            icon: Icons.center_focus_strong_rounded,
+                            label: 'Focus on map',
+                            primary: true,
+                            onTap: () => onViewRoute(employee),
+                          ),
+                        ),
+                        const SizedBox(width: 7),
+                        Expanded(
+                          child: _TelemetryActionButton(
+                            icon: Icons.history_rounded,
+                            label: 'Route history',
+                            onTap: () => onViewActivity(employee),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _DrawerFilterChip extends StatelessWidget {
+  const _DrawerFilterChip({
+    required this.label,
+    required this.active,
+    required this.onTap,
+  });
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(8),
+    child: AnimatedContainer(
+      duration: const Duration(milliseconds: 150),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: active ? HrmsColors.blue : const Color(0xFFF5F7FB),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: active ? HrmsColors.blue : const Color(0xFFDCE4F0),
+        ),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: active ? Colors.white : const Color(0xFF50607A),
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    ),
+  );
+}
+
+class _TelemetryActionButton extends StatelessWidget {
+  const _TelemetryActionButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.primary = false,
+  });
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool primary;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(8),
+    child: Container(
+      height: 31,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: primary ? HrmsColors.blue : const Color(0xFFF2F5F9),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 14, color: primary ? Colors.white : const Color(0xFF52627A)),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: TextStyle(
+              color: primary ? Colors.white : const Color(0xFF52627A),
+              fontWeight: FontWeight.w700,
+              fontSize: 10,
+            ),
+          ),
+        ],
+      ),
     ),
   );
 }
@@ -1312,8 +2234,9 @@ class _RouteActivityDialogState extends State<_RouteActivityDialog> {
 }
 
 class _SelectedRouteMap extends StatefulWidget {
-  const _SelectedRouteMap({required this.employee});
+  const _SelectedRouteMap({required this.employee, this.commandMode = false});
   final _TrackedEmployee employee;
+  final bool commandMode;
 
   @override
   State<_SelectedRouteMap> createState() => _SelectedRouteMapState();
@@ -1327,6 +2250,8 @@ class _SelectedRouteMapState extends State<_SelectedRouteMap> {
   bool _roadSnapped = false;
   BitmapDescriptor? _startMarker, _endMarker;
 
+  bool get _isOfficeEmployee => widget.employee.mode == 'Office';
+
   List<LatLng> get _coordinates => _points
       .where((point) => point.latitude != null && point.longitude != null)
       .map((point) => LatLng(point.latitude!, point.longitude!))
@@ -1336,7 +2261,7 @@ class _SelectedRouteMapState extends State<_SelectedRouteMap> {
   void initState() {
     super.initState();
     _load();
-    _loadMarkerIcons();
+    if (!_isOfficeEmployee) _loadMarkerIcons();
   }
 
   Future<void> _loadMarkerIcons() async {
@@ -1354,11 +2279,21 @@ class _SelectedRouteMapState extends State<_SelectedRouteMap> {
   @override
   void didUpdateWidget(covariant _SelectedRouteMap oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.employee.employeeUserId != widget.employee.employeeUserId)
+    if (oldWidget.employee.employeeUserId != widget.employee.employeeUserId ||
+        oldWidget.employee.mode != widget.employee.mode)
       _load();
   }
 
   Future<void> _load() async {
+    if (_isOfficeEmployee) {
+      setState(() {
+        _points = const [];
+        _roadSnapped = false;
+        _error = null;
+        _loading = false;
+      });
+      return;
+    }
     final id = widget.employee.employeeUserId;
     if (id == null) return;
     setState(() {
@@ -1437,11 +2372,17 @@ class _SelectedRouteMapState extends State<_SelectedRouteMap> {
   @override
   Widget build(BuildContext context) {
     final route = _coordinates;
+    final officeLocation = widget.employee.lat != null && widget.employee.lng != null
+        ? LatLng(widget.employee.lat!, widget.employee.lng!)
+        : null;
     final center = route.isNotEmpty
         ? route.first
-        : widget.employee.lat != null && widget.employee.lng != null
-        ? LatLng(widget.employee.lat!, widget.employee.lng!)
+        : officeLocation != null
+        ? officeLocation
         : const LatLng(28.6139, 77.2090);
+    if (widget.commandMode) {
+      return _commandMapCanvas(route, officeLocation, center);
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1457,11 +2398,20 @@ class _SelectedRouteMapState extends State<_SelectedRouteMap> {
                 ),
               ),
             ),
-            OutlinedButton.icon(
-              onPressed: _loading ? null : _pickDate,
-              icon: const Icon(Icons.calendar_today_outlined, size: 15),
-              label: Text(DateFormat('dd MMM yyyy').format(_date)),
-            ),
+            if (_isOfficeEmployee)
+              Text(
+                'Last known location • ${widget.employee.updatedLabel}',
+                style: const TextStyle(
+                  color: Color(0xFF657087),
+                  fontSize: 12,
+                ),
+              )
+            else
+              OutlinedButton.icon(
+                onPressed: _loading ? null : _pickDate,
+                icon: const Icon(Icons.calendar_today_outlined, size: 15),
+                label: Text(DateFormat('dd MMM yyyy').format(_date)),
+              ),
           ],
         ),
         const SizedBox(height: 10),
@@ -1476,6 +2426,19 @@ class _SelectedRouteMapState extends State<_SelectedRouteMap> {
                     style: const TextStyle(color: Colors.red, fontSize: 12),
                   ),
                 )
+              : _isOfficeEmployee
+              ? officeLocation == null
+                  ? const Center(
+                      child: Text(
+                        'No last known location is available for this employee.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Color(0xFF657087),
+                          fontSize: 12,
+                        ),
+                      ),
+                    )
+                  : _officeLocationMap(officeLocation)
               : route.isEmpty
               ? const Center(
                   child: Text(
@@ -1498,18 +2461,17 @@ class _SelectedRouteMapState extends State<_SelectedRouteMap> {
                             zoom: 15,
                           ),
                           mapToolbarEnabled: false,
-                          polylines: _roadSnapped
-                              ? {
-                                  Polyline(
-                                    polylineId: const PolylineId(
-                                      'selected-route',
-                                    ),
-                                    points: route,
-                                    color: HrmsColors.blue,
-                                    width: 5,
-                                  ),
-                                }
-                              : const {},
+                          polylines: {
+                            Polyline(
+                              polylineId: const PolylineId('selected-route'),
+                              points: route,
+                              color: HrmsColors.blue,
+                              width: 5,
+                              patterns: _roadSnapped
+                                  ? const []
+                                  : [PatternItem.dash(16), PatternItem.gap(10)],
+                            ),
+                          },
                           markers: {
                             Marker(
                               markerId: const MarkerId('route-start'),
@@ -1579,6 +2541,168 @@ class _SelectedRouteMapState extends State<_SelectedRouteMap> {
       ],
     );
   }
+
+  Widget _commandMapCanvas(
+    List<LatLng> route,
+    LatLng? officeLocation,
+    LatLng center,
+  ) {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_error != null) {
+      return Center(
+        child: Text(
+          _error!,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Colors.red, fontSize: 12),
+        ),
+      );
+    }
+    if (_isOfficeEmployee && officeLocation == null) {
+      return const Center(
+        child: Text(
+          'No last known location is available for this employee.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Color(0xFF657087), fontSize: 12),
+        ),
+      );
+    }
+    if (!_isOfficeEmployee && route.isEmpty) {
+      return const Center(
+        child: Text(
+          'No location history for this employee today.',
+          style: TextStyle(color: Color(0xFF657087), fontSize: 12),
+        ),
+      );
+    }
+    if (_isOfficeEmployee) return _officeLocationMap(officeLocation!);
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: GoogleMap(
+            key: ValueKey('command-${widget.employee.employeeUserId}-${_date.toIso8601String()}-${route.length}'),
+            initialCameraPosition: CameraPosition(target: center, zoom: 15),
+            mapToolbarEnabled: false,
+            polylines: {
+              Polyline(
+                polylineId: const PolylineId('selected-command-route'),
+                points: route,
+                color: HrmsColors.blue,
+                width: 5,
+                patterns: _roadSnapped
+                    ? const []
+                    : [PatternItem.dash(16), PatternItem.gap(10)],
+              ),
+            },
+            circles: {
+              for (var index = 1; index < route.length - 1; index++)
+                Circle(
+                  circleId: CircleId('command-waypoint-$index'),
+                  center: route[index],
+                  radius: 3,
+                  fillColor: Colors.white,
+                  strokeColor: HrmsColors.blue,
+                  strokeWidth: 2,
+                ),
+              Circle(
+                circleId: const CircleId('selected-employee-beacon'),
+                center: route.last,
+                radius: 34,
+                fillColor: const Color(0x33ED2727),
+                strokeColor: const Color(0x88ED2727),
+                strokeWidth: 2,
+              ),
+            },
+            markers: {
+              Marker(
+                markerId: const MarkerId('command-route-start'),
+                position: route.first,
+                icon: _startMarker ?? BitmapDescriptor.defaultMarker,
+                infoWindow: const InfoWindow(title: 'Start point'),
+              ),
+              if (route.length > 1)
+                Marker(
+                  markerId: const MarkerId('command-route-end'),
+                  position: route.last,
+                  icon: _endMarker ?? BitmapDescriptor.defaultMarker,
+                  infoWindow: InfoWindow(title: '${widget.employee.name} • latest GPS'),
+                ),
+            },
+          ),
+        ),
+        Positioned(
+          left: 28,
+          bottom: 28,
+          child: _RoutePlaybackBadge(
+            employee: widget.employee,
+            pointCount: route.length,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _officeLocationMap(LatLng location) => ClipRRect(
+    borderRadius: BorderRadius.circular(12),
+    child: GoogleMap(
+      key: ValueKey(
+        'office-location-${widget.employee.employeeUserId}-${widget.employee.lat}-${widget.employee.lng}',
+      ),
+      initialCameraPosition: CameraPosition(target: location, zoom: 16),
+      mapToolbarEnabled: false,
+      markers: {
+        Marker(
+          markerId: const MarkerId('office-employee-location'),
+          position: location,
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+          infoWindow: InfoWindow(
+            title: widget.employee.name,
+            snippet: widget.employee.address ?? 'Last known location',
+          ),
+        ),
+      },
+    ),
+  );
+}
+
+class _RoutePlaybackBadge extends StatelessWidget {
+  const _RoutePlaybackBadge({
+    required this.employee,
+    required this.pointCount,
+  });
+
+  final _TrackedEmployee employee;
+  final int pointCount;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFF081B3C).withValues(alpha: .95),
+          borderRadius: BorderRadius.circular(22),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x44081B3C),
+              blurRadius: 16,
+              offset: Offset(0, 7),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.play_circle_outline_rounded, color: Colors.white, size: 18),
+            const SizedBox(width: 7),
+            Text(
+              'Route playback • ${employee.name} • $pointCount pings',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+      );
 }
 
 /// Google Maps display for the live employee markers. Only employees with
@@ -1590,11 +2714,13 @@ class _LiveMap extends StatefulWidget {
     required this.onViewRoute,
     required this.officeLocation,
     required this.officeFocusRequest,
+    this.showCommandControls = false,
   });
   final List<_TrackedEmployee> employees;
   final ValueChanged<_TrackedEmployee> onViewRoute;
   final LatLng? officeLocation;
   final int officeFocusRequest;
+  final bool showCommandControls;
 
   @override
   State<_LiveMap> createState() => _LiveMapState();
@@ -1602,8 +2728,58 @@ class _LiveMap extends StatefulWidget {
 
 class _LiveMapState extends State<_LiveMap> {
   GoogleMapController? _controller;
+  List<_OfficeGeofence> _officeZones = const [];
+  List<_CommandGeofence> _configuredZones = const [];
+  Map<String, BitmapDescriptor> _zoneLabelIcons = const {};
+  bool _zonesVisible = false;
+  bool _trafficEnabled = false;
+  _CommandMapTheme _theme = _CommandMapTheme.silver;
 
-  static const _delhiCenter = LatLng(28.6139, 77.2090);
+  @override
+  void initState() {
+    super.initState();
+    _loadOfficeZones();
+  }
+
+  Future<void> _loadOfficeZones() async {
+    try {
+      final items = await HrmsTrackingApi.officeLocations();
+      List<Map<String, dynamic>> configured = const [];
+      try {
+        configured = await HrmsTrackingApi.geofenceZones();
+      } catch (_) {
+        // An older deployed backend can still draw real office-radius zones.
+      }
+      if (!mounted) return;
+      setState(() {
+        _officeZones = items
+            .map(_OfficeGeofence.fromApi)
+            .whereType<_OfficeGeofence>()
+            .where((zone) => zone.active)
+            .toList(growable: false);
+        _configuredZones = configured
+            .map(_CommandGeofence.fromApi)
+            .whereType<_CommandGeofence>()
+            .where((zone) => zone.active)
+            .toList(growable: false);
+        _zonesVisible = _officeZones.isNotEmpty || _configuredZones.isNotEmpty;
+      });
+      await _loadZoneLabelIcons();
+    } catch (_) {
+      // A map remains useful even if office-zone configuration is unavailable.
+    }
+  }
+
+  Future<void> _loadZoneLabelIcons() async {
+    final zones = _configuredZones;
+    if (zones.isEmpty) return;
+    final entries = await Future.wait(zones.map((zone) async => MapEntry(
+          zone.id,
+          await _adminGeofenceLabelIcon(zone.color, zone.name),
+        )));
+    if (!mounted) return;
+    setState(() => _zoneLabelIcons = Map<String, BitmapDescriptor>.fromEntries(entries));
+  }
 
   @override
   void didUpdateWidget(covariant _LiveMap oldWidget) {
@@ -1616,8 +2792,58 @@ class _LiveMapState extends State<_LiveMap> {
   Future<void> _focusOffice() async {
     final office = widget.officeLocation;
     final controller = _controller;
-    if (office == null || controller == null) return;
-    await controller.animateCamera(CameraUpdate.newLatLngZoom(office, 17));
+    if (controller == null) return;
+    if (office != null) {
+      await controller.animateCamera(CameraUpdate.newLatLngZoom(office, 16));
+      return;
+    }
+    await _focusCommandArea();
+  }
+
+  /// Start at a useful operations zoom. We deliberately prioritise a live
+  /// employee over a stale historic pin, then fall back to the first active
+  /// zone or a latest available GPS point.
+  Future<void> _focusCommandArea() async {
+    final controller = _controller;
+    if (controller == null) return;
+    final live = widget.employees.where((employee) =>
+        employee.commandActive && employee.lat != null && employee.lng != null);
+    final located = widget.employees
+        .where((employee) => employee.lat != null && employee.lng != null)
+        .toList(growable: false);
+    final employee = live.isNotEmpty
+        ? live.first
+        : located.isNotEmpty
+            ? located.first
+            : null;
+    final target = employee != null
+        ? LatLng(employee.lat!, employee.lng!)
+        : _officeZones.isNotEmpty
+            ? _officeZones.first.center
+            : _configuredZones.isNotEmpty
+                ? _configuredZones.first.labelPosition
+                : null;
+    if (target != null) {
+      await controller.animateCamera(CameraUpdate.newLatLngZoom(target, 14));
+    }
+  }
+
+  Future<void> _applyTheme(_CommandMapTheme theme) async {
+    setState(() => _theme = theme);
+    final controller = _controller;
+    if (controller == null) return;
+    await controller.setMapStyle(switch (theme) {
+      _CommandMapTheme.silver => _silverCommandMapStyle,
+      _CommandMapTheme.retro => _retroCommandMapStyle,
+      _CommandMapTheme.standard => null,
+    });
+  }
+
+  Future<void> _zoomBy(double amount) async {
+    final controller = _controller;
+    if (controller == null) return;
+    final zoom = await controller.getZoomLevel();
+    await controller.animateCamera(CameraUpdate.zoomTo(zoom + amount));
   }
 
   @override
@@ -1625,37 +2851,139 @@ class _LiveMapState extends State<_LiveMap> {
     final located = widget.employees
         .where((e) => e.lat != null && e.lng != null)
         .toList();
-    final center =
-        widget.officeLocation ??
-        (located.isNotEmpty
-            ? LatLng(located.first.lat!, located.first.lng!)
-            : _delhiCenter);
+    final LatLng? center = widget.officeLocation ??
+        (located.isNotEmpty ? LatLng(located.first.lat!, located.first.lng!) : null);
+    if (center == null) {
+      return Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8FAFD),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFDCE5F2)),
+        ),
+        alignment: Alignment.center,
+        child: const Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.location_off_outlined, color: Color(0xFF94A0B4), size: 34),
+            SizedBox(height: 10),
+            Text('No office location or employee GPS location is available.',
+                style: TextStyle(color: Color(0xFF657087), fontSize: 13)),
+          ],
+        ),
+      );
+    }
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
-      child: GoogleMap(
-        initialCameraPosition: CameraPosition(target: center, zoom: 11),
-        mapToolbarEnabled: false,
-        onMapCreated: (controller) {
-          _controller = controller;
-          _focusOffice();
-        },
-        markers: located
-            .map(
-              (employee) => Marker(
-                markerId: MarkerId(employee.id),
-                position: LatLng(employee.lat!, employee.lng!),
-                infoWindow: InfoWindow(
-                  title: employee.name,
-                  snippet:
-                      employee.address ?? 'Location not yet reverse-geocoded',
-                ),
-                icon: BitmapDescriptor.defaultMarkerWithHue(
-                  _markerHue(employee.mode),
-                ),
-                onTap: () => widget.onViewRoute(employee),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: GoogleMap(
+              initialCameraPosition: CameraPosition(target: center, zoom: 11),
+              mapToolbarEnabled: false,
+              trafficEnabled: _trafficEnabled,
+              onMapCreated: (controller) {
+                _controller = controller;
+                controller.setMapStyle(switch (_theme) {
+                  _CommandMapTheme.silver => _silverCommandMapStyle,
+                  _CommandMapTheme.retro => _retroCommandMapStyle,
+                  _CommandMapTheme.standard => null,
+                });
+                _focusCommandArea();
+              },
+              circles: _zonesVisible
+                  ? _officeZones
+                      .map(
+                        (zone) => Circle(
+                          circleId: CircleId('office-zone-${zone.id}'),
+                          center: zone.center,
+                          radius: zone.radiusMeters,
+                          fillColor: HrmsColors.blue.withValues(alpha: .10),
+                          strokeColor: HrmsColors.blue,
+                          strokeWidth: 2,
+                        ),
+                      )
+                      .toSet()
+                  : const {},
+              polygons: _zonesVisible
+                  ? _configuredZones
+                      .map(
+                        (zone) => Polygon(
+                          polygonId: PolygonId('configured-zone-${zone.id}'),
+                          points: zone.points,
+                          fillColor: zone.color.withValues(alpha: .12),
+                          strokeColor: zone.color,
+                          strokeWidth: 2,
+                          zIndex: 1,
+                        ),
+                      )
+                      .toSet()
+                  : const {},
+              markers: located
+                  .map(
+                    (employee) => Marker(
+                      markerId: MarkerId(employee.id),
+                      position: LatLng(employee.lat!, employee.lng!),
+                      infoWindow: InfoWindow(
+                        title: employee.name,
+                        snippet: [
+                          employee.address ?? 'Location not yet reverse-geocoded',
+                          if (employee.speedKmph != null)
+                            '${employee.speedKmph!.toStringAsFixed(0)} km/h',
+                          if (employee.batteryPercent != null)
+                            '${employee.batteryPercent}% battery',
+                        ].join(' • '),
+                      ),
+                      icon: BitmapDescriptor.defaultMarkerWithHue(
+                        _markerHue(employee.mode),
+                      ),
+                      onTap: () => widget.onViewRoute(employee),
+                    ),
+                  )
+                  .followedBy(
+                    _zonesVisible
+                        ? _configuredZones.map(
+                            (zone) => Marker(
+                              markerId: MarkerId('configured-zone-label-${zone.id}'),
+                              position: zone.labelPosition,
+                              anchor: const Offset(.5, 1),
+                              icon: _zoneLabelIcons[zone.id] ??
+                                  BitmapDescriptor.defaultMarkerWithHue(
+                                    zone.type == 'field'
+                                        ? BitmapDescriptor.hueOrange
+                                        : BitmapDescriptor.hueAzure,
+                                  ),
+                              infoWindow: InfoWindow(
+                                title: zone.name,
+                                snippet: '${zone.type == 'field' ? 'Field' : 'Office'} geofence',
+                              ),
+                            ),
+                          )
+                        : const Iterable<Marker>.empty(),
+                  )
+                  .toSet(),
+            ),
+          ),
+          if (widget.showCommandControls)
+            Positioned(
+              left: 28,
+              bottom: 28,
+              child: _CommandMapControls(
+                geofenceCount: _officeZones.length + _configuredZones.length,
+                zonesVisible: _zonesVisible,
+                trafficEnabled: _trafficEnabled,
+                onToggleZones: _officeZones.isEmpty && _configuredZones.isEmpty
+                    ? null
+                    : () => setState(() => _zonesVisible = !_zonesVisible),
+                onToggleTraffic: () =>
+                    setState(() => _trafficEnabled = !_trafficEnabled),
+                onZoomIn: () => _zoomBy(1),
+                onZoomOut: () => _zoomBy(-1),
+                onRecenter: _focusOffice,
+                theme: _theme,
+                onThemeChanged: _applyTheme,
               ),
-            )
-            .toSet(),
+            ),
+        ],
       ),
     );
   }
@@ -1665,6 +2993,298 @@ class _LiveMapState extends State<_LiveMap> {
     'Hybrid' => BitmapDescriptor.hueViolet,
     _ => BitmapDescriptor.hueOrange,
   };
+}
+
+class _OfficeGeofence {
+  const _OfficeGeofence({
+    required this.id,
+    required this.name,
+    required this.center,
+    required this.radiusMeters,
+    required this.active,
+  });
+  final String id;
+  final String name;
+  final LatLng center;
+  final double radiusMeters;
+  final bool active;
+
+  static _OfficeGeofence? fromApi(Map<String, dynamic> json) {
+    final latitude = double.tryParse('${json['latitude'] ?? ''}');
+    final longitude = double.tryParse('${json['longitude'] ?? ''}');
+    final radius = double.tryParse('${json['radius_meters'] ?? ''}');
+    if (latitude == null || longitude == null || radius == null) return null;
+    final activeValue = json['is_active'];
+    return _OfficeGeofence(
+      id: '${json['id'] ?? '$latitude,$longitude'}',
+      name: '${json['name'] ?? 'Office zone'}',
+      center: LatLng(latitude, longitude),
+      radiusMeters: radius,
+      active: activeValue == null ||
+          activeValue == true ||
+          activeValue == 1 ||
+          activeValue == '1',
+    );
+  }
+}
+
+/// Configured polygons are drawn exactly as the administrator saves them.
+/// They are visual command-center zones; they do not silently alter the
+/// attendance geofence radius used for check-in validation.
+class _CommandGeofence {
+  const _CommandGeofence({
+    required this.id,
+    required this.name,
+    required this.type,
+    required this.points,
+    required this.color,
+    required this.active,
+  });
+
+  final String id;
+  final String name;
+  final String type;
+  final List<LatLng> points;
+  final Color color;
+  final bool active;
+
+  LatLng get labelPosition {
+    final latitude = points.map((point) => point.latitude).reduce((a, b) => a + b) / points.length;
+    final longitude = points.map((point) => point.longitude).reduce((a, b) => a + b) / points.length;
+    return LatLng(latitude, longitude);
+  }
+
+  static _CommandGeofence? fromApi(Map<String, dynamic> json) {
+    final rawGeometry = json['geometry'];
+    dynamic decoded = rawGeometry;
+    if (rawGeometry is String) {
+      try { decoded = jsonDecode(rawGeometry); } catch (_) { return null; }
+    }
+    if (decoded is! List) return null;
+    final points = decoded.whereType<Map>().map((rawPoint) {
+      final point = Map<String, dynamic>.from(rawPoint);
+      final latitude = (point['lat'] ?? point['latitude']) as num?;
+      final longitude = (point['lng'] ?? point['longitude']) as num?;
+      if (latitude == null || longitude == null) return null;
+      return LatLng(latitude.toDouble(), longitude.toDouble());
+    }).whereType<LatLng>().toList(growable: false);
+    if (points.length < 3) return null;
+    final rawColor = '${json['color_hex'] ?? '#1769E0'}';
+    final hex = rawColor.replaceFirst('#', '');
+    final color = hex.length == 6 ? Color(int.parse('FF$hex', radix: 16)) : HrmsColors.blue;
+    final activeValue = json['is_active'];
+    return _CommandGeofence(
+      id: '${json['id'] ?? json['name']}',
+      name: '${json['name'] ?? 'Geofence'}',
+      type: '${json['zone_type'] ?? 'office'}'.toLowerCase(),
+      points: points,
+      color: color,
+      active: activeValue == null || activeValue == true || activeValue == 1 || activeValue == '1',
+    );
+  }
+}
+
+class _CommandMapControls extends StatelessWidget {
+  const _CommandMapControls({
+    required this.geofenceCount,
+    required this.zonesVisible,
+    required this.trafficEnabled,
+    required this.onToggleZones,
+    required this.onToggleTraffic,
+    required this.onZoomIn,
+    required this.onZoomOut,
+    required this.onRecenter,
+    required this.theme,
+    required this.onThemeChanged,
+  });
+  final int geofenceCount;
+  final bool zonesVisible;
+  final bool trafficEnabled;
+  final VoidCallback? onToggleZones;
+  final VoidCallback onToggleTraffic, onZoomIn, onZoomOut, onRecenter;
+  final _CommandMapTheme theme;
+  final ValueChanged<_CommandMapTheme> onThemeChanged;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      _ControlPanel(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _MapControlAction(
+              icon: Icons.layers_outlined,
+              label: geofenceCount == 0
+                  ? 'No geofences'
+                  : 'Geofences ($geofenceCount)',
+              active: zonesVisible,
+              enabled: onToggleZones != null,
+              onTap: onToggleZones,
+            ),
+            const Divider(height: 1, color: Color(0xFFE2E8F1)),
+            _MapControlAction(
+              icon: Icons.bolt_outlined,
+              label: 'Traffic overlay',
+              active: trafficEnabled,
+              onTap: onToggleTraffic,
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 10),
+      _ControlPanel(
+        child: Column(
+          children: [
+            _MapIconAction(icon: Icons.add, onTap: onZoomIn),
+            const Divider(height: 1, color: Color(0xFFE2E8F1)),
+            _MapIconAction(icon: Icons.remove, onTap: onZoomOut),
+            const Divider(height: 1, color: Color(0xFFE2E8F1)),
+            _MapIconAction(icon: Icons.my_location_outlined, onTap: onRecenter),
+          ],
+        ),
+      ),
+      const SizedBox(height: 10),
+      _ControlPanel(
+        child: Padding(
+          padding: const EdgeInsets.all(5),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _MapThemeButton(
+                label: 'Silver',
+                active: theme == _CommandMapTheme.silver,
+                onTap: () => onThemeChanged(_CommandMapTheme.silver),
+              ),
+              _MapThemeButton(
+                label: 'Retro',
+                active: theme == _CommandMapTheme.retro,
+                onTap: () => onThemeChanged(_CommandMapTheme.retro),
+              ),
+              _MapThemeButton(
+                label: 'Map',
+                active: theme == _CommandMapTheme.standard,
+                onTap: () => onThemeChanged(_CommandMapTheme.standard),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
+class _MapThemeButton extends StatelessWidget {
+  const _MapThemeButton({
+    required this.label,
+    required this.active,
+    required this.onTap,
+  });
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(8),
+    child: AnimatedContainer(
+      duration: const Duration(milliseconds: 150),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+      decoration: BoxDecoration(
+        color: active ? HrmsColors.navy : Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: active ? Colors.white : const Color(0xFF53627B),
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    ),
+  );
+}
+
+class _ControlPanel extends StatelessWidget {
+  const _ControlPanel({required this.child});
+  final Widget child;
+  @override
+  Widget build(BuildContext context) => Container(
+    width: 166,
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: .96),
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: const Color(0xFFDCE5F1)),
+      boxShadow: const [
+        BoxShadow(
+          color: Color(0x22081B3C),
+          blurRadius: 18,
+          offset: Offset(0, 6),
+        ),
+      ],
+    ),
+    child: child,
+  );
+}
+
+class _MapControlAction extends StatelessWidget {
+  const _MapControlAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.active = false,
+    this.enabled = true,
+  });
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+  final bool active, enabled;
+  @override
+  Widget build(BuildContext context) => InkWell(
+    onTap: enabled ? onTap : null,
+    borderRadius: BorderRadius.circular(12),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+      child: Row(
+        children: [
+          Icon(
+            icon,
+            size: 18,
+            color: enabled
+                ? (active ? HrmsColors.blue : const Color(0xFF4F5F78))
+                : const Color(0xFF9DAABD),
+          ),
+          const SizedBox(width: 9),
+          Text(
+            label,
+            style: TextStyle(
+              color: enabled
+                  ? (active ? HrmsColors.blue : const Color(0xFF4F5F78))
+                  : const Color(0xFF9DAABD),
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _MapIconAction extends StatelessWidget {
+  const _MapIconAction({required this.icon, required this.onTap});
+  final IconData icon;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    child: SizedBox(
+      height: 42,
+      child: Icon(icon, size: 21, color: const Color(0xFF31445F)),
+    ),
+  );
 }
 
 class _ModeButton extends StatelessWidget {
@@ -1852,15 +3472,18 @@ class _MobileTrackedList extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     children: employees
         .map(
-          (employee) => Container(
-            margin: const EdgeInsets.only(bottom: 9),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFBFCFF),
-              border: Border.all(color: const Color(0xFFE5EAF3)),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
+          (employee) => GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => onViewRoute(employee),
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 9),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFBFCFF),
+                border: Border.all(color: const Color(0xFFE5EAF3)),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
               children: [
                 CircleAvatar(
                   radius: 20,
@@ -1930,6 +3553,7 @@ class _MobileTrackedList extends StatelessWidget {
                   ),
                 ),
               ],
+              ),
             ),
           ),
         )
@@ -2007,12 +3631,15 @@ class _TrackingRow extends StatelessWidget {
   final ValueChanged<_TrackedEmployee> onViewActivity;
 
   @override
-  Widget build(BuildContext context) => Container(
-    height: 59,
-    decoration: const BoxDecoration(
-      border: Border(top: BorderSide(color: Color(0xFFE5E8EF))),
-    ),
-    child: Row(
+  Widget build(BuildContext context) => GestureDetector(
+    behavior: HitTestBehavior.opaque,
+    onTap: () => onViewRoute(employee),
+    child: Container(
+      height: 59,
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: Color(0xFFE5E8EF))),
+      ),
+      child: Row(
       children: [
         _TrackingCell(
           width: 220,
@@ -2126,6 +3753,7 @@ class _TrackingRow extends StatelessWidget {
           ),
         ),
       ],
+      ),
     ),
   );
 }
@@ -2175,6 +3803,11 @@ class _TrackedEmployee {
     required this.id,
     required this.mode,
     required this.active,
+    required this.trackingActive,
+    required this.workMode,
+    this.designation,
+    this.speedKmph,
+    this.batteryPercent,
     this.lat,
     this.lng,
     this.address,
@@ -2182,8 +3815,12 @@ class _TrackedEmployee {
   });
 
   final int? employeeUserId;
-  final String name, id, mode;
+  final String name, id, mode, workMode;
+  final String? designation;
   final bool active;
+  final bool trackingActive;
+  final double? speedKmph;
+  final int? batteryPercent;
   final double? lat, lng;
   final String? address;
   final DateTime? lastUpdated;
@@ -2205,6 +3842,17 @@ class _TrackedEmployee {
       id: (json['employeeCode'] ?? '').toString(),
       mode: mode,
       active: json['active'] == true,
+      trackingActive: json['trackingActive'] == true ||
+          json['trackingActive'] == 1 ||
+          json['trackingActive'] == '1',
+      workMode: (json['workMode'] ?? 'Office').toString(),
+      designation: (json['designation'] as String?)?.trim().isEmpty == true
+          ? null
+          : json['designation'] as String?,
+      speedKmph: (json['speedKmph'] as num?)?.toDouble(),
+      batteryPercent: json['batteryPercent'] is num
+          ? (json['batteryPercent'] as num).toInt()
+          : int.tryParse('${json['batteryPercent']}'),
       lat: (json['latitude'] as num?)?.toDouble(),
       lng: (json['longitude'] as num?)?.toDouble(),
       address: (json['address'] as String?)?.trim().isEmpty == true
@@ -2222,6 +3870,12 @@ class _TrackedEmployee {
     final hours = (minutes / 60).floor();
     return 'Updated ${hours}h ago';
   }
+
+  /// Office employees are active once checked in. Hybrid and Field employees
+  /// require both an open attendance record and an active GPS session.
+  bool get commandActive => workMode.toLowerCase() == 'office'
+      ? active
+      : active && trackingActive;
 }
 
 class _RoutePoint {
@@ -2231,10 +3885,14 @@ class _RoutePoint {
     required this.latitude,
     required this.longitude,
     required this.recordedAt,
+    required this.speedKmph,
+    required this.batteryPercent,
   });
   final String time, location;
   final double? latitude, longitude;
   final String? recordedAt;
+  final double? speedKmph;
+  final int? batteryPercent;
 
   factory _RoutePoint.fromApi(Map<String, dynamic> json) {
     final rawTime = json['recordedAt']?.toString();
@@ -2243,15 +3901,23 @@ class _RoutePoint {
         ? DateFormat('hh:mm a').format(recorded.toLocal())
         : '--:--';
     final address = (json['address'] as String?)?.trim();
+    final latitude = (json['latitude'] as num?)?.toDouble();
+    final longitude = (json['longitude'] as num?)?.toDouble();
     final location = (address != null && address.isNotEmpty)
         ? address
-        : 'Location name unavailable';
+        : latitude != null && longitude != null
+        ? '${latitude.toStringAsFixed(5)}, ${longitude.toStringAsFixed(5)}'
+        : 'Location unavailable';
     return _RoutePoint(
       time: time,
       location: location,
-      latitude: (json['latitude'] as num?)?.toDouble(),
-      longitude: (json['longitude'] as num?)?.toDouble(),
+      latitude: latitude,
+      longitude: longitude,
       recordedAt: rawTime,
+      speedKmph: (json['speedKmph'] as num?)?.toDouble(),
+      batteryPercent: json['batteryPercent'] is num
+          ? (json['batteryPercent'] as num).toInt()
+          : int.tryParse('${json['batteryPercent']}'),
     );
   }
 }
@@ -2371,8 +4037,29 @@ class _EmployeeTrackingDetailsDialogState
   List<Map<String, dynamic>> _waitingReasons = const [];
   List<Map<String, dynamic>> _comments = const [];
   bool _sessionStoppedOnSelectedDate = false;
+  double _timelineProgress = 1;
+  GoogleMapController? _routeMapController;
 
   List<LatLng> get _route => _routePoints;
+  List<_RoutePoint> get _timelinePoints => _activityPoints
+      .where((point) => point.latitude != null && point.longitude != null)
+      .toList(growable: false);
+
+  int get _selectedTimelineIndex {
+    if (_timelinePoints.isEmpty) return 0;
+    return (_timelineProgress * (_timelinePoints.length - 1))
+        .round()
+        .clamp(0, _timelinePoints.length - 1)
+        .toInt();
+  }
+
+  int get _selectedRouteIndex {
+    if (_route.isEmpty) return 0;
+    return (_timelineProgress * (_route.length - 1))
+        .round()
+        .clamp(0, _route.length - 1)
+        .toInt();
+  }
 
   @override
   void initState() {
@@ -2409,6 +4096,13 @@ class _EmployeeTrackingDetailsDialogState
               .toList();
       if (!mounted) return;
       final mapPoints = pointsFor('points');
+      final activityPoints = pointsFor('activityPoints');
+      final timelinePoints = activityPoints
+          .where((point) => point.latitude != null && point.longitude != null)
+          .toList(growable: false);
+      // `points` is the route geometry (and may be road-snapped).  It is
+      // intentionally kept separate from raw activity pings, which carry
+      // each ping's recorded time and resolved address for the timeline.
       final routePoints = mapPoints
           .where((point) => point.latitude != null && point.longitude != null)
           .map((point) => LatLng(point.latitude!, point.longitude!))
@@ -2420,12 +4114,13 @@ class _EmployeeTrackingDetailsDialogState
         _mapPoints = mapPoints;
         _routePoints = routePoints;
         _cachedDistanceKm = null;
-        _activityPoints = pointsFor('activityPoints');
+        _activityPoints = activityPoints;
         _roadSnapped = data['roadSnapped'] == true;
         _invalidated = data['invalidated'] == true;
         _invalidationReason = data['invalidationReason']?.toString();
         _waitingReasons = entriesFor('waitingReasons');
         _comments = entriesFor('comments');
+        _timelineProgress = timelinePoints.isEmpty ? 0 : 1;
         _sessionStoppedOnSelectedDate =
             session != null &&
             session['isActive'] != true &&
@@ -2558,6 +4253,23 @@ class _EmployeeTrackingDetailsDialogState
         : '$latitude, $longitude';
   }
 
+  void _setTimelinePosition(double value) {
+    if (_timelinePoints.isEmpty || _route.isEmpty) return;
+    final progress = value.clamp(0, 1).toDouble();
+    if (progress == _timelineProgress) return;
+    setState(() => _timelineProgress = progress);
+    _focusTimelinePosition();
+  }
+
+  Future<void> _focusTimelinePosition() async {
+    final controller = _routeMapController;
+    if (controller == null || _route.isEmpty) return;
+    final point = _route[_selectedRouteIndex];
+    await controller.animateCamera(
+      CameraUpdate.newLatLng(point),
+    );
+  }
+
   @override
   Widget build(BuildContext context) => Dialog(
     insetPadding: const EdgeInsets.all(24),
@@ -2620,8 +4332,8 @@ class _EmployeeTrackingDetailsDialogState
                   ),
                 ),
                 _RouteStatusChip(
-                  label: widget.employee.active ? 'Live' : 'Offline',
-                  active: widget.employee.active,
+                  label: widget.employee.commandActive ? 'Active' : 'Offline',
+                  active: widget.employee.commandActive,
                 ),
                 Text(
                   '${widget.employee.id}  |  ${widget.employee.mode}',
@@ -2734,7 +4446,10 @@ class _EmployeeTrackingDetailsDialogState
             ),
           ),
         ),
-        const SizedBox(height: 10),
+        if (_timelinePoints.length > 1) ...[
+          _routeTimeline(),
+          const SizedBox(height: 10),
+        ],
         SizedBox(
           height: 340,
           child: LayoutBuilder(
@@ -2808,6 +4523,22 @@ class _EmployeeTrackingDetailsDialogState
         ),
       );
     }
+    final timelinePoints = _timelinePoints;
+    final selectedIndex = _selectedTimelineIndex;
+    final selectedPoint = timelinePoints[selectedIndex];
+    final selectedRouteIndex = _selectedRouteIndex;
+    final selectedRoutePoint = _route[selectedRouteIndex];
+    final completedRoute = _route
+        .take(selectedRouteIndex + 1)
+        .toList(growable: false);
+    final remainingRoute = _route
+        .skip(selectedRouteIndex)
+        .toList(growable: false);
+    final selectedTitle = selectedIndex == 0
+        ? 'Start'
+        : selectedIndex == timelinePoints.length - 1
+        ? (_sessionStoppedOnSelectedDate ? 'End' : 'Latest location')
+        : 'Selected location update';
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: Stack(
@@ -2817,18 +4548,30 @@ class _EmployeeTrackingDetailsDialogState
               'details-${widget.employee.employeeUserId}-${DateFormat('yyyy-MM-dd').format(_selectedDate)}',
             ),
             initialCameraPosition: CameraPosition(
-              target: _route.first,
+              target: selectedRoutePoint,
               zoom: 14,
             ),
             mapToolbarEnabled: false,
+            onMapCreated: (controller) {
+              _routeMapController = controller;
+              _focusTimelinePosition();
+            },
             polylines: _roadSnapped
                 ? {
-                    Polyline(
-                      polylineId: const PolylineId('details-route'),
-                      points: _route,
-                      color: HrmsColors.blue,
-                      width: 5,
-                    ),
+                    if (remainingRoute.length > 1)
+                      Polyline(
+                        polylineId: const PolylineId('details-route-remaining'),
+                        points: remainingRoute,
+                        color: const Color(0xFFB9C4D7),
+                        width: 4,
+                      ),
+                    if (completedRoute.length > 1)
+                      Polyline(
+                        polylineId: const PolylineId('details-route-completed'),
+                        points: completedRoute,
+                        color: HrmsColors.blue,
+                        width: 5,
+                      ),
                   }
                 : const {},
             markers: {
@@ -2840,23 +4583,17 @@ class _EmployeeTrackingDetailsDialogState
                 ),
                 infoWindow: const InfoWindow(title: 'Start'),
               ),
-              if (_route.length > 1 && _sessionStoppedOnSelectedDate)
+              if (selectedIndex > 0)
                 Marker(
-                  markerId: const MarkerId('details-end'),
-                  position: _route.last,
-                  icon: BitmapDescriptor.defaultMarkerWithHue(
-                    BitmapDescriptor.hueRed,
-                  ),
-                  infoWindow: const InfoWindow(title: 'End'),
-                ),
-              if (_route.length > 1 && !_sessionStoppedOnSelectedDate)
-                Marker(
-                  markerId: const MarkerId('details-latest'),
-                  position: _route.last,
+                  markerId: const MarkerId('details-timeline-position'),
+                  position: selectedRoutePoint,
                   icon: BitmapDescriptor.defaultMarkerWithHue(
                     BitmapDescriptor.hueAzure,
                   ),
-                  infoWindow: const InfoWindow(title: 'Latest location update'),
+                  infoWindow: InfoWindow(
+                    title: selectedTitle,
+                    snippet: selectedPoint.time,
+                  ),
                 ),
             },
           ),
@@ -2878,6 +4615,86 @@ class _EmployeeTrackingDetailsDialogState
                 ),
               ),
             ),
+        ],
+      ),
+    );
+  }
+
+  Widget _routeTimeline() {
+    final points = _timelinePoints;
+    final selectedPoint = points[_selectedTimelineIndex];
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 9, 14, 7),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFE),
+        border: Border.all(color: const Color(0xFFDDE6F4)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.route_outlined, color: HrmsColors.blue, size: 18),
+              const SizedBox(width: 7),
+              const Text(
+                'Route timeline',
+                style: TextStyle(
+                  color: HrmsColors.navy,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                selectedPoint.time,
+                style: const TextStyle(
+                  color: HrmsColors.blue,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              activeTrackColor: HrmsColors.blue,
+              inactiveTrackColor: const Color(0xFFB9C4D7),
+              thumbColor: HrmsColors.blue,
+              overlayColor: HrmsColors.blue.withValues(alpha: .12),
+              trackHeight: 4,
+            ),
+            child: Slider(
+              value: _timelineProgress,
+              min: 0,
+              max: 1,
+              divisions: 100,
+              label: selectedPoint.time,
+              onChanged: _setTimelinePosition,
+            ),
+          ),
+          Row(
+            children: [
+              Text(
+                'Start ${points.first.time}',
+                style: const TextStyle(color: Color(0xFF657087), fontSize: 10),
+              ),
+              const Spacer(),
+              Expanded(
+                child: Text(
+                  selectedPoint.location,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Color(0xFF657087), fontSize: 10),
+                ),
+              ),
+              const Spacer(),
+              Text(
+                'End ${points.last.time}',
+                style: const TextStyle(color: Color(0xFF657087), fontSize: 10),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -3009,10 +4826,7 @@ class _EmployeeTrackingDetailsDialogState
   );
 
   List<Widget> _routeHistoryRows() {
-    final recentPoints = _activityPoints.length > 3
-        ? _activityPoints.sublist(_activityPoints.length - 3)
-        : _activityPoints;
-    return recentPoints.map((point) {
+    return _activityPoints.map((point) {
       final isStart = point == _activityPoints.first;
       final isEnd =
           _sessionStoppedOnSelectedDate && point == _activityPoints.last;
@@ -3130,7 +4944,7 @@ class _EmployeeTrackingDetailsDialogState
 
   Widget _tabs() {
     const labels = [
-      'Latest 3 pings',
+      'Route History',
       'Waiting Popup Comments',
       'Permanent Comments',
     ];
@@ -3509,10 +5323,10 @@ class _RouteDialogState extends State<_RouteDialog> {
             Row(
               children: [
                 _RouteStatusChip(
-                  label: widget.employee.active
+                  label: widget.employee.commandActive
                       ? widget.employee.mode
                       : 'Offline',
-                  active: widget.employee.active,
+                  active: widget.employee.commandActive,
                 ),
                 const Spacer(),
                 OutlinedButton.icon(

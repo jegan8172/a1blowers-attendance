@@ -12,6 +12,21 @@ function fail(res, status, message) {
   return res.status(status).json({ success: false, message: message });
 }
 
+function optionalTelemetry(body) {
+  const rawSpeed = body && body.speedKmph;
+  const rawBattery = body && body.batteryPercent;
+  const speedKmph = rawSpeed == null || rawSpeed === '' ? NaN : Number(rawSpeed);
+  const batteryPercent = rawBattery == null || rawBattery === '' ? NaN : Number(rawBattery);
+  return {
+    speedKmph: Number.isFinite(speedKmph) && speedKmph >= 0 && speedKmph <= 500
+      ? Math.round(speedKmph * 10) / 10
+      : null,
+    batteryPercent: Number.isInteger(batteryPercent) && batteryPercent >= 0 && batteryPercent <= 100
+      ? batteryPercent
+      : null,
+  };
+}
+
 function officeDistance(lat1, lon1, lat2, lon2) {
   const r = 6371000, rad = (v) => v * Math.PI / 180;
   const dLat = rad(lat2-lat1), dLon = rad(lon2-lon1);
@@ -56,6 +71,73 @@ async function deleteOfficeLocation(req,res) {
     if (!result.affectedRows) return fail(res, 404, 'Office location not found');
     return ok(res, { id }, 'Office location deleted');
   } catch (e) { return fail(res, 400, e.message); }
+}
+
+function geofenceZoneValues(body) {
+  const name = String(body.name || '').trim();
+  const zoneType = String(body.zoneType || body.zone_type || 'office').toLowerCase();
+  const colorHex = String(body.colorHex || body.color_hex || (zoneType === 'field' ? '#FF6500' : '#1769E0')).trim();
+  const geometry = Array.isArray(body.geometry) ? body.geometry : [];
+  if (!name || name.length > 120) throw new Error('Zone name is required (maximum 120 characters).');
+  if (!['office', 'field'].includes(zoneType)) throw new Error('Zone type must be office or field.');
+  if (!/^#[0-9a-fA-F]{6}$/.test(colorHex)) throw new Error('Zone colour must be a six-digit hex value.');
+  if (geometry.length < 3 || geometry.length > 200) throw new Error('A zone needs between 3 and 200 boundary points.');
+  const points = geometry.map((point) => ({
+    lat: Number(point && (point.lat ?? point.latitude)),
+    lng: Number(point && (point.lng ?? point.longitude)),
+  }));
+  if (points.some((point) => !Number.isFinite(point.lat) || point.lat < -90 || point.lat > 90 || !Number.isFinite(point.lng) || point.lng < -180 || point.lng > 180)) {
+    throw new Error('Every zone boundary point must have a valid latitude and longitude.');
+  }
+  return { name, zoneType, colorHex: colorHex.toUpperCase(), geometry: points };
+}
+
+async function geofenceZones(req, res) {
+  try {
+    const [items] = await db.query('SELECT id,name,zone_type,geometry,color_hex,is_active,created_at,updated_at FROM hrms_tracking_geofence_zones ORDER BY is_active DESC, zone_type, name');
+    return ok(res, { items });
+  } catch (error) { return fail(res, 500, error.message); }
+}
+
+async function createGeofenceZone(req, res) {
+  try {
+    const value = geofenceZoneValues(req.body || {});
+    const [result] = await db.query('INSERT INTO hrms_tracking_geofence_zones (name,zone_type,geometry,color_hex,created_by,updated_by) VALUES (?,?,?,?,?,?)', [value.name, value.zoneType, JSON.stringify(value.geometry), value.colorHex, req.user.id, req.user.id]);
+    return ok(res, { id: result.insertId }, 'Geofence zone created');
+  } catch (error) { return fail(res, 400, error.message); }
+}
+
+async function updateGeofenceZone(req, res) {
+  try {
+    const id = Number(req.params.id); const value = geofenceZoneValues(req.body || {});
+    const [result] = await db.query('UPDATE hrms_tracking_geofence_zones SET name=?,zone_type=?,geometry=?,color_hex=?,updated_by=? WHERE id=?', [value.name, value.zoneType, JSON.stringify(value.geometry), value.colorHex, req.user.id, id]);
+    if (!result.affectedRows) return fail(res, 404, 'Geofence zone not found');
+    return ok(res, { id }, 'Geofence zone updated');
+  } catch (error) { return fail(res, 400, error.message); }
+}
+
+async function archiveGeofenceZone(req, res) {
+  try {
+    const id = Number(req.params.id); const [result] = await db.query('UPDATE hrms_tracking_geofence_zones SET is_active=0,updated_by=? WHERE id=?', [req.user.id, id]);
+    if (!result.affectedRows) return fail(res, 404, 'Geofence zone not found');
+    return ok(res, { id }, 'Geofence zone archived');
+  } catch (error) { return fail(res, 400, error.message); }
+}
+
+async function restoreGeofenceZone(req, res) {
+  try {
+    const id = Number(req.params.id); const [result] = await db.query('UPDATE hrms_tracking_geofence_zones SET is_active=1,updated_by=? WHERE id=?', [req.user.id, id]);
+    if (!result.affectedRows) return fail(res, 404, 'Geofence zone not found');
+    return ok(res, { id }, 'Geofence zone restored');
+  } catch (error) { return fail(res, 400, error.message); }
+}
+
+async function deleteGeofenceZone(req, res) {
+  try {
+    const id = Number(req.params.id); const [result] = await db.query('DELETE FROM hrms_tracking_geofence_zones WHERE id=?', [id]);
+    if (!result.affectedRows) return fail(res, 404, 'Geofence zone not found');
+    return ok(res, { id }, 'Geofence zone deleted');
+  } catch (error) { return fail(res, 400, error.message); }
 }
 
 function templateValues(body) {
@@ -423,6 +505,10 @@ function rawRoutePoints(pings) {
       longitude: Number(row.longitude),
       address: row.address,
       recordedAt: row.recorded_at,
+      // These are deliberately optional. Older pings predate telemetry and
+      // must remain visible without pretending that their speed/battery was 0.
+      speedKmph: row.speed_kmph == null ? null : Number(row.speed_kmph),
+      batteryPercent: row.battery_percent == null ? null : Number(row.battery_percent),
     };
   });
 }
@@ -823,6 +909,7 @@ async function ping(req, res) {
     const latitude = Number(req.body.latitude);
     const longitude = Number(req.body.longitude);
     const accuracy = req.body.accuracy != null ? Number(req.body.accuracy) : null;
+    const telemetry = optionalTelemetry(req.body);
     const isMocked = req.body.isMocked === true;
     if (!employeeUserId) return fail(res, 401, 'Unauthorized');
     await validateTrackingLocation(employeeUserId, latitude, longitude, accuracy, isMocked);
@@ -848,9 +935,9 @@ async function ping(req, res) {
       }
     }
     const [result] = await db.query(
-      `INSERT INTO hrms_location_pings (employee_user_id, latitude, longitude, accuracy_meters)
-       VALUES (?, ?, ?, ?)`,
-      [employeeUserId, latitude, longitude, accuracy]
+      `INSERT INTO hrms_location_pings (employee_user_id, latitude, longitude, accuracy_meters, speed_kmph, battery_percent)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [employeeUserId, latitude, longitude, accuracy, telemetry.speedKmph, telemetry.batteryPercent]
     );
     const pingId = result.insertId;
 
@@ -875,7 +962,7 @@ async function ping(req, res) {
 async function liveOverview(req, res) {
   try {
     const [profiles] = await db.query(`
-      SELECT id, employee_user_id, full_name, employee_code, work_mode
+      SELECT id, employee_user_id, full_name, employee_code, designation, work_mode
       FROM hrms_employee_profiles
       WHERE employment_status <> 'Inactive'
     `);
@@ -908,7 +995,7 @@ async function liveOverview(req, res) {
 
     const [latestPings] = userIds.length
       ? await db.query(
-          `SELECT p.employee_user_id, p.latitude, p.longitude, p.address, p.recorded_at
+          `SELECT p.employee_user_id, p.latitude, p.longitude, p.address, p.speed_kmph, p.battery_percent, p.recorded_at
            FROM hrms_location_pings p
            INNER JOIN (
              SELECT employee_user_id, MAX(recorded_at) AS max_time
@@ -943,18 +1030,26 @@ async function liveOverview(req, res) {
       counts[status] = (counts[status] || 0) + 1;
 
       const isActive = uid != null && activeAttendanceIds.has(uid);
+      // Attendance and live tracking are deliberately separate states. An
+      // employee can be checked in without starting GPS tracking.
+      const trackingActive = uid != null && sessionModeMap.has(uid);
       if (isActive) activeNow += 1;
 
       return {
         employeeUserId: uid,
         name: String(profile.full_name || '').trim(),
         employeeCode: profile.employee_code,
+        designation: profile.designation || null,
+        workMode: workMode,
         status: status,
         latitude: ping ? Number(ping.latitude) : null,
         longitude: ping ? Number(ping.longitude) : null,
         address: ping ? ping.address : null,
+        speedKmph: ping && ping.speed_kmph != null ? Number(ping.speed_kmph) : null,
+        batteryPercent: ping && ping.battery_percent != null ? Number(ping.battery_percent) : null,
         lastUpdated: ping ? ping.recorded_at : null,
         active: isActive,
+        trackingActive: trackingActive,
       };
     });
 
@@ -1003,7 +1098,7 @@ async function routeHistory(req, res) {
     }
 
     const [pings] = await db.query(
-      `SELECT latitude, longitude, address, recorded_at
+      `SELECT latitude, longitude, address, recorded_at, speed_kmph, battery_percent
        FROM hrms_location_pings
        WHERE employee_user_id = ? AND DATE(recorded_at) = ?
        ORDER BY recorded_at ASC`,
@@ -1113,7 +1208,7 @@ async function myRouteHistoryList(req, res) {
   try {
     const limit = Math.min(30, Math.max(1, Number(req.query.limit || 10)));
     const [pings] = await db.query(
-      `SELECT latitude, longitude, address, recorded_at
+      `SELECT latitude, longitude, address, recorded_at, speed_kmph, battery_percent
        FROM hrms_location_pings WHERE employee_user_id = ?
        ORDER BY recorded_at DESC LIMIT 5000`,
       [req.user.id]
@@ -1157,7 +1252,7 @@ async function myRouteHistory(req, res) {
     const date = String(req.query.date || policy.todayIstDate()).slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return fail(res, 400, 'date must be YYYY-MM-DD');
     const [pings] = await db.query(
-      `SELECT latitude, longitude, address, recorded_at
+      `SELECT latitude, longitude, address, recorded_at, speed_kmph, battery_percent
        FROM hrms_location_pings
        WHERE employee_user_id = ? AND DATE(recorded_at) = ?
        ORDER BY recorded_at ASC`,
@@ -1722,6 +1817,7 @@ async function startFieldTracking(req, res) {
     const longitude = Number(req.body.longitude);
     const accuracy =
         req.body.accuracy != null ? Number(req.body.accuracy) : null;
+    const telemetry = optionalTelemetry(req.body);
     const isMocked = req.body.isMocked === true;
     if (!employeeUserId) {
       return fail(res, 401, 'Unauthorized');
@@ -1771,9 +1867,9 @@ async function startFieldTracking(req, res) {
 
     await db.query(
       `INSERT INTO hrms_location_pings
-        (employee_user_id, latitude, longitude, accuracy_meters)
-       VALUES (?, ?, ?, ?)`,
-      [employeeUserId, latitude, longitude, accuracy]
+        (employee_user_id, latitude, longitude, accuracy_meters, speed_kmph, battery_percent)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [employeeUserId, latitude, longitude, accuracy, telemetry.speedKmph, telemetry.batteryPercent]
     );
 
     await saveLocationStatus(
@@ -1801,6 +1897,7 @@ async function stopFieldTracking(req, res) {
         req.body.longitude != null ? Number(req.body.longitude) : null;
     const accuracy =
         req.body.accuracy != null ? Number(req.body.accuracy) : null;
+    const telemetry = optionalTelemetry(req.body);
     const isMocked = req.body.isMocked === true;
     const reason = String((req.body && req.body.reason) || '').trim();
 
@@ -1864,9 +1961,9 @@ async function stopFieldTracking(req, res) {
     if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
       const [finalPing] = await db.query(
         `INSERT INTO hrms_location_pings
-          (employee_user_id, latitude, longitude, accuracy_meters)
-         VALUES (?, ?, ?, ?)`,
-        [employeeUserId, latitude, longitude, accuracy]
+          (employee_user_id, latitude, longitude, accuracy_meters, speed_kmph, battery_percent)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [employeeUserId, latitude, longitude, accuracy, telemetry.speedKmph, telemetry.batteryPercent]
       );
 
       // The map route uses location pings. Save and reverse-geocode the exact
@@ -2128,4 +2225,10 @@ reviewFieldWaitingReason,
   archiveOfficeLocation,
   restoreOfficeLocation,
   deleteOfficeLocation,
+  geofenceZones,
+  createGeofenceZone,
+  updateGeofenceZone,
+  archiveGeofenceZone,
+  restoreGeofenceZone,
+  deleteGeofenceZone,
 };

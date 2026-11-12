@@ -42,6 +42,18 @@ class HrmsTrackingApi {
   static Future<void> restoreOfficeLocation(int id) async { final r=await http.patch(Uri.parse('${ApiConfig.baseUrl}/hrms/tracking/office-locations/$id/restore'),headers:await _headers()); _decode(r); }
   static Future<void> deleteOfficeLocation(int id) async { final r=await http.delete(Uri.parse('${ApiConfig.baseUrl}/hrms/tracking/office-locations/$id'),headers:await _headers()); _decode(r); }
 
+  static Future<List<Map<String, dynamic>>> geofenceZones() async {
+    final response = await http.get(Uri.parse('${ApiConfig.baseUrl}/hrms/tracking/geofence-zones'), headers: await _headers());
+    final data = _decode(response);
+    return (data['items'] as List? ?? []).whereType<Map>().map((item) => Map<String, dynamic>.from(item)).toList();
+  }
+
+  static Future<void> createGeofenceZone(Map<String, dynamic> values) async { final r = await http.post(Uri.parse('${ApiConfig.baseUrl}/hrms/tracking/geofence-zones'), headers: await _headers(), body: jsonEncode(values)); _decode(r); }
+  static Future<void> updateGeofenceZone(int id, Map<String, dynamic> values) async { final r = await http.put(Uri.parse('${ApiConfig.baseUrl}/hrms/tracking/geofence-zones/$id'), headers: await _headers(), body: jsonEncode(values)); _decode(r); }
+  static Future<void> archiveGeofenceZone(int id) async { final r = await http.patch(Uri.parse('${ApiConfig.baseUrl}/hrms/tracking/geofence-zones/$id/archive'), headers: await _headers()); _decode(r); }
+  static Future<void> restoreGeofenceZone(int id) async { final r = await http.patch(Uri.parse('${ApiConfig.baseUrl}/hrms/tracking/geofence-zones/$id/restore'), headers: await _headers()); _decode(r); }
+  static Future<void> deleteGeofenceZone(int id) async { final r = await http.delete(Uri.parse('${ApiConfig.baseUrl}/hrms/tracking/geofence-zones/$id'), headers: await _headers()); _decode(r); }
+
   static Future<Map<String, dynamic>?> myHomeLocation() async {
     final response = await http
         .get(
@@ -253,6 +265,8 @@ class HrmsTrackingApi {
     required double latitude,
     required double longitude,
     double? accuracy,
+    double? speedKmph,
+    int? batteryPercent,
     bool isMocked = false,
   }) async {
     final response = await http.post(
@@ -262,6 +276,8 @@ class HrmsTrackingApi {
         'latitude': latitude,
         'longitude': longitude,
         'accuracy': ?accuracy,
+        'speedKmph': ?speedKmph,
+        'batteryPercent': ?batteryPercent,
         'isMocked': isMocked,
       }),
     );
@@ -316,6 +332,8 @@ class HrmsTrackingApi {
     required double latitude,
     required double longitude,
     double? accuracy,
+    double? speedKmph,
+    int? batteryPercent,
     bool isMocked = false,
   }) async {
     final response = await http.post(
@@ -325,6 +343,8 @@ class HrmsTrackingApi {
         'latitude': latitude,
         'longitude': longitude,
         'accuracy': ?accuracy,
+        'speedKmph': ?speedKmph,
+        'batteryPercent': ?batteryPercent,
         'isMocked': isMocked,
       }),
     );
@@ -354,6 +374,8 @@ class HrmsTrackingApi {
     double? latitude,
     double? longitude,
     double? accuracy,
+    double? speedKmph,
+    int? batteryPercent,
     bool isMocked = false,
   }) async {
     final response = await http.post(
@@ -364,6 +386,8 @@ class HrmsTrackingApi {
         'latitude': ?latitude,
         'longitude': ?longitude,
         'accuracy': ?accuracy,
+        'speedKmph': ?speedKmph,
+        'batteryPercent': ?batteryPercent,
         'isMocked': isMocked,
       }),
     );

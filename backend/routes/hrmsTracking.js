@@ -19,6 +19,12 @@ router.put('/office-locations/:id', hrms.requireAdmin, hrms.updateOfficeLocation
 router.patch('/office-locations/:id/archive', hrms.requireAdmin, hrms.archiveOfficeLocation);
 router.patch('/office-locations/:id/restore', hrms.requireAdmin, hrms.restoreOfficeLocation);
 router.delete('/office-locations/:id', hrms.requireAdmin, hrms.deleteOfficeLocation);
+router.get('/geofence-zones', hrms.requireAdmin, hrms.geofenceZones);
+router.post('/geofence-zones', hrms.requireAdmin, hrms.createGeofenceZone);
+router.put('/geofence-zones/:id', hrms.requireAdmin, hrms.updateGeofenceZone);
+router.patch('/geofence-zones/:id/archive', hrms.requireAdmin, hrms.archiveGeofenceZone);
+router.patch('/geofence-zones/:id/restore', hrms.requireAdmin, hrms.restoreGeofenceZone);
+router.delete('/geofence-zones/:id', hrms.requireAdmin, hrms.deleteGeofenceZone);
 
 // Employee self-service — called from the mobile app
 router.post('/status', hrms.setStatus);
