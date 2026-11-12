@@ -62,6 +62,9 @@ function _formatMoney(n) { return '₹' + Number(n || 0).toLocaleString('en-IN',
 async function summary(req, res) {
   try {
     await ensureCompensationTable();
+    // Keep a draft/pending month current before any employee-facing salary
+    // page reads it. Paid months remain immutable in refreshUnpaidForEmployee.
+    await payrollController.refreshUnpaidForEmployee(req.user.id, new Date().toISOString().slice(0, 10));
     const [[compensation]] = await db.query(`SELECT COALESCE(c.monthly_salary, e.monthly_salary) AS monthly_salary,
               COALESCE(c.effective_from, DATE(e.created_at)) AS effective_from
       FROM hrms_employee_profiles e
@@ -184,6 +187,26 @@ async function myHistory(req, res) {
     const cutoff = month === fallback && _ymd(now) < end ? _ymd(now) : end;
     const [[profile]] = await db.query('SELECT id, monthly_salary FROM hrms_employee_profiles WHERE employee_user_id = ? LIMIT 1', [req.user.id]);
     if (!profile) return fail(res, 404, 'Employee profile not found');
+    await payrollController.refreshUnpaidForEmployee(req.user.id, `${month}-01`);
+    await payrollController.ensureDailyPayrollStorage();
+    const [[snapshotPayroll]] = await db.query(`SELECT p.* FROM hrms_payroll_items p
+      WHERE p.profile_id = ? AND p.pay_year = ? AND p.pay_month = ?
+      ORDER BY p.id DESC LIMIT 1`, [profile.id, year, monthNumber]);
+    const [dailySnapshot] = await db.query(`SELECT DATE_FORMAT(attendance_date, '%Y-%m-%d') AS date,
+      daily_salary AS salary, CASE WHEN attendance_status IN ('Present', 'Late', 'On Leave') THEN 1
+        WHEN attendance_status = 'Half Leave' THEN 0.5 ELSE 0 END AS working,
+      DATE_FORMAT(check_in_at, '%Y-%m-%d %H:%i:%s') AS check_in,
+      DATE_FORMAT(check_out_at, '%Y-%m-%d %H:%i:%s') AS check_out,
+      attendance_status AS status,
+      (late_deduction + early_exit_deduction) AS late_deduction,
+      late_minutes, early_exit_minutes, early_exit_deduction,
+      absent_amount AS absent_deduction, total_deduction, present_amount, updated_salary
+      FROM hrms_payroll_daily_entries
+      WHERE profile_id = ? AND pay_year = ? AND pay_month = ?
+      ORDER BY attendance_date DESC`, [profile.id, year, monthNumber]);
+    if (dailySnapshot.length) {
+      return ok(res, { month, summary: snapshotPayroll, items: dailySnapshot });
+    }
     const projection = await payrollController.projectionForEmployee(req.user.id, year, monthNumber);
     await weeklyOffTemplates.ensureWeeklyOffTemplateTables(db);
     const weeklyResolver = await weeklyOffTemplates.offDaysForProfileByDate(db, profile.id, start, end, [0]);

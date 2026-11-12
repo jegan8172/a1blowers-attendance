@@ -65,6 +65,43 @@ async function ensureDeductionStorage() {
   }
 }
 
+// A payroll item is the monthly total.  This table is its day-by-day
+// accounting ledger.  Keeping it alongside the monthly row prevents the
+// admin history, employee history and payslip views from independently
+// recalculating the same attendance data in different ways.
+async function ensureDailyPayrollStorage() {
+  await db.query(`CREATE TABLE IF NOT EXISTS hrms_payroll_daily_entries (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    payroll_item_id BIGINT UNSIGNED NOT NULL,
+    profile_id BIGINT UNSIGNED NOT NULL,
+    employee_user_id BIGINT UNSIGNED NOT NULL,
+    pay_year SMALLINT UNSIGNED NOT NULL,
+    pay_month TINYINT UNSIGNED NOT NULL,
+    attendance_date DATE NOT NULL,
+    check_in_at DATETIME NULL,
+    check_out_at DATETIME NULL,
+    attendance_status VARCHAR(32) NOT NULL,
+    daily_salary DECIMAL(12,2) NOT NULL DEFAULT 0,
+    late_minutes INT UNSIGNED NOT NULL DEFAULT 0,
+    late_deduction DECIMAL(12,2) NOT NULL DEFAULT 0,
+    early_exit_minutes INT UNSIGNED NOT NULL DEFAULT 0,
+    early_exit_deduction DECIMAL(12,2) NOT NULL DEFAULT 0,
+    absent_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+    total_deduction DECIMAL(12,2) NOT NULL DEFAULT 0,
+    present_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+    updated_salary DECIMAL(12,2) NOT NULL DEFAULT 0,
+    UNIQUE KEY uq_payroll_daily_entry (profile_id, pay_year, pay_month, attendance_date),
+    KEY idx_payroll_daily_item (payroll_item_id, attendance_date),
+    KEY idx_payroll_daily_employee (employee_user_id, pay_year, pay_month)
+  )`);
+  for (const definition of [
+    'early_exit_minutes INT UNSIGNED NOT NULL DEFAULT 0 AFTER late_deduction',
+    'early_exit_deduction DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER early_exit_minutes'
+  ]) {
+    try { await db.query('ALTER TABLE hrms_payroll_daily_entries ADD COLUMN ' + definition); } catch (error) { if (error.code !== 'ER_DUP_FIELDNAME') throw error; }
+  }
+}
+
 async function ensurePayrollStatusAudit() {
   await db.query(`CREATE TABLE IF NOT EXISTS hrms_payroll_status_audit (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -344,7 +381,10 @@ async function computeRows(year, month, today, options) {
     ? await db.query(
         `SELECT employee_id, DATE_FORMAT(attendance_date, '%Y-%m-%d') AS attendance_date,
                 DATE_FORMAT(check_in_at, '%Y-%m-%d %H:%i:%s') AS check_in_at,
-                is_late, attendance_status, admin_status_override
+                DATE_FORMAT(check_out_at, '%Y-%m-%d %H:%i:%s') AS check_out_at,
+                is_late, attendance_status, admin_status_override,
+                scheduled_shift_start, scheduled_shift_end, scheduled_late_after,
+                early_exit_minutes
          FROM attendance_records
          WHERE attendance_date BETWEEN ? AND ?
            AND employee_id IN (?)`,
@@ -355,12 +395,11 @@ async function computeRows(year, month, today, options) {
   const [leaves] = userIds.length
     ? await db.query(
         `SELECT l.employee_id, DATE_FORMAT(l.from_date, '%Y-%m-%d') AS from_date,
-                DATE_FORMAT(l.to_date, '%Y-%m-%d') AS to_date, l.duration_type
+                DATE_FORMAT(l.to_date, '%Y-%m-%d') AS to_date, l.duration_type,
+                COALESCE(NULLIF(LOWER(l.policy_payroll_mode), ''),
+                  CASE WHEN l.leave_type = 'Earned Leave' THEN 'paid' ELSE 'unpaid' END) AS payroll_mode
          FROM employee_leaves l
-         LEFT JOIN hrms_leave_approval_links link ON link.leave_id = l.id
-         LEFT JOIN attendance_permission_requests approval ON approval.id = link.approval_request_id
          WHERE l.status = 'APPROVED'
-           AND (approval.salary_mode = 'paid' OR (approval.salary_mode IS NULL AND l.leave_type = 'Earned Leave'))
            AND l.from_date <= ? AND l.to_date >= ?
            AND l.employee_id IN (?)`,
         [queryEnd, queryStart, userIds]
@@ -397,14 +436,15 @@ async function computeRows(year, month, today, options) {
   records.forEach(function (row) {
     recordMap.set(row.employee_id + '|' + isoDate(row.attendance_date), row);
   });
-  const paidLeaveUnits = new Map();
+  const leaveUnits = new Map();
   const paidRegularizationSet = new Set();
   leaves.forEach(function (row) {
     const start = isoDate(row.from_date);
     const end = isoDate(row.to_date);
     const units = String(row.duration_type || '').toLowerCase() === 'half day' ? 0.5 : 1;
+    const paid = String(row.payroll_mode || '').toLowerCase() === 'paid';
     for (let date = start; date && end && date <= end; date = nextDate(date)) {
-      if (date >= queryStart && date <= queryEnd) paidLeaveUnits.set(row.employee_id + '|' + date, units);
+      if (date >= queryStart && date <= queryEnd) leaveUnits.set(row.employee_id + '|' + date, { units, paid });
     }
   });
   paidRegularizations.forEach(function (row) {
@@ -440,12 +480,9 @@ async function computeRows(year, month, today, options) {
     let unpaidHalfDays = 0;
     let absent = 0;
     const lateEntries = [];
+    const earlyExitEntries = [];
     const absentEntries = [];
-    // This is the canonical, day-level outcome used by both payroll and the
-    // attendance calendar.  Keep the existing calculation branches intact;
-    // expose their final decision instead of asking each UI to infer it again.
-    const dayStatuses = {};
-    const paidUnitsByDate = {};
+    const dailyRaw = [];
 
     for (let date = period.start; date <= cutoff; date = nextDate(date)) {
       const dateParts = date.split('-').map(Number);
@@ -455,58 +492,113 @@ async function computeRows(year, month, today, options) {
       const key = userId ? userId + '|' + date : '';
       const record = key ? recordMap.get(key) : null;
 
+      // Today's open session is not payroll-final until the employee clocks
+      // out or the end-of-day scheduler closes it at the configured shift end.
+      // It must not become an absence or receive a full day's pay midway
+      // through the workday.
+      if (date === today && (!record || !record.check_out_at)) {
+        elapsedWorkingDays -= 1;
+        if (record && record.check_in_at) {
+          dailyRaw.push({ date, record, status: 'In Progress', paidUnits: 0, absentUnits: 0, lateMinutes: 0 });
+        }
+        continue;
+      }
+
       // 1. Safely read the status to ignore case (e.g., 'Absent' vs 'absent')
       const attStatus = record && record.attendance_status ? String(record.attendance_status).toLowerCase().trim() : '';
 
       if (String(record && record.admin_status_override || '').toLowerCase() === 'present') {
         present += 1;
         earnedDays += 1;
-        dayStatuses[date] = 'Present';
-        paidUnitsByDate[date] = 1;
+        dailyRaw.push({ date, record, status: 'Present', paidUnits: 1, absentUnits: 0, lateMinutes: 0 });
       } else if (String(record && record.admin_status_override || '').toLowerCase() === 'absent') {
         absent += 1;
         absentEntries.push({ date: date, days: 1 });
-        dayStatuses[date] = 'Absent';
+        dailyRaw.push({ date, record, status: 'Absent', paidUnits: 0, absentUnits: 1, lateMinutes: 0 });
       } else if (key && paidRegularizationSet.has(key)) {
         // An approved paid regularization wins over a generated/explicit
         // absence, without manufacturing a clock-in timestamp.
         present += 1;
         earnedDays += 1;
-        dayStatuses[date] = 'Present';
-        paidUnitsByDate[date] = 1;
-      } else if (key && paidLeaveUnits.has(key)) {
-        const units = paidLeaveUnits.get(key);
+        dailyRaw.push({ date, record, status: 'Present', paidUnits: 1, absentUnits: 0, lateMinutes: 0 });
+      } else if (key && leaveUnits.has(key)) {
+        const leave = leaveUnits.get(key);
+        const units = Number(leave.units || 0);
+        const hasWorkedHalf = Boolean(record && record.check_in_at) && attStatus !== 'absent';
+        const schedule = String(profile.gender).toLowerCase() === 'female' ? timeSettings.female : timeSettings.male;
+        const lateAfter = record && record.scheduled_late_after || schedule.lateAfter;
+        const lateMinutes = hasWorkedHalf
+          ? Math.max(0, Math.floor((attendanceTimeSeconds(record.check_in_at) - timeSeconds(lateAfter)) / 60))
+          : 0;
+        const earlyExitMinutes = hasWorkedHalf ? Math.max(0, Number(record.early_exit_minutes || 0)) : 0;
+        if (lateMinutes > 0) lateEntries.push({ date, minutes: lateMinutes });
+        if (earlyExitMinutes > 0) earlyExitEntries.push({ date, minutes: earlyExitMinutes });
         leaveDays += units;
-        earnedDays += units;
-        dayStatuses[date] = units === 0.5 ? 'Half Leave' : 'Leave';
-        paidUnitsByDate[date] = units;
+        if (leave.paid) {
+          // Paid leave earns the selected leave portion. A completed opposite
+          // half earns the remaining portion; missing it stays an absence.
+          const paidUnits = hasWorkedHalf ? 1 : units;
+          const absentUnits = hasWorkedHalf ? 0 : 1 - units;
+          earnedDays += paidUnits;
+          if (absentUnits > 0) {
+            absent += absentUnits;
+            absentEntries.push({ date, days: absentUnits });
+          } else if (!lateMinutes && !earlyExitMinutes) {
+            present += 1;
+          }
+          dailyRaw.push({ date, record, status: units === 0.5 ? 'Half Leave' : 'On Leave', paidUnits, absentUnits, lateMinutes, earlyExitMinutes });
+        } else {
+          // Unpaid leave never manufactures pay. With a completed opposite
+          // half, the employee earns that half only; without it, the leave
+          // itself is the unpaid half/full-day absence.
+          const paidUnits = units === 0.5 && hasWorkedHalf ? 0.5 : 0;
+          const absentUnits = units === 0.5 && hasWorkedHalf ? 0.5 : 1;
+          earnedDays += paidUnits;
+          absent += absentUnits;
+          absentEntries.push({ date, days: absentUnits });
+          dailyRaw.push({ date, record, status: units === 0.5 ? 'Half Leave' : 'On Leave', paidUnits, absentUnits, lateMinutes, earlyExitMinutes });
+        }
       } else if (attStatus === 'half_leave') {
         unpaidHalfDays += 0.5;
         absentEntries.push({ date: date, days: 0.5 });
         earnedDays += 0.5;
-        dayStatuses[date] = 'Half Leave';
-        paidUnitsByDate[date] = 0.5;
+        const schedule = String(profile.gender).toLowerCase() === 'female' ? timeSettings.female : timeSettings.male;
+        const lateAfter = record && record.scheduled_late_after || schedule.lateAfter;
+        const lateMinutes = record && record.check_in_at
+          ? Math.max(0, Math.floor((attendanceTimeSeconds(record.check_in_at) - timeSeconds(lateAfter)) / 60))
+          : 0;
+        const earlyExitMinutes = Math.max(0, Number(record && record.early_exit_minutes || 0));
+        if (lateMinutes > 0) lateEntries.push({ date: date, minutes: lateMinutes });
+        if (earlyExitMinutes > 0) earlyExitEntries.push({ date: date, minutes: earlyExitMinutes });
+        dailyRaw.push({ date, record, status: 'Half Leave', paidUnits: 0.5, absentUnits: 0.5, lateMinutes, earlyExitMinutes });
       } else if (attStatus === 'absent') {
         // An explicit absence is visible in the summary even when the policy
         // treats it as paid time.
         absent += 1;
         absentEntries.push({ date: date, days: 1 });
-        dayStatuses[date] = 'Absent';
+        dailyRaw.push({ date, record, status: 'Absent', paidUnits: 0, absentUnits: 1, lateMinutes: 0 });
       } else if (record && record.check_in_at) {
         // Punched in
         if (Number(record.is_late) || attStatus === 'late') late += 1;
         const schedule = String(profile.gender).toLowerCase() === 'female' ? timeSettings.female : timeSettings.male;
-        const lateMinutes = Math.max(0, Math.floor((attendanceTimeSeconds(record.check_in_at) - timeSeconds(schedule.lateAfter)) / 60));
-        if (lateMinutes > 0) {
-          lateEntries.push({ date: date, minutes: lateMinutes });
-          dayStatuses[date] = 'Late';
-          paidUnitsByDate[date] = 1;
-        } else {
-          present += 1;
-          dayStatuses[date] = 'Present';
-          paidUnitsByDate[date] = 1;
-        }
+        // Use the rule snapshot written at Clock In. This is essential for
+        // half-day shifts and keeps a finalized day immune to later admin edits.
+        const lateAfter = record.scheduled_late_after || schedule.lateAfter;
+        const lateMinutes = Math.max(0, Math.floor((attendanceTimeSeconds(record.check_in_at) - timeSeconds(lateAfter)) / 60));
+        const earlyExitMinutes = Math.max(0, Number(record.early_exit_minutes || 0));
+        if (lateMinutes > 0) lateEntries.push({ date: date, minutes: lateMinutes });
+        if (earlyExitMinutes > 0) earlyExitEntries.push({ date: date, minutes: earlyExitMinutes });
+        else present += 1;
         earnedDays += 1;
+        dailyRaw.push({
+          date,
+          record,
+          status: attStatus === 'early_exit' ? 'Early Exit' : (lateMinutes > 0 ? 'Late' : 'Present'),
+          paidUnits: 1,
+          absentUnits: 0,
+          lateMinutes,
+          earlyExitMinutes,
+        });
       } else {
         // The current working day is only an absence after this employee's
         // configured absent-after time. Before then it remains an unresolved
@@ -517,8 +609,7 @@ async function computeRows(year, month, today, options) {
         );
         if (currentDayBeforeCutoff) {
           elapsedWorkingDays -= 1;
-          dayStatuses[date] = 'No record';
-          paidUnitsByDate[date] = 0;
+          dailyRaw.push({ date, record, status: 'In Progress', paidUnits: 0, absentUnits: 0, lateMinutes: 0 });
           continue;
         }
         // A completed day, or today after the configured cutoff, with no
@@ -526,10 +617,14 @@ async function computeRows(year, month, today, options) {
         // it simply never becomes a paid day in the first place.
         absent += 1;
         absentEntries.push({ date: date, days: 1 });
-        dayStatuses[date] = 'Absent';
-        paidUnitsByDate[date] = 0;
+        dailyRaw.push({ date, record, status: 'Absent', paidUnits: 0, absentUnits: 1, lateMinutes: 0 });
       }
     }
+
+    // Dashboard/calendar consumers still use a compact per-day view. Derive
+    // it from the same raw ledger that is persisted for payroll history.
+    const dayStatuses = Object.fromEntries(dailyRaw.map((entry) => [entry.date, entry.status]));
+    const paidUnitsByDate = Object.fromEntries(dailyRaw.map((entry) => [entry.date, entry.paidUnits]));
 
     const compensation = compensationMap.get('profile:' + profile.id) || compensationMap.get('user:' + profile.employee_user_id);
     const salaryNumber = Number(compensation ? compensation.monthly_salary : profile.monthly_salary || 0);
@@ -544,6 +639,7 @@ async function computeRows(year, month, today, options) {
     if (shiftMinutes <= 0) shiftMinutes += 24 * 60;
     const hourlyRate = dailyRate / Math.max(1, shiftMinutes / 60);
     const lateDeductions = lateEntries.reduce((sum, item) => sum + (hourlyRate * item.minutes / 60), 0);
+    const earlyExitDeductions = earlyExitEntries.reduce((sum, item) => sum + (hourlyRate * item.minutes / 60), 0);
     const workingDays = periodWorkingDays;
     const paidDays = Math.min(workingDays, earnedDays);
     const lopDays = Math.max(0, elapsedWorkingDays - paidDays);
@@ -553,9 +649,32 @@ async function computeRows(year, month, today, options) {
     const absentDeductions = Math.round(
       absentEntries.reduce((sum, item) => sum + (dailyRate * item.days), 0) * 100,
     ) / 100;
-    const deductions = salaryNumber ? Math.round(lateDeductions * 100) / 100 : 0;
+    const deductions = salaryNumber ? Math.round((lateDeductions + earlyExitDeductions) * 100) / 100 : 0;
     // Salary is accrued from paid days; an absence never removes pay already earned.
     const netPay = Math.max(0, Math.round((paidDays * dailyRate - deductions) * 100) / 100);
+    let runningSalary = 0;
+    const dailyEntries = dailyRaw.map((entry) => {
+      const lateDeduction = Math.round((hourlyRate * entry.lateMinutes / 60) * 100) / 100;
+      const earlyExitDeduction = Math.round((hourlyRate * Number(entry.earlyExitMinutes || 0) / 60) * 100) / 100;
+      const absentAmount = Math.round((dailyRate * entry.absentUnits) * 100) / 100;
+      const presentAmount = Math.max(0, Math.round((dailyRate * entry.paidUnits - lateDeduction - earlyExitDeduction) * 100) / 100);
+      runningSalary = Math.round((runningSalary + presentAmount) * 100) / 100;
+      return {
+        date: entry.date,
+        checkIn: entry.record && entry.record.check_in_at ? entry.record.check_in_at : null,
+        checkOut: entry.record && entry.record.check_out_at ? entry.record.check_out_at : null,
+        status: entry.status,
+        dailySalary: Math.round(dailyRate * 100) / 100,
+        lateMinutes: entry.lateMinutes,
+        lateDeduction,
+        earlyExitMinutes: Number(entry.earlyExitMinutes || 0),
+        earlyExitDeduction,
+        absentAmount,
+        totalDeduction: Math.round((lateDeduction + earlyExitDeduction + absentAmount) * 100) / 100,
+        presentAmount,
+        updatedSalary: runningSalary,
+      };
+    });
 
     const saved = savedMap.get(Number(profile.id));
     if (saved && (Number(saved.employee_user_id) !== Number(profile.employee_user_id) ||
@@ -638,9 +757,19 @@ async function computeRows(year, month, today, options) {
       lateDeductions: Math.round(lateDeductions * 100) / 100,
       absentDeductions: Math.round(absentDeductions * 100) / 100,
       deductionEntries: [
-        ...lateEntries.map(item => ({ date: item.date, type: 'late', lateMinutes: item.minutes, amount: Math.round(hourlyRate * item.minutes / 60 * 100) / 100 })),
+        // The compatibility table has one time-deduction row per day. Merge
+        // late arrival and early checkout before writing so its unique key is
+        // respected, while the daily ledger still exposes both components.
+        ...Array.from(new Map([
+          ...lateEntries.map(item => [item.date, { lateMinutes: item.minutes, amount: hourlyRate * item.minutes / 60 }]),
+          ...earlyExitEntries.map(item => [item.date, {
+            lateMinutes: (lateEntries.find(lateEntry => lateEntry.date === item.date)?.minutes || 0) + item.minutes,
+            amount: (lateEntries.find(lateEntry => lateEntry.date === item.date) ? hourlyRate * lateEntries.find(lateEntry => lateEntry.date === item.date).minutes / 60 : 0) + hourlyRate * item.minutes / 60,
+          }]),
+        ]).entries()).map(([date, item]) => ({ date, type: 'late', lateMinutes: item.lateMinutes, amount: Math.round(item.amount * 100) / 100 })),
         ...absentEntries.map(item => ({ date: item.date, type: 'absent', lateMinutes: 0, amount: Math.round(dailyRate * item.days * 100) / 100 })),
       ],
+      dailyEntries: dailyEntries,
       deductionsLabel: salaryNumber ? formatSalary(deductions) : '–',
       netPay: netPay,
       netPayLabel: salaryNumber ? formatSalary(netPay) : '–',
@@ -781,7 +910,33 @@ async function generate(req, res) {
   }
 }
 
+async function replaceDailySnapshots(payrollItemId, item, year, month) {
+  await ensureDailyPayrollStorage();
+  await db.query(
+    `DELETE FROM hrms_payroll_daily_entries
+      WHERE profile_id = ? AND pay_year = ? AND pay_month = ?`,
+    [item.profileId, year, month]
+  );
+  for (const day of item.dailyEntries || []) {
+    await db.query(
+      `INSERT INTO hrms_payroll_daily_entries
+        (payroll_item_id, profile_id, employee_user_id, pay_year, pay_month,
+         attendance_date, check_in_at, check_out_at, attendance_status,
+         daily_salary, late_minutes, late_deduction, early_exit_minutes, early_exit_deduction, absent_amount,
+         total_deduction, present_amount, updated_salary)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        payrollItemId, item.profileId, item.employeeUserId, year, month,
+        day.date, day.checkIn, day.checkOut, day.status,
+        day.dailySalary, day.lateMinutes, day.lateDeduction, day.earlyExitMinutes, day.earlyExitDeduction, day.absentAmount,
+        day.totalDeduction, day.presentAmount, day.updatedSalary,
+      ]
+    );
+  }
+}
+
 async function generatePayrollRun(year, month, today, options) {
+    await ensureDailyPayrollStorage();
     const allItems = await computeRows(year, month, today, options);
     const items = allItems.filter(function (item) { return item.payrollEligible !== false && Number(item.monthlySalary) > 0 && !item.integrityError && item.employeeUserId; });
     for (const item of items) {
@@ -828,6 +983,7 @@ async function generatePayrollRun(year, month, today, options) {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           [item.profileId, item.employeeUserId, year, month, entry.date, entry.type, entry.lateMinutes, entry.amount]
         );
+        await replaceDailySnapshots(saved.id, item, year, month);
       }
     }
     const refreshed = await computeRows(year, month, today, options);
@@ -841,6 +997,65 @@ async function generatePayrollRun(year, month, today, options) {
       reviewCount: allItems.filter(item => item.integrityError).length,
       skippedCount: allItems.length - items.length,
     };
+}
+
+// Payroll generation is the primary writer. This smaller reconciliation pass
+// protects the day-wise history from a stale/missing late entry when an
+// attendance record was completed after the initial payroll draft was made.
+// Paid payroll remains immutable for audit purposes.
+async function reconcilePendingLateDeductions(profileId, year, month, schedule) {
+  const [[item]] = await db.query(
+    `SELECT id, employee_user_id, monthly_salary, working_days, paid_days,
+            period_start, period_end, status
+       FROM hrms_payroll_items
+      WHERE profile_id = ? AND pay_year = ? AND pay_month = ? LIMIT 1`,
+    [profileId, year, month]
+  );
+  if (!item || String(item.status || '').toLowerCase() === 'paid' || !item.employee_user_id) return;
+
+  const periodStart = isoDate(item.period_start) || ymd(year, month, 1);
+  const periodEnd = isoDate(item.period_end) || ymd(year, month, daysInMonth(year, month));
+  const [records] = await db.query(
+    `SELECT DATE_FORMAT(attendance_date, '%Y-%m-%d') AS attendance_date,
+            DATE_FORMAT(check_in_at, '%Y-%m-%d %H:%i:%s') AS check_in_at,
+            DATE_FORMAT(check_out_at, '%Y-%m-%d %H:%i:%s') AS check_out_at,
+            attendance_status, is_late
+       FROM attendance_records
+      WHERE employee_id = ? AND attendance_date BETWEEN ? AND ?`,
+    [item.employee_user_id, periodStart, periodEnd]
+  );
+  const dailyRate = Number(item.monthly_salary || 0) / Math.max(1, Number(item.working_days || 0));
+  const shiftMinutes = shiftDurationMinutes(schedule.shiftStart, schedule.shiftEnd);
+  const hourlyRate = dailyRate / Math.max(1, shiftMinutes / 60);
+  const lateEntries = records.flatMap((record) => {
+    const status = String(record.attendance_status || '').toLowerCase();
+    if (!record.check_in_at || !record.check_out_at || ['absent', 'on_leave', 'half_leave'].includes(status)) return [];
+    const minutes = Math.max(0, Math.floor((attendanceTimeSeconds(record.check_in_at) - timeSeconds(schedule.lateAfter)) / 60));
+    if (!minutes) return [];
+    return [{ date: record.attendance_date, minutes, amount: Math.round(hourlyRate * minutes / 60 * 100) / 100 }];
+  });
+
+  await db.query(
+    `DELETE FROM hrms_payroll_deduction_entries
+      WHERE profile_id = ? AND pay_year = ? AND pay_month = ? AND deduction_type = 'late'`,
+    [profileId, year, month]
+  );
+  for (const entry of lateEntries) {
+    await db.query(
+      `INSERT INTO hrms_payroll_deduction_entries
+        (profile_id, employee_user_id, pay_year, pay_month, attendance_date, deduction_type, late_minutes, amount)
+       VALUES (?, ?, ?, ?, ?, 'late', ?, ?)`,
+      [profileId, item.employee_user_id, year, month, entry.date, entry.minutes, entry.amount]
+    );
+  }
+  const lateTotal = Math.round(lateEntries.reduce((sum, entry) => sum + entry.amount, 0) * 100) / 100;
+  const netPay = Math.max(0, Math.round((Number(item.paid_days || 0) * dailyRate - lateTotal) * 100) / 100);
+  await db.query(
+    `UPDATE hrms_payroll_items
+        SET late_deductions = ?, deductions = ?, net_pay = ?
+      WHERE id = ? AND status <> 'paid'`,
+    [lateTotal, lateTotal, netPay, item.id]
+  );
 }
 
 // Shared read model for every leave/payroll UI.  Payroll remains the single
@@ -897,12 +1112,19 @@ async function markPaid(req, res) {
       return fail(res, 400, 'status must be paid or pending');
     }
     const at = status === 'paid' ? policy.nowIstDateTime() : null;
-    const [[payroll]] = await db.query(`SELECT p.id, p.profile_id, p.employee_user_id, p.monthly_salary, p.status FROM hrms_payroll_items p
+    const [[payroll]] = await db.query(`SELECT p.id, p.profile_id, p.employee_user_id, p.monthly_salary, p.pay_year, p.pay_month, p.status FROM hrms_payroll_items p
       JOIN hrms_employee_profiles e ON e.id = p.profile_id AND e.employee_user_id = p.employee_user_id
       JOIN employee_users u ON u.id = e.employee_user_id WHERE p.id = ?`, [id]);
     if (!payroll) return fail(res, 404, 'Payroll row not found. Generate payroll for this month first.');
     if (Number(payroll.monthly_salary) <= 0) return fail(res, 400, 'Compensation must be configured before payroll can be paid.');
     const previousStatus = String(payroll.status || '').toLowerCase();
+    // Lock a freshly generated monthly/day ledger at the exact point payroll
+    // is paid.  The paid snapshot is then never recalculated implicitly.
+    if (status === 'paid' && previousStatus !== 'paid') {
+      await generatePayrollRun(Number(payroll.pay_year), Number(payroll.pay_month), policy.todayIstDate(), {
+        profileIds: [Number(payroll.profile_id)],
+      });
+    }
     if (status === 'pending') {
       if (previousStatus !== 'paid') return fail(res, 400, 'Only a paid payroll can be reverted.');
       if (reason.length < 5) return fail(res, 400, 'Provide a reason of at least 5 characters before reverting paid payroll.');
@@ -1000,8 +1222,13 @@ async function deductionHistory(req, res) {
       ? timeSettings.female
       : timeSettings.male;
 
-    // History is read-only: changing the selected month must not regenerate
-    // payroll, alter tables, or replace saved deduction entries.
+    // Keep draft/pending payroll in sync with attendance changes before it is
+    // displayed. A paid run is immutable: generatePayrollRun deliberately
+    // preserves its amounts and deduction entries.
+    await generatePayrollRun(year, month, policy.todayIstDate(), {
+      profileIds: [profileId],
+    });
+
     const [[summary]] = await db.query(
       `SELECT monthly_salary, working_days, paid_days, lop_days,
               late_deductions, absent_deductions, deductions, net_pay, status
@@ -1009,17 +1236,101 @@ async function deductionHistory(req, res) {
        WHERE profile_id = ? AND pay_year = ? AND pay_month = ?
        LIMIT 1`, [profileId, year, month]
     );
+    // Preferred read path: the monthly summary and every visible day now
+    // come from the same generated payroll snapshot.  This is what keeps
+    // admin payroll, employee salary and the history modal in agreement.
+    const [dailyRows] = await db.query(
+      `SELECT DATE_FORMAT(attendance_date, '%Y-%m-%d') AS attendance_date,
+              attendance_status, late_minutes, daily_salary, late_deduction,
+              early_exit_minutes, early_exit_deduction,
+              absent_amount, total_deduction, present_amount, updated_salary,
+              DATE_FORMAT(check_in_at, '%Y-%m-%d %H:%i:%s') AS check_in_at,
+              DATE_FORMAT(check_out_at, '%Y-%m-%d %H:%i:%s') AS check_out_at
+         FROM hrms_payroll_daily_entries
+        WHERE profile_id = ? AND pay_year = ? AND pay_month = ?
+        ORDER BY attendance_date DESC`,
+      [profileId, year, month]
+    );
+    if (dailyRows.length) {
+      const late = Number(summary?.late_deductions || 0);
+      const timeDeduction = Number(summary?.deductions || late);
+      const absent = Number(summary?.absent_deductions || 0);
+      return ok(res, {
+        overview: {
+          monthlySalary: Number(summary?.monthly_salary ?? profile.monthly_salary ?? 0),
+          workingDays: summary ? Number(summary.working_days || 0) : null,
+          shiftStart: schedule.shiftStart,
+          shiftEnd: schedule.shiftEnd,
+          shiftMinutes: shiftDurationMinutes(schedule.shiftStart, schedule.shiftEnd),
+        },
+        summary: summary ? {
+          salary: Number(summary.monthly_salary || 0), workingDays: Number(summary.working_days || 0),
+          paidDays: Number(summary.paid_days || 0), lopDays: Number(summary.lop_days || 0),
+          lateDeduction: late, absentDeduction: absent, totalDeduction: timeDeduction + absent,
+          netPay: Number(summary.net_pay || 0), status: summary.status,
+        } : null,
+        items: dailyRows.map((row) => {
+          const status = String(row.attendance_status || '');
+          const isLate = status === 'Late' || status === 'Early Exit';
+          const isAbsence = status === 'Absent' || status === 'Half Leave';
+          // Keep `amount` for older consumers, but make it describe the
+          // applicable deduction for the row. Newer clients should use the
+          // explicit amount fields below.
+          const amount = isLate
+            ? Number(row.late_deduction || 0) + Number(row.early_exit_deduction || 0)
+            : isAbsence
+              ? Number(row.absent_amount || 0)
+              : 0;
+          return {
+          attendance_date: row.attendance_date,
+          deduction_type: isLate ? 'late' : isAbsence ? 'absent' : status === 'In Progress' ? 'pending' : 'present',
+          late_minutes: Number(row.late_minutes || 0),
+          amount,
+          daily_salary: Number(row.daily_salary || 0),
+          updated_salary: Number(row.updated_salary || 0),
+          check_in_at: row.check_in_at,
+          check_out_at: row.check_out_at,
+          attendance_status: row.attendance_status,
+          // Existing tables have one time-deduction column.  It shows both
+          // late-arrival and early-checkout deductions without changing the
+          // established column layout; raw values remain available too.
+          late_deduction: Number(row.late_deduction || 0) + Number(row.early_exit_deduction || 0),
+          early_exit_minutes: Number(row.early_exit_minutes || 0),
+          early_exit_deduction: Number(row.early_exit_deduction || 0),
+          absent_amount: Number(row.absent_amount || 0),
+          total_deduction: Number(row.total_deduction || 0),
+          present_amount: Number(row.present_amount || 0),
+          };
+        }),
+      });
+    }
     const [rows] = await db.query(
       `SELECT DATE_FORMAT(x.attendance_date, '%Y-%m-%d') AS attendance_date,
-              COALESCE(d.deduction_type, CASE WHEN a.attendance_status = 'present' THEN 'present' ELSE 'absent' END) AS deduction_type,
+              COALESCE(d.deduction_type,
+                CASE
+                  WHEN a.check_in_at IS NOT NULL AND a.check_out_at IS NULL THEN 'pending'
+                  WHEN LOWER(COALESCE(a.attendance_status, '')) = 'late' OR a.is_late = 1 THEN 'late'
+                  WHEN a.check_in_at IS NOT NULL THEN 'present'
+                  ELSE 'absent'
+                END) AS deduction_type,
               COALESCE(d.late_minutes, 0) AS late_minutes,
               COALESCE(d.amount, 0) AS amount,
               ROUND(p.monthly_salary / NULLIF(p.working_days, 0), 2) AS daily_salary,
               ROUND((p.monthly_salary / NULLIF(p.working_days, 0)) - COALESCE(d.amount, 0), 2) AS updated_salary,
               DATE_FORMAT(a.check_in_at, '%Y-%m-%d %H:%i:%s') AS check_in_at,
               DATE_FORMAT(a.check_out_at, '%Y-%m-%d %H:%i:%s') AS check_out_at,
-              CASE WHEN d.deduction_type = 'late' THEN 'Late'
-                   WHEN a.check_in_at IS NOT NULL THEN 'Present' ELSE 'Absent' END AS attendance_status
+              CASE
+                WHEN a.check_in_at IS NOT NULL AND a.check_out_at IS NULL THEN 'In Progress'
+                WHEN LOWER(COALESCE(a.attendance_status, '')) = 'early_exit'
+                     AND a.scheduled_shift_end IS NOT NULL
+                     AND TIME(a.check_out_at) < a.scheduled_shift_end THEN 'Early Exit'
+                WHEN d.deduction_type = 'late' OR LOWER(COALESCE(a.attendance_status, '')) = 'late' OR a.is_late = 1 THEN 'Late'
+                WHEN LOWER(COALESCE(a.attendance_status, '')) = 'early_exit' THEN 'Early Exit'
+                WHEN LOWER(COALESCE(a.attendance_status, '')) = 'half_leave' THEN 'Half Leave'
+                WHEN LOWER(COALESCE(a.attendance_status, '')) = 'on_leave' THEN 'On Leave'
+                WHEN LOWER(COALESCE(a.attendance_status, '')) = 'absent' OR a.check_in_at IS NULL THEN 'Absent'
+                ELSE 'Present'
+              END AS attendance_status
        FROM (
          SELECT attendance_date FROM attendance_records
          WHERE employee_id = (SELECT employee_user_id FROM hrms_payroll_items WHERE profile_id = ? AND pay_year = ? AND pay_month = ? LIMIT 1)
@@ -1048,7 +1359,8 @@ async function deductionHistory(req, res) {
       row.updated_salary = Number(runningSalary.toFixed(2));
     }
     rows.reverse();
-    const late = Number(summary?.late_deductions || summary?.deductions || 0);
+    const late = Number(summary?.late_deductions || 0);
+    const timeDeduction = Number(summary?.deductions || late);
     const absent = Number(summary?.absent_deductions || 0);
     return ok(res, {
       overview: {
@@ -1061,7 +1373,7 @@ async function deductionHistory(req, res) {
       summary: summary ? {
         salary: Number(summary.monthly_salary || 0), workingDays: Number(summary.working_days || 0),
         paidDays: Number(summary.paid_days || 0), lopDays: Number(summary.lop_days || 0),
-        lateDeduction: late, absentDeduction: absent, totalDeduction: late + absent,
+        lateDeduction: late, absentDeduction: absent, totalDeduction: timeDeduction + absent,
         netPay: Number(summary.net_pay || 0), status: summary.status,
       } : null,
       items: rows,
@@ -1086,7 +1398,8 @@ async function history(req, res) {
       [profileId]
     );
     return ok(res, rows.map((row) => {
-      const late = Number(row.late_deductions || row.deductions || 0);
+      const late = Number(row.late_deductions || 0);
+      const timeDeduction = Number(row.deductions || late);
       const absent = Number(row.absent_deductions || 0);
       return {
         year: Number(row.pay_year), month: Number(row.pay_month),
@@ -1094,7 +1407,7 @@ async function history(req, res) {
         salary: Number(row.monthly_salary || 0),
         workingDays: Number(row.working_days || 0), paidDays: Number(row.paid_days || 0),
         lopDays: Number(row.lop_days || 0), lateDeduction: late,
-        absentDeduction: absent, totalDeduction: late + absent,
+        absentDeduction: absent, totalDeduction: timeDeduction + absent,
         netPay: Number(row.net_pay || 0), status: row.status,
       };
     }));
@@ -1114,6 +1427,7 @@ module.exports = {
   getPolicy,
   savePolicy,
   generatePayrollRun,
+  ensureDailyPayrollStorage,
   computeRows,
   projectionForEmployee,
   refreshUnpaidForEmployee,

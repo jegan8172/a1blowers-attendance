@@ -51,7 +51,9 @@ async function ensureAttendanceTables(db) {
     check_out_latitude: 'DECIMAL(10,7) NULL',
     check_out_longitude: 'DECIMAL(10,7) NULL',
     scheduled_shift_start: 'TIME NULL',
-    scheduled_shift_end: 'TIME NULL'
+    scheduled_shift_end: 'TIME NULL',
+    scheduled_late_after: 'TIME NULL',
+    early_exit_minutes: 'INT UNSIGNED NOT NULL DEFAULT 0'
   };
   for (const [name, definition] of Object.entries(required)) {
     if (!existing.has(name)) {

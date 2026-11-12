@@ -27,7 +27,7 @@ class HrmsAttendanceTimeApi {
     return _decode(response);
   }
 
-  static Future<void> save({String? checkIn, String? checkOut, String? lateAfter, String? absentAfter, Map<String, String>? male, Map<String, String>? female, String? labourLunchStart, String? labourLunchEnd, String? employeeLunchStart, String? employeeLunchEnd,}) async {
+  static Future<void> save({String? checkIn, String? checkOut, String? lateAfter, String? absentAfter, Map<String, dynamic>? male, Map<String, dynamic>? female, String? labourLunchStart, String? labourLunchEnd, String? employeeLunchStart, String? employeeLunchEnd,}) async {
     final payload = <String, dynamic>{};
     if (male != null || female != null) {
       if (male != null) payload['male'] = male;

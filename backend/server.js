@@ -13,6 +13,7 @@ const attendancePolicy = require('./lib/attendancePolicy');
 const payroll = require('./controllers/hrmsPayrollController');
 const { createApp: createEmployeeAttendanceApp } = require('./attendance/app');
 const clockOutReminder = require('./lib/clockOutReminder');
+const { closeForgottenCheckouts } = require('./lib/endOfDayAutoClockout');
 const cron = require('node-cron');
 
 const app = express();
@@ -50,11 +51,21 @@ app.use((error, _req, res, _next) => {
 
 async function start() {
   await ensureAttendanceTables(db);
+  // A half-day leave must remember which half was approved.  Keeping this
+  // migration at startup makes the field available to attendance, payroll,
+  // and the employee leave page before the first new leave request is made.
+  try {
+    await db.query(`ALTER TABLE employee_leaves
+      ADD COLUMN half_day_session ENUM('morning','evening') NULL AFTER duration_type`);
+  } catch (error) {
+    if (!error || error.code !== 'ER_DUP_FIELDNAME') throw error;
+  }
   await ensureAuthSchema(db);
   await attendancePolicy.getTimeSettings(db);
   await ensureHrmsEmployeeTables(db);
   await ensureHrmsTrackingTables(db);
   await ensureWeeklyOffTemplateTables(db);
+  await payroll.ensureDailyPayrollStorage();
 
   // The API must become available as soon as its schema is ready. Payroll
   // generation can be slow on a large database, so it must not block every
@@ -63,6 +74,12 @@ async function start() {
 
   // Run once on startup so a restart after midnight can catch up. The
   // scheduled job below is the normal daily trigger.
+  try {
+    const result = await closeForgottenCheckouts(db);
+    if (result.closed) console.log(`End-of-day auto clock-out closed ${result.closed} attendance session(s).`);
+  } catch (error) {
+    console.error('End-of-day auto clock-out startup failed:', error.message);
+  }
   payroll.runAutomaticPayroll().catch((error) =>
     console.error('Automatic payroll startup failed:', error.message));
   // 00:01 every day in the business timezone. runAutomaticPayroll() checks
@@ -70,6 +87,13 @@ async function start() {
   cron.schedule('1 0 * * *', () => {
     payroll.runAutomaticPayroll().catch((error) =>
       console.error('Automatic payroll update failed:', error.message));
+  }, { timezone: process.env.ATTENDANCE_TIMEZONE || 'Asia/Kolkata' });
+  // Close yesterday's uncompleted sessions first. The stored checkout time is
+  // the employee's configured shift end, never the scheduler time (00:00).
+  cron.schedule('0 0 * * *', () => {
+    closeForgottenCheckouts(db).then((result) => {
+      if (result.closed) console.log(`End-of-day auto clock-out closed ${result.closed} attendance session(s).`);
+    }).catch((error) => console.error('End-of-day auto clock-out scheduler failed:', error.message));
   }, { timezone: process.env.ATTENDANCE_TIMEZONE || 'Asia/Kolkata' });
   // Event uniqueness makes this safe across transient scheduler overlap; each
   // employee is isolated so one bad row cannot block the rest of the run.

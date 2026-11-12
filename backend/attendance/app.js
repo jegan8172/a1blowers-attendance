@@ -402,7 +402,7 @@ function createApp({ pool, jwtSecret, timeZone = 'Asia/Kolkata', clock = () => n
       try {
         await leavePolicies.ensure();
         const empId = req.employee.id;
-        const { leave_type, duration_type, from_date, to_date, reason } = req.body;
+        const { leave_type, duration_type, half_day_session, from_date, to_date, reason } = req.body;
         if (!leave_type || !from_date || !to_date) {
           return res.status(400).json({ success: false, message: 'All fields are required.' });
         }
@@ -417,6 +417,10 @@ function createApp({ pool, jwtSecret, timeZone = 'Asia/Kolkata', clock = () => n
         }
         if (duration_type === 'Half Day' && Number(leavePolicy.allow_half_day) !== 1) {
           return res.status(409).json({ success: false, message: 'Half-day leave is not available for this leave type.' });
+        }
+        const halfDaySession = String(half_day_session || '').toLowerCase();
+        if (duration_type === 'Half Day' && !['morning', 'evening'].includes(halfDaySession)) {
+          return res.status(400).json({ success: false, message: 'Choose whether the half-day leave is for the morning or evening session.' });
         }
         const d1 = new Date(from_date);
         const d2 = new Date(to_date);
@@ -448,12 +452,16 @@ function createApp({ pool, jwtSecret, timeZone = 'Asia/Kolkata', clock = () => n
           }
         }
 
+        // Stored direction makes half-day attendance deterministic: morning
+        // leave means the employee works the configured evening shift, and
+        // evening leave means the configured morning shift.
+        try { await pool.execute("ALTER TABLE employee_leaves ADD COLUMN half_day_session ENUM('morning','evening') NULL AFTER duration_type"); } catch (error) { if (error.code !== 'ER_DUP_FIELDNAME') throw error; }
         const [result] = await pool.execute(
           `INSERT INTO employee_leaves
-            (employee_id, leave_type, duration_type, policy_payroll_mode, policy_allow_half_day,
+            (employee_id, leave_type, duration_type, half_day_session, policy_payroll_mode, policy_allow_half_day,
              from_date, to_date, days_count, reason, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
-          [empId, leave_type, duration_type || 'Full Day', leavePolicy.payroll_mode,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
+          [empId, leave_type, duration_type || 'Full Day', duration_type === 'Half Day' ? halfDaySession : null, leavePolicy.payroll_mode,
             Number(leavePolicy.allow_half_day) === 1 ? 1 : 0,
             from_date, to_date, days, reason || '']
         );

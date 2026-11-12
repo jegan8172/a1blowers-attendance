@@ -4025,9 +4025,9 @@ class _EmployeeDetailPageState extends State<_EmployeeDetailPage> {
                     _tableText(item['attendance_date']), _tableText(_money(item['daily_salary'])),
                     _tableText(item['attendance_status'] == 'Present' || item['attendance_status'] == 'Late' ? 1 : 0),
                     _tableText(item['check_in_at']), _tableText(item['check_out_at']), _statusCell(item['attendance_status']),
-                    _tableText(_money(item['deduction_type'] == 'late' ? item['amount'] : 0)),
-                    _tableText(_money(item['deduction_type'] == 'absent' ? item['amount'] : 0)),
-                    _tableText(_money(item['amount'])), _tableText(_money(item['updated_salary'])),
+                    _tableText(_money(item['late_deduction'] ?? (item['deduction_type'] == 'late' ? item['amount'] : 0))),
+                    _tableText(_money(item['absent_amount'] ?? (item['deduction_type'] == 'absent' ? item['amount'] : 0))),
+                    _tableText(_money(item['total_deduction'] ?? item['amount'])), _tableText(_money(item['updated_salary'])),
                   ]).toList(),
                 )));
               },

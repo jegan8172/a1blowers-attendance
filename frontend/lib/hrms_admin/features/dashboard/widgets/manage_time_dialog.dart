@@ -32,6 +32,22 @@ class _ManageTimeDialogState extends State<ManageTimeDialog> {
   String _femaleCheckOut = '18:30';
   String _femaleLateAfter = '10:00';
   String _femaleAbsentAfter = '12:00';
+  String _morningCheckIn = '09:30';
+  String _morningCheckOut = '14:00';
+  String _morningLateAfter = '10:00';
+  String _morningAbsentAfter = '12:00';
+  String _eveningCheckIn = '14:00';
+  String _eveningCheckOut = '18:30';
+  String _eveningLateAfter = '14:10';
+  String _eveningAbsentAfter = '16:00';
+  String _femaleMorningCheckIn = '09:30';
+  String _femaleMorningCheckOut = '14:00';
+  String _femaleMorningLateAfter = '10:00';
+  String _femaleMorningAbsentAfter = '12:00';
+  String _femaleEveningCheckIn = '14:00';
+  String _femaleEveningCheckOut = '18:30';
+  String _femaleEveningLateAfter = '14:10';
+  String _femaleEveningAbsentAfter = '16:00';
   String _labourLunchStart = '12:30';
   String _labourLunchEnd = '13:00';
   String _employeeLunchStart = '12:30';
@@ -63,6 +79,26 @@ class _ManageTimeDialogState extends State<ManageTimeDialog> {
         _femaleCheckOut = _shortTime(female['shiftEnd'], fallback: _femaleCheckOut);
         _femaleLateAfter = _shortTime(female['lateAfter'], fallback: _femaleLateAfter);
         _femaleAbsentAfter = _shortTime(female['absentAfter'], fallback: _femaleAbsentAfter);
+        final maleMorning = male['morning'] is Map ? Map<String, dynamic>.from(male['morning']) : const <String, dynamic>{};
+        final maleEvening = male['evening'] is Map ? Map<String, dynamic>.from(male['evening']) : const <String, dynamic>{};
+        final femaleMorning = female['morning'] is Map ? Map<String, dynamic>.from(female['morning']) : const <String, dynamic>{};
+        final femaleEvening = female['evening'] is Map ? Map<String, dynamic>.from(female['evening']) : const <String, dynamic>{};
+        _morningCheckIn = _shortTime(maleMorning['shiftStart'], fallback: _morningCheckIn);
+        _morningCheckOut = _shortTime(maleMorning['shiftEnd'], fallback: _morningCheckOut);
+        _morningLateAfter = _shortTime(maleMorning['lateAfter'], fallback: _morningLateAfter);
+        _morningAbsentAfter = _shortTime(maleMorning['absentAfter'], fallback: _morningAbsentAfter);
+        _eveningCheckIn = _shortTime(maleEvening['shiftStart'], fallback: _eveningCheckIn);
+        _eveningCheckOut = _shortTime(maleEvening['shiftEnd'], fallback: _eveningCheckOut);
+        _eveningLateAfter = _shortTime(maleEvening['lateAfter'], fallback: _eveningLateAfter);
+        _eveningAbsentAfter = _shortTime(maleEvening['absentAfter'], fallback: _eveningAbsentAfter);
+        _femaleMorningCheckIn = _shortTime(femaleMorning['shiftStart'], fallback: _femaleMorningCheckIn);
+        _femaleMorningCheckOut = _shortTime(femaleMorning['shiftEnd'], fallback: _femaleMorningCheckOut);
+        _femaleMorningLateAfter = _shortTime(femaleMorning['lateAfter'], fallback: _femaleMorningLateAfter);
+        _femaleMorningAbsentAfter = _shortTime(femaleMorning['absentAfter'], fallback: _femaleMorningAbsentAfter);
+        _femaleEveningCheckIn = _shortTime(femaleEvening['shiftStart'], fallback: _femaleEveningCheckIn);
+        _femaleEveningCheckOut = _shortTime(femaleEvening['shiftEnd'], fallback: _femaleEveningCheckOut);
+        _femaleEveningLateAfter = _shortTime(femaleEvening['lateAfter'], fallback: _femaleEveningLateAfter);
+        _femaleEveningAbsentAfter = _shortTime(femaleEvening['absentAfter'], fallback: _femaleEveningAbsentAfter);
         _labourLunchStart = _shortTime(values['labourLunchStart'], fallback: _labourLunchStart);
         _labourLunchEnd = _shortTime(values['labourLunchEnd'], fallback: _labourLunchEnd);
         _employeeLunchStart = _shortTime(values['employeeLunchStart'], fallback: _employeeLunchStart);
@@ -115,8 +151,8 @@ class _ManageTimeDialogState extends State<ManageTimeDialog> {
     setState(() => _saving = true);
     try {
       await HrmsAttendanceTimeApi.save(
-        male: {'shiftStart': _checkIn, 'shiftEnd': _checkOut, 'lateAfter': _lateAfter, 'absentAfter': _absentAfter},
-        female: {'shiftStart': _femaleCheckIn, 'shiftEnd': _femaleCheckOut, 'lateAfter': _femaleLateAfter, 'absentAfter': _femaleAbsentAfter},
+        male: {'shiftStart': _checkIn, 'shiftEnd': _checkOut, 'lateAfter': _lateAfter, 'absentAfter': _absentAfter, 'morning': {'shiftStart': _morningCheckIn, 'shiftEnd': _morningCheckOut, 'lateAfter': _morningLateAfter, 'absentAfter': _morningAbsentAfter}, 'evening': {'shiftStart': _eveningCheckIn, 'shiftEnd': _eveningCheckOut, 'lateAfter': _eveningLateAfter, 'absentAfter': _eveningAbsentAfter}},
+        female: {'shiftStart': _femaleCheckIn, 'shiftEnd': _femaleCheckOut, 'lateAfter': _femaleLateAfter, 'absentAfter': _femaleAbsentAfter, 'morning': {'shiftStart': _femaleMorningCheckIn, 'shiftEnd': _femaleMorningCheckOut, 'lateAfter': _femaleMorningLateAfter, 'absentAfter': _femaleMorningAbsentAfter}, 'evening': {'shiftStart': _femaleEveningCheckIn, 'shiftEnd': _femaleEveningCheckOut, 'lateAfter': _femaleEveningLateAfter, 'absentAfter': _femaleEveningAbsentAfter}},
         labourLunchStart: _labourLunchStart,
         labourLunchEnd: _labourLunchEnd,
         employeeLunchStart: _employeeLunchStart,
@@ -343,6 +379,48 @@ class _ManageTimeDialogState extends State<ManageTimeDialog> {
                       ]),
                     ),
                     const SizedBox(height: 14),
+                    _halfDayRules(
+                      title: 'HALF-DAY LEAVE RULES',
+                      subtitle: 'Approved morning leave uses the evening rules; approved evening leave uses the morning rules.',
+                      morningIn: _morningCheckIn,
+                      morningOut: _morningCheckOut,
+                      morningLate: _morningLateAfter,
+                      morningAbsent: _morningAbsentAfter,
+                      eveningIn: _eveningCheckIn,
+                      eveningOut: _eveningCheckOut,
+                      eveningLate: _eveningLateAfter,
+                      eveningAbsent: _eveningAbsentAfter,
+                      onMorningIn: (v) => setState(() => _morningCheckIn = v),
+                      onMorningOut: (v) => setState(() => _morningCheckOut = v),
+                      onMorningLate: (v) => setState(() => _morningLateAfter = v),
+                      onMorningAbsent: (v) => setState(() => _morningAbsentAfter = v),
+                      onEveningIn: (v) => setState(() => _eveningCheckIn = v),
+                      onEveningOut: (v) => setState(() => _eveningCheckOut = v),
+                      onEveningLate: (v) => setState(() => _eveningLateAfter = v),
+                      onEveningAbsent: (v) => setState(() => _eveningAbsentAfter = v),
+                    ),
+                    const SizedBox(height: 14),
+                    _halfDayRules(
+                      title: 'FEMALE HALF-DAY LEAVE RULES',
+                      subtitle: 'Used only when an approved half-day permission changes the employee’s effective shift.',
+                      morningIn: _femaleMorningCheckIn,
+                      morningOut: _femaleMorningCheckOut,
+                      morningLate: _femaleMorningLateAfter,
+                      morningAbsent: _femaleMorningAbsentAfter,
+                      eveningIn: _femaleEveningCheckIn,
+                      eveningOut: _femaleEveningCheckOut,
+                      eveningLate: _femaleEveningLateAfter,
+                      eveningAbsent: _femaleEveningAbsentAfter,
+                      onMorningIn: (v) => setState(() => _femaleMorningCheckIn = v),
+                      onMorningOut: (v) => setState(() => _femaleMorningCheckOut = v),
+                      onMorningLate: (v) => setState(() => _femaleMorningLateAfter = v),
+                      onMorningAbsent: (v) => setState(() => _femaleMorningAbsentAfter = v),
+                      onEveningIn: (v) => setState(() => _femaleEveningCheckIn = v),
+                      onEveningOut: (v) => setState(() => _femaleEveningCheckOut = v),
+                      onEveningLate: (v) => setState(() => _femaleEveningLateAfter = v),
+                      onEveningAbsent: (v) => setState(() => _femaleEveningAbsentAfter = v),
+                    ),
+                    const SizedBox(height: 14),
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(16),
@@ -417,6 +495,66 @@ class _ManageTimeDialogState extends State<ManageTimeDialog> {
       ),
     );
   }
+
+  Widget _halfDayRules({
+    required String title,
+    required String subtitle,
+    required String morningIn,
+    required String morningOut,
+    required String morningLate,
+    required String morningAbsent,
+    required String eveningIn,
+    required String eveningOut,
+    required String eveningLate,
+    required String eveningAbsent,
+    required ValueChanged<String> onMorningIn,
+    required ValueChanged<String> onMorningOut,
+    required ValueChanged<String> onMorningLate,
+    required ValueChanged<String> onMorningAbsent,
+    required ValueChanged<String> onEveningIn,
+    required ValueChanged<String> onEveningOut,
+    required ValueChanged<String> onEveningLate,
+    required ValueChanged<String> onEveningAbsent,
+  }) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: const Color(0xFFF8FBFF),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: _line),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: const TextStyle(fontSize: 11, letterSpacing: .7, color: _muted, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 4),
+        Text(subtitle, style: const TextStyle(fontSize: 12, color: _muted)),
+        const SizedBox(height: 12),
+        _halfRuleSection('Morning work window', morningIn, morningOut, morningLate, morningAbsent, onMorningIn, onMorningOut, onMorningLate, onMorningAbsent),
+        const SizedBox(height: 10),
+        _halfRuleSection('Evening work window', eveningIn, eveningOut, eveningLate, eveningAbsent, onEveningIn, onEveningOut, onEveningLate, onEveningAbsent),
+      ],
+    ),
+  );
+
+  Widget _halfRuleSection(String title, String checkIn, String checkOut, String lateAfter, String absentAfter, ValueChanged<String> onCheckIn, ValueChanged<String> onCheckOut, ValueChanged<String> onLate, ValueChanged<String> onAbsent) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(title, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _navy)),
+      const SizedBox(height: 8),
+      Row(children: [
+        Expanded(child: _timeTile(icon: Icons.login_rounded, label: 'Check in', value: checkIn, onTap: () => _pickTime(current: checkIn, onPicked: onCheckIn))),
+        const SizedBox(width: 8),
+        Expanded(child: _timeTile(icon: Icons.logout_rounded, label: 'Check out', value: checkOut, onTap: () => _pickTime(current: checkOut, onPicked: onCheckOut))),
+      ]),
+      const SizedBox(height: 8),
+      Row(children: [
+        Expanded(child: _timeTile(icon: Icons.notifications_active_outlined, iconColor: _orange, label: 'Late after', value: lateAfter, onTap: () => _pickTime(current: lateAfter, onPicked: onLate))),
+        const SizedBox(width: 8),
+        Expanded(child: _timeTile(icon: Icons.person_off_outlined, iconColor: _red, label: 'Absent after', value: absentAfter, onTap: () => _pickTime(current: absentAfter, onPicked: onAbsent))),
+      ]),
+    ],
+  );
 
   Widget _timeTile({
     required IconData icon,

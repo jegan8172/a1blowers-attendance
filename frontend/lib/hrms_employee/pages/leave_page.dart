@@ -487,6 +487,7 @@ class _LeaveForm extends StatefulWidget {
 class _LeaveFormState extends State<_LeaveForm> {
   String type = 'Casual Leave';
   String duration = 'Full Day';
+  String halfDaySession = 'morning';
   DateTime fromDate = DateTime.now();
   DateTime toDate = DateTime.now();
   final _reasonCtrl = TextEditingController();
@@ -548,6 +549,7 @@ class _LeaveFormState extends State<_LeaveForm> {
     final payload = {
       'leave_type': type,
       'duration_type': duration,
+      if (duration == 'Half Day') 'half_day_session': halfDaySession,
       'from_date': DateFormat('yyyy-MM-dd').format(fromDate),
       'to_date': DateFormat('yyyy-MM-dd').format(toDate),
       'reason': _reasonCtrl.text.trim(),
@@ -633,6 +635,22 @@ class _LeaveFormState extends State<_LeaveForm> {
             _DropdownField('Leave Type', type, widget.leavePolicies.map((item) => '${item['type']}').toList(), (v) => setState(() { type = v!; if (!_allowsHalfDay && duration == 'Half Day') duration = 'Full Day'; })),
             const SizedBox(height: 14),
             _DropdownField('Duration', duration, _allowsHalfDay ? const ['Full Day', 'Half Day'] : const ['Full Day'], (v) => setState(() => duration = v!)),
+          ],
+          if (duration == 'Half Day') ...[
+            const SizedBox(height: 14),
+            _DropdownField(
+              widget.desktop ? 'LEAVE SESSION' : 'Leave Session',
+              halfDaySession,
+              const ['morning', 'evening'],
+              (v) => setState(() => halfDaySession = v!),
+            ),
+            const SizedBox(height: 7),
+            Text(
+              halfDaySession == 'morning'
+                  ? 'Morning leave: your attendance will use the admin-configured evening shift rules.'
+                  : 'Evening leave: your attendance will use the admin-configured morning shift rules.',
+              style: const TextStyle(color: employeeBlue, fontWeight: FontWeight.w600, fontSize: 12),
+            ),
           ],
           if (type == 'Earned Leave') ...[
             const SizedBox(height: 8),

@@ -2,6 +2,8 @@ const db = require('../config/db');
 const bcrypt = require('bcrypt');
 const { normalizePhone } = require('../lib/employeePhone');
 const { employeeFilters } = require('../lib/employeeFilters');
+const attendancePolicy = require('../lib/attendancePolicy');
+const payrollController = require('./hrmsPayrollController');
 const {
   createEmployeeAtomically,
   assertUniqueForUpdate,
@@ -229,6 +231,9 @@ async function detail(req, res) {
     );
     if (!profile) return fail(res, 404, 'Employee not found');
     const employeeId = Number(profile.employee_user_id || 0);
+    // Employee details must display the same pending/final payroll snapshot as
+    // the payroll page and the employee self-service salary page.
+    if (employeeId) await payrollController.refreshUnpaidForEmployee(employeeId, attendancePolicy.todayIstDate());
     const [[attendance]] = await db.query(
       `SELECT
         SUM(CASE WHEN check_in_at IS NOT NULL AND attendance_status <> 'absent' THEN 1 ELSE 0 END) AS present,
@@ -316,9 +321,9 @@ async function detail(req, res) {
       payroll: payroll ? {
         workingDays: Number(payroll.working_days || 0), paidDays: Number(payroll.paid_days || 0),
         lopDays: Number(payroll.lop_days || 0),
-        lateDeduction: Number(payroll.late_deductions || payroll.deductions || 0),
+        lateDeduction: Number(payroll.late_deductions || 0),
         absentDeduction: Number(payroll.absent_deductions || 0),
-        totalDeduction: Number(payroll.late_deductions || payroll.deductions || 0) + Number(payroll.absent_deductions || 0),
+        totalDeduction: Number(payroll.deductions || 0) + Number(payroll.absent_deductions || 0),
         netPay: Number(payroll.net_pay || 0), status: payroll.status,
       } : null,
       attendanceRows: attendanceRows.map(function (row) {
@@ -330,14 +335,15 @@ async function detail(req, res) {
       leaveRows: leaveRows,
       permissionRows: permissionRows,
       payrollHistory: payrollHistoryRows.map(function (row) {
-        const late = Number(row.late_deductions || row.deductions || 0);
+        const late = Number(row.late_deductions || 0);
+        const timeDeduction = Number(row.deductions || late);
         const absent = Number(row.absent_deductions || 0);
         return {
           year: Number(row.pay_year), monthNumber: Number(row.pay_month),
           month: new Date(Number(row.pay_year), Number(row.pay_month) - 1, 1).toLocaleString('en-US', { month: 'long', year: 'numeric' }),
           salary: Number(row.monthly_salary || 0), workingDays: Number(row.working_days || 0),
           paidDays: Number(row.paid_days || 0), lopDays: Number(row.lop_days || 0),
-          lateDeduction: late, absentDeduction: absent, totalDeduction: late + absent,
+          lateDeduction: late, absentDeduction: absent, totalDeduction: timeDeduction + absent,
           netPay: Number(row.net_pay || 0), status: row.status
         };
       })

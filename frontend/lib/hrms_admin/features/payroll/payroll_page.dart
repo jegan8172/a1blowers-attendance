@@ -722,6 +722,13 @@ class _DeductionHistoryDialogState extends State<_DeductionHistoryDialog> {
   }
 
   String _presentAmount(Map<String, dynamic> item) {
+    final explicit = item['present_amount'];
+    if (explicit != null) {
+      final amount = explicit is num
+          ? explicit.toDouble()
+          : double.tryParse('$explicit');
+      if (amount != null) return '₹${amount.toStringAsFixed(2)}';
+    }
     final status = '${item['attendance_status'] ?? ''}'.toLowerCase();
     if (status != 'present' && status != 'late') return '₹0';
 
@@ -904,12 +911,12 @@ class _DeductionHistoryDialogState extends State<_DeductionHistoryDialog> {
                   '${item['attendance_status'] ?? 'Absent'}',
                   _duration(item['late_minutes']),
                   item['deduction_type'] == 'late'
-                      ? _pdfMoney(item['amount'])
+                      ? _pdfMoney(item['late_deduction'])
                       : 'Rs. 0.00',
                   item['deduction_type'] == 'absent'
-                      ? _pdfMoney(item['amount'])
+                      ? _pdfMoney(item['absent_amount'])
                       : 'Rs. 0.00',
-                  _pdfMoney(item['amount']),
+                  _pdfMoney(item['total_deduction']),
                   _presentAmount(item).replaceFirst('₹', 'Rs. '),
                   _pdfMoney(item['updated_salary']),
                 ],
@@ -1388,19 +1395,19 @@ class _DeductionHistoryDialogState extends State<_DeductionHistoryDialog> {
                                           DataCell(
                                             Text(
                                               item['deduction_type'] == 'late'
-                                                  ? '₹${item['amount'] ?? 0}'
+                                                  ? '₹${item['late_deduction'] ?? 0}'
                                                   : '₹0',
                                             ),
                                           ),
                                           DataCell(
                                             Text(
                                               item['deduction_type'] == 'absent'
-                                                  ? '₹${item['amount'] ?? 0}'
+                                                  ? '₹${item['absent_amount'] ?? 0}'
                                                   : '₹0',
                                             ),
                                           ),
                                           DataCell(
-                                            Text('₹${item['amount'] ?? 0}'),
+                                            Text('₹${item['total_deduction'] ?? 0}'),
                                           ),
                                           DataCell(
                                             Text(_presentAmount(item)),
@@ -2988,7 +2995,8 @@ class _PayrollRow {
       totalDeduction,
       netPay,
       status;
-  final int workingDays, paidDays, lopDays;
+  final int workingDays;
+  final num paidDays, lopDays;
   final String salaryType, periodStart, periodEnd;
 
   factory _PayrollRow.fromApi(Map<String, dynamic> json) {
@@ -3032,8 +3040,8 @@ class _PayrollRow {
       salary: (json['salary'] ?? 'Not Set').toString(),
       dailySalary: money(dailySalary),
       workingDays: workingDays,
-      paidDays: asInt(json['paidDays']),
-      lopDays: asInt(json['lopDays']),
+      paidDays: asNumber(json['paidDays']) ?? 0,
+      lopDays: asNumber(json['lopDays']) ?? 0,
       lateDeduction: money(lateDeduction),
       absentDeduction: money(absentDeduction),
       totalDeduction: money(totalDeduction),

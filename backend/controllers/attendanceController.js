@@ -220,7 +220,7 @@ const PERMISSION_GRACE_SECONDS = 30 * 60;
 // Attendance exceptions are resolved here, on the server, immediately before
 // a Clock In is written.  The client only supplies its Clock In request; it
 // cannot choose Present, Late, or Half Leave for itself.
-async function approvedPermissionDecision(connection, employeeId, date, at) {
+async function approvedPermissionDecision(connection, employeeId, date, at, fullSchedule) {
   const [rows] = await connection.query(
     `SELECT permission_start_time, permission_end_time, salary_mode
      FROM attendance_permission_requests
@@ -240,12 +240,64 @@ async function approvedPermissionDecision(connection, employeeId, date, at) {
     // A later permission must never rewrite the normal morning late rule.
     if (clockInSeconds < start) continue;
 
+    // A permission that occupies the first or second half of the workday
+    // changes the effective schedule.  The actual values are selected later
+    // from the employee's gender-specific Manage Time configuration.
+    const shiftStart = timeSeconds(fullSchedule && fullSchedule.shiftStart || '09:30:00');
+    let shiftEnd = timeSeconds(fullSchedule && fullSchedule.shiftEnd || '18:30:00');
+    if (shiftEnd <= shiftStart) shiftEnd += 24 * 60 * 60;
+    const midpoint = shiftStart + Math.round((shiftEnd - shiftStart) / 2);
+    // Morning leave ends by the midpoint, so the employee works Evening.
+    // Evening leave begins at/after the midpoint, so they work Morning.
+    const half = end <= midpoint ? 'evening' : (start >= midpoint ? 'morning' : null);
     if (salaryMode === 'paid' && clockInSeconds <= end + PERMISSION_GRACE_SECONDS) {
-      return { status: 'present', isLate: false, source: 'paid_permission' };
+      return { status: 'present', isLate: false, source: 'paid_permission', half };
     }
     if (salaryMode === 'unpaid' && clockInSeconds <= end + PERMISSION_GRACE_SECONDS) {
-      return { status: 'half_leave', isLate: false, source: 'unpaid_permission' };
+      return { status: 'half_leave', isLate: false, source: 'unpaid_permission', half };
     }
+  }
+
+  // Employee leave requests have a stored half-day direction.  It is kept
+  // separate from short permission requests because it lasts for a payroll
+  // half day and must select the opposite work window for check-in rules.
+  // `half_day_session` is a newer column.  The fallback keeps attendance
+  // usable during a rolling deployment, before an older database receives
+  // the migration at server startup.
+  let halfLeaves;
+  try {
+    [halfLeaves] = await connection.query(
+      `SELECT policy_payroll_mode, half_day_session
+         FROM employee_leaves
+        WHERE employee_id = ? AND status = 'APPROVED'
+          AND from_date <= ? AND to_date >= ?
+          AND LOWER(duration_type) = 'half day'
+        ORDER BY id DESC LIMIT 1`,
+      [employeeId, date, date]
+    );
+  } catch (error) {
+    if (error && error.code !== 'ER_BAD_FIELD_ERROR') throw error;
+    [halfLeaves] = await connection.query(
+      `SELECT policy_payroll_mode, NULL AS half_day_session
+         FROM employee_leaves
+        WHERE employee_id = ? AND status = 'APPROVED'
+          AND from_date <= ? AND to_date >= ?
+          AND LOWER(duration_type) = 'half day'
+        ORDER BY id DESC LIMIT 1`,
+      [employeeId, date, date]
+    );
+  }
+  if (halfLeaves.length) {
+    const row = halfLeaves[0];
+    // Legacy half-day leaves did not record a direction. Default them to a
+    // morning leave so they remain usable; all new requests must choose one.
+    const leaveSession = String(row.half_day_session || 'morning').toLowerCase();
+    const half = leaveSession === 'evening' ? 'morning' : 'evening';
+    return {
+      half,
+      source: 'approved_half_leave',
+      salaryMode: String(row.policy_payroll_mode || 'unpaid').toLowerCase(),
+    };
   }
   return null;
 }
@@ -282,14 +334,49 @@ async function getRecord(employeeId, date, executor = db, lock = false) {
   return rows[0] || null;
 }
 
+function dateAfter(date) {
+  const [year, month, day] = String(date).split('-').map(Number);
+  const next = new Date(Date.UTC(year, month - 1, day + 1));
+  return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}-${String(next.getUTCDate()).padStart(2, '0')}`;
+}
+
+function leftBeforeScheduledEnd(record) {
+  if (!record || !record.check_out_at || !record.scheduled_shift_end) {
+    return policy.isEarlyExit(Number(record && record.working_minutes || 0));
+  }
+  const attendanceDate = sqlDate(record.attendance_date || record.check_in_at);
+  if (!attendanceDate) return policy.isEarlyExit(Number(record.working_minutes || 0));
+  const shiftStart = record.scheduled_shift_start || '00:00:00';
+  const shiftEnd = String(record.scheduled_shift_end).slice(0, 8);
+  const scheduledDate = timeSeconds(shiftEnd) <= timeSeconds(shiftStart)
+    ? dateAfter(attendanceDate)
+    : attendanceDate;
+  const scheduledEnd = `${scheduledDate} ${shiftEnd}`;
+  return sqlDateTime(record.check_out_at) < scheduledEnd;
+}
+
+// Attendance records store the effective shift selected at Clock In.  That
+// makes this calculation stable even if an admin later changes Manage Time.
+function earlyExitMinutes(record, checkOutAt) {
+  if (!record || !record.scheduled_shift_end || !checkOutAt) return 0;
+  const attendanceDate = sqlDate(record.attendance_date || record.check_in_at);
+  if (!attendanceDate) return 0;
+  const start = record.scheduled_shift_start || '00:00:00';
+  const end = String(record.scheduled_shift_end).slice(0, 8);
+  const scheduledDate = timeSeconds(end) <= timeSeconds(start) ? dateAfter(attendanceDate) : attendanceDate;
+  const scheduledEnd = `${scheduledDate} ${end}`;
+  return Math.max(0, policy.minutesBetween(checkOutAt, scheduledEnd));
+}
+
 function computeStatus(record) {
   if (!record || !record.check_in_at) {
     return record && record.attendance_status === 'on_leave' ? 'on_leave' : 'absent';
   }
   if (record.attendance_status === 'absent') return 'absent';
   if (record.attendance_status === 'half_leave') return 'half_leave';
-  const worked = Number(record.working_minutes || 0);
-  if (record.check_out_at && policy.isEarlyExit(worked)) return 'early_exit';
+  // A late arrival has fewer worked minutes, but it is not an Early Exit if
+  // the employee stayed until the configured shift end.
+  if (record.check_out_at && leftBeforeScheduledEnd(record)) return 'early_exit';
   if (record.is_late) return 'late';
   return 'present';
 }
@@ -1277,7 +1364,8 @@ async function checkIn(req, res) {
     }
     const gender = profile && profile.gender ? profile.gender : 'Male';
     const timeSettings = await policy.getTimeSettings(db);
-    const shift = String(gender).toLowerCase() === 'female' ? timeSettings.female : timeSettings.male;
+    const fullShift = String(gender).toLowerCase() === 'female' ? timeSettings.female : timeSettings.male;
+    let shift = fullShift;
     let late = policy.isLateCheckIn(at, gender);
     let absent = policy.isAbsentCheckIn(at, gender);
     await ensureReclockRequestColumns();
@@ -1331,13 +1419,27 @@ async function checkIn(req, res) {
       connection,
       employeeId,
       date,
-      at
+      at,
+      fullShift
     );
+    if (permissionDecision && permissionDecision.half) {
+      shift = fullShift[permissionDecision.half];
+      late = policy.isLateCheckIn(at, gender, permissionDecision.half);
+      absent = policy.isAbsentCheckIn(at, gender, permissionDecision.half);
+    }
     let status = absent ? 'absent' : (late ? 'late' : 'present');
     if (permissionDecision) {
-      status = permissionDecision.status;
-      late = permissionDecision.isLate;
-      absent = false;
+      if (permissionDecision.source === 'approved_half_leave') {
+        // The selected work half is still assessed against its own late and
+        // absent rules. A paid half leave only pays the leave half; missing
+        // the remaining scheduled half is still an absence.
+        if (absent) status = 'absent';
+        else if (permissionDecision.salaryMode === 'unpaid') status = 'half_leave';
+      } else {
+        status = permissionDecision.status;
+        late = permissionDecision.isLate;
+        absent = false;
+      }
     }
     if (approvedReclock) {
       // Preserve the original check-in time. The employee resumes the same
@@ -1371,8 +1473,8 @@ async function checkIn(req, res) {
     if (!approvedReclock) {
       const [latitude, longitude] = clockLocation(req.body);
       await connection.query(
-        'UPDATE attendance_records SET check_in_latitude = ?, check_in_longitude = ?, scheduled_shift_start = ?, scheduled_shift_end = ? WHERE employee_id = ? AND attendance_date = ?',
-        [latitude, longitude, shift.shiftStart, shift.shiftEnd, employeeId, date]
+        'UPDATE attendance_records SET check_in_latitude = ?, check_in_longitude = ?, scheduled_shift_start = ?, scheduled_shift_end = ?, scheduled_late_after = ? WHERE employee_id = ? AND attendance_date = ?',
+        [latitude, longitude, shift.shiftStart, shift.shiftEnd, shift.lateAfter, employeeId, date]
       );
     }
 
@@ -1392,6 +1494,9 @@ async function checkIn(req, res) {
     }
     const record = await getRecord(employeeId, date, connection);
     await connection.commit();
+    // Attendance is the input to the payroll ledger. Refreshing the unpaid
+    // period here keeps admin and employee salary views in sync immediately.
+    try { await payrollController.refreshUnpaidForEmployee(employeeId, date); } catch (error) { console.error('Payroll refresh after check-in failed:', error.message); }
     return ok(res, serializeRecord(record), 'Checked in');
   } catch (error) {
     if (connection) await connection.rollback();
@@ -1433,13 +1538,17 @@ async function checkOut(req, res) {
       check_out_at: at,
       working_minutes: workingMinutes,
       is_late: record.is_late,
-      attendance_status: record.attendance_status
+      attendance_status: record.attendance_status,
+      attendance_date: record.attendance_date,
+      scheduled_shift_start: record.scheduled_shift_start,
+      scheduled_shift_end: record.scheduled_shift_end
     });
 
     const [latitude, longitude] = clockLocation(req.body);
+    const earlyMinutes = earlyExitMinutes(record, at);
     await db.query(
-      "UPDATE attendance_records SET check_out_at = ?, working_minutes = ?, attendance_status = ?, session_status = 'completed', clock_out_reason = ?, tracking_stop_reason = ?, check_out_latitude = ?, check_out_longitude = ? WHERE id = ?",
-      [at, workingMinutes, status, reason, reason, latitude, longitude, record.id]
+      "UPDATE attendance_records SET check_out_at = ?, working_minutes = ?, early_exit_minutes = ?, attendance_status = ?, session_status = 'completed', clock_out_reason = ?, tracking_stop_reason = ?, check_out_latitude = ?, check_out_longitude = ? WHERE id = ?",
+      [at, workingMinutes, earlyMinutes, status, reason, reason, latitude, longitude, record.id]
     );
     await recordAutomaticOvertime(employeeId, record.id, sqlDate(record.attendance_date), workingMinutes);
 
@@ -1464,6 +1573,7 @@ async function checkOut(req, res) {
     );
 
     const updated = await getRecord(employeeId, sqlDate(record.attendance_date));
+    try { await payrollController.refreshUnpaidForEmployee(employeeId, sqlDate(record.attendance_date)); } catch (error) { console.error('Payroll refresh after check-out failed:', error.message); }
     return ok(res, serializeRecord(updated), 'Checked out');
   } catch (error) {
     console.error('POST /attendance/check-out', error);
