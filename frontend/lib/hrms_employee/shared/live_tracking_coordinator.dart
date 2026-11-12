@@ -3,7 +3,6 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:battery_plus/battery_plus.dart';
 import 'package:geolocator/geolocator.dart';
 
 import '../../services/hrms_tracking_api.dart';
@@ -159,22 +158,6 @@ class LiveTrackingCoordinator extends ChangeNotifier
     return AttendanceLocation.currentPosition();
   }
 
-  Future<int?> _batteryPercent() async {
-    if (kIsWeb) return null;
-    try {
-      final value = await Battery().batteryLevel;
-      return value >= 0 && value <= 100 ? value : null;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  double? _speedKmph(Position position) {
-    final metresPerSecond = position.speed;
-    if (!metresPerSecond.isFinite || metresPerSecond < 0) return null;
-    return metresPerSecond * 3.6;
-  }
-
   void _armTimer() {
     _cancelTimer();
     _autoClockoutTimer?.cancel();
@@ -197,13 +180,10 @@ class LiveTrackingCoordinator extends ChangeNotifier
       final position = await _position(
         requireBackground: defaultTargetPlatform == TargetPlatform.android,
       );
-      final batteryPercent = await _batteryPercent();
       final started = await HrmsTrackingApi.startFieldSession(
         latitude: position.latitude,
         longitude: position.longitude,
         accuracy: position.accuracy,
-        speedKmph: _speedKmph(position),
-        batteryPercent: batteryPercent,
         isMocked: position.isMocked,
       );
       final template = started['template'];
@@ -248,14 +228,11 @@ class LiveTrackingCoordinator extends ChangeNotifier
     notifyListeners();
     try {
       final position = await _position();
-      final batteryPercent = await _batteryPercent();
       await HrmsTrackingApi.stopFieldSession(
         reason: reason,
         latitude: position.latitude,
         longitude: position.longitude,
         accuracy: position.accuracy,
-        speedKmph: _speedKmph(position),
-        batteryPercent: batteryPercent,
         isMocked: position.isMocked,
       );
       _active = false;
@@ -272,13 +249,10 @@ class LiveTrackingCoordinator extends ChangeNotifier
     if (!_active || _busy) return;
     try {
       final position = await _position();
-      final batteryPercent = await _batteryPercent();
       await HrmsTrackingApi.ping(
         latitude: position.latitude,
         longitude: position.longitude,
         accuracy: position.accuracy,
-        speedKmph: _speedKmph(position),
-        batteryPercent: batteryPercent,
         isMocked: position.isMocked,
       );
     } catch (_) {

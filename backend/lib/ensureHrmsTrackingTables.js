@@ -126,24 +126,6 @@ async function ensureHrmsTrackingTables(db) {
       INDEX idx_office_locations_active (is_active)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
-  // Visual command-center geofences are intentionally separate from the
-  // attendance radius above.  A radius decides whether an employee is in an
-  // office; a zone is an administrator-owned map boundary used to communicate
-  // office/field areas to administrators.  Keeping geometry as JSON lets the
-  // UI render genuine configured polygons instead of drawing demo shapes.
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS hrms_tracking_geofence_zones (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      name VARCHAR(120) NOT NULL,
-      zone_type ENUM('office','field') NOT NULL DEFAULT 'office',
-      geometry JSON NOT NULL,
-      color_hex VARCHAR(9) NOT NULL DEFAULT '#1769E0',
-      is_active TINYINT(1) NOT NULL DEFAULT 1,
-      created_by INT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_by INT NULL, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      INDEX idx_tracking_geofence_active (is_active, zone_type)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-  `);
   await db.query(`
     CREATE TABLE IF NOT EXISTS hrms_tracking_mode_audit (
       id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -189,27 +171,11 @@ async function ensureHrmsTrackingTables(db) {
       latitude DECIMAL(10,7) NOT NULL,
       longitude DECIMAL(10,7) NOT NULL,
       accuracy_meters DECIMAL(6,1) NULL,
-      speed_kmph DECIMAL(7,2) NULL,
-      battery_percent TINYINT UNSIGNED NULL,
       address VARCHAR(255) NULL,
       recorded_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_employee_recorded (employee_user_id, recorded_at)
     )
   `);
-
-  // Device telemetry is optional: older mobile builds and web tracking can
-  // continue sending GPS-only pings. Newer builds include these values.
-  for (const [name, definition] of [
-    ['speed_kmph', 'DECIMAL(7,2) NULL'],
-    ['battery_percent', 'TINYINT UNSIGNED NULL'],
-  ]) {
-    const [columns] = await db.query(
-      `SHOW COLUMNS FROM hrms_location_pings LIKE '${name}'`
-    );
-    if (!columns.length) {
-      await db.query(`ALTER TABLE hrms_location_pings ADD COLUMN ${name} ${definition}`);
-    }
-  }
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS hrms_field_tracking_sessions (

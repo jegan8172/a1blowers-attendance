@@ -5,21 +5,11 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:battery_plus/battery_plus.dart';
 import 'package:geolocator/geolocator.dart';
 
 import '../../services/hrms_tracking_api.dart';
 import '../../services/attendance_api.dart';
 import 'overlay_permission.dart';
-
-Future<int?> _backgroundBatteryPercent() async {
-  try {
-    final value = await Battery().batteryLevel;
-    return value >= 0 && value <= 100 ? value : null;
-  } catch (_) {
-    return null;
-  }
-}
 
 /// Android's visible foreground service. It owns scheduled GPS updates while
 /// the app is backgrounded, and is stopped explicitly with the session.
@@ -158,15 +148,10 @@ class AndroidLiveTrackingService {
             accuracy: LocationAccuracy.high,
           ),
         ).timeout(const Duration(seconds: 30));
-        final batteryPercent = await _backgroundBatteryPercent();
         await HrmsTrackingApi.ping(
           latitude: position.latitude,
           longitude: position.longitude,
           accuracy: position.accuracy,
-          speedKmph: position.speed.isFinite && position.speed >= 0
-              ? position.speed * 3.6
-              : null,
-          batteryPercent: batteryPercent,
           isMocked: position.isMocked,
         ).timeout(const Duration(seconds: 20));
         pingRetryAttempt = 0;
