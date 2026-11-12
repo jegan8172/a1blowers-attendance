@@ -409,7 +409,6 @@ async function computeRows(year, month, today, options) {
   });
   paidRegularizations.forEach(function (row) {
     const regularizationKey = row.employee_id + '|' + isoDate(row.request_date);
-    leaveSet.add(regularizationKey);
     paidRegularizationSet.add(regularizationKey);
   });
 
@@ -442,6 +441,11 @@ async function computeRows(year, month, today, options) {
     let absent = 0;
     const lateEntries = [];
     const absentEntries = [];
+    // This is the canonical, day-level outcome used by both payroll and the
+    // attendance calendar.  Keep the existing calculation branches intact;
+    // expose their final decision instead of asking each UI to infer it again.
+    const dayStatuses = {};
+    const paidUnitsByDate = {};
 
     for (let date = period.start; date <= cutoff; date = nextDate(date)) {
       const dateParts = date.split('-').map(Number);
@@ -457,41 +461,73 @@ async function computeRows(year, month, today, options) {
       if (String(record && record.admin_status_override || '').toLowerCase() === 'present') {
         present += 1;
         earnedDays += 1;
+        dayStatuses[date] = 'Present';
+        paidUnitsByDate[date] = 1;
       } else if (String(record && record.admin_status_override || '').toLowerCase() === 'absent') {
         absent += 1;
         absentEntries.push({ date: date, days: 1 });
+        dayStatuses[date] = 'Absent';
       } else if (key && paidRegularizationSet.has(key)) {
         // An approved paid regularization wins over a generated/explicit
         // absence, without manufacturing a clock-in timestamp.
         present += 1;
         earnedDays += 1;
+        dayStatuses[date] = 'Present';
+        paidUnitsByDate[date] = 1;
       } else if (key && paidLeaveUnits.has(key)) {
         const units = paidLeaveUnits.get(key);
         leaveDays += units;
         earnedDays += units;
+        dayStatuses[date] = units === 0.5 ? 'Half Leave' : 'Leave';
+        paidUnitsByDate[date] = units;
       } else if (attStatus === 'half_leave') {
         unpaidHalfDays += 0.5;
         absentEntries.push({ date: date, days: 0.5 });
         earnedDays += 0.5;
+        dayStatuses[date] = 'Half Leave';
+        paidUnitsByDate[date] = 0.5;
       } else if (attStatus === 'absent') {
         // An explicit absence is visible in the summary even when the policy
         // treats it as paid time.
         absent += 1;
         absentEntries.push({ date: date, days: 1 });
+        dayStatuses[date] = 'Absent';
       } else if (record && record.check_in_at) {
         // Punched in
         if (Number(record.is_late) || attStatus === 'late') late += 1;
         const schedule = String(profile.gender).toLowerCase() === 'female' ? timeSettings.female : timeSettings.male;
         const lateMinutes = Math.max(0, Math.floor((attendanceTimeSeconds(record.check_in_at) - timeSeconds(schedule.lateAfter)) / 60));
-        if (lateMinutes > 0) lateEntries.push({ date: date, minutes: lateMinutes });
-        else present += 1;
+        if (lateMinutes > 0) {
+          lateEntries.push({ date: date, minutes: lateMinutes });
+          dayStatuses[date] = 'Late';
+          paidUnitsByDate[date] = 1;
+        } else {
+          present += 1;
+          dayStatuses[date] = 'Present';
+          paidUnitsByDate[date] = 1;
+        }
         earnedDays += 1;
       } else {
-        // A completed working day with no attendance is always absent. Its
-        // value is not subtracted from accrued pay: it simply never becomes
-        // a paid day in the first place.
+        // The current working day is only an absence after this employee's
+        // configured absent-after time. Before then it remains an unresolved
+        // live day and must not alter Present, LOP, paid days or pay.
+        const currentDayBeforeCutoff = date === today && !policy.isAbsentCheckIn(
+          policy.nowIstDateTime(),
+          profile.gender,
+        );
+        if (currentDayBeforeCutoff) {
+          elapsedWorkingDays -= 1;
+          dayStatuses[date] = 'No record';
+          paidUnitsByDate[date] = 0;
+          continue;
+        }
+        // A completed day, or today after the configured cutoff, with no
+        // attendance is absent. Its value is not subtracted from accrued pay:
+        // it simply never becomes a paid day in the first place.
         absent += 1;
         absentEntries.push({ date: date, days: 1 });
+        dayStatuses[date] = 'Absent';
+        paidUnitsByDate[date] = 0;
       }
     }
 
@@ -542,6 +578,8 @@ async function computeRows(year, month, today, options) {
         salaryType: period.salaryType, periodStart: period.start, periodEnd: period.end, cycleOverridden: Boolean(period.overridden),
         dailySalary: null,
         workingDays: workingDays, presentDays: present, lateDays: late, leaveDays: leaveDays, absentDays: absent,
+        dayStatuses,
+        paidUnitsByDate,
         paidDays: paidDays, lopDays: lopDays, deductions: 0, deductionsLabel: '–',
         lateDeductions: 0, absentDeductions: 0, netPay: 0, netPayLabel: '–',
         status: 'Salary required', paidAt: '',
@@ -560,6 +598,8 @@ async function computeRows(year, month, today, options) {
           ? Math.round((Number(saved.monthly_salary || 0) / Number(saved.working_days)) * 100) / 100
           : null,
         workingDays: Number(saved.working_days || 0), presentDays: present, lateDays: late, leaveDays: leaveDays, absentDays: absent,
+        dayStatuses,
+        paidUnitsByDate,
         paidDays: Number(saved.paid_days || 0), lopDays: Number(saved.lop_days || 0), deductions: Number(saved.deductions || 0),
         deductionsLabel: formatSalary(saved.deductions),
         lateDeductions: Number(saved.late_deductions || saved.deductions || 0),
@@ -590,6 +630,8 @@ async function computeRows(year, month, today, options) {
       lateDays: late,
       leaveDays: leaveDays,
       absentDays: absent,
+      dayStatuses,
+      paidUnitsByDate,
       paidDays: paidDays,
       lopDays: lopDays,
       deductions: deductions,

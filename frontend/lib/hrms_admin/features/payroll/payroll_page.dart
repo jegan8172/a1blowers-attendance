@@ -36,6 +36,7 @@ class _PayrollPageState extends State<PayrollPage> {
   late int month;
   String employee = 'All Employees';
   String status = 'All Status';
+  String search = '';
   List<_PayrollRow> rows = [];
   List<String> employeeNames = const ['All Employees'];
   List<_MonthOption> months = [];
@@ -404,6 +405,7 @@ class _PayrollPageState extends State<PayrollPage> {
       months: months,
       employee: employee,
       status: status,
+      search: search,
       employees: employeeNames,
       rows: rows,
       selectedProfileId: selectedProfileId,
@@ -422,9 +424,11 @@ class _PayrollPageState extends State<PayrollPage> {
         status = value!;
         _load();
       },
+      onSearchChanged: (value) => setState(() => search = value),
       onReset: () {
         employee = 'All Employees';
         status = 'All Status';
+        search = '';
         _load();
       },
       onMarkPaid: _markPaid,
@@ -1642,12 +1646,14 @@ class _PayrollPanel extends StatelessWidget {
     required this.months,
     required this.employee,
     required this.status,
+    required this.search,
     required this.employees,
     required this.rows,
     required this.selectedProfileId,
     required this.onMonthChanged,
     required this.onEmployeeChanged,
     required this.onStatusChanged,
+    required this.onSearchChanged,
     required this.onReset,
     required this.onMarkPaid,
     required this.onHistory,
@@ -1660,13 +1666,14 @@ class _PayrollPanel extends StatelessWidget {
   final bool generating;
   final VoidCallback onGenerate;
   final List<_MonthOption> months;
-  final String employee, status;
+  final String employee, status, search;
   final List<String> employees;
   final List<_PayrollRow> rows;
   final int? selectedProfileId;
   final ValueChanged<String?> onMonthChanged,
       onEmployeeChanged,
       onStatusChanged;
+  final ValueChanged<String> onSearchChanged;
   final VoidCallback onReset;
   final ValueChanged<_PayrollRow> onMarkPaid;
   final ValueChanged<_PayrollRow> onHistory;
@@ -1676,16 +1683,21 @@ class _PayrollPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final mobile = MediaQuery.sizeOf(context).width < 600;
+    final visibleRows = search.trim().isEmpty
+        ? rows
+        : rows
+            .where((row) => row.name.toLowerCase().contains(search.trim().toLowerCase()))
+            .toList();
     final palette = AdminSurfacePalette.of(context);
     final payrollBody = mobile
         ? _MobilePayrollList(
-            rows: rows,
+            rows: visibleRows,
             onMarkPaid: onMarkPaid,
             selectedProfileId: selectedProfileId,
             onRowSelected: onRowSelected,
           )
         : _PayrollTable(
-            rows: rows,
+            rows: visibleRows,
             selectedProfileId: selectedProfileId,
             onRowSelected: onRowSelected,
             onMarkPaid: onMarkPaid,
@@ -1725,9 +1737,11 @@ class _PayrollPanel extends StatelessWidget {
                     employee: employee,
                     employees: employees,
                     status: status,
+                    search: search,
                     onMonthChanged: onMonthChanged,
                     onEmployeeChanged: onEmployeeChanged,
                     onStatusChanged: onStatusChanged,
+                    onSearchChanged: onSearchChanged,
                     onReset: onReset,
                   ),
                 ),
@@ -1778,9 +1792,11 @@ class _PayrollPanel extends StatelessWidget {
               employee: employee,
               employees: employees,
               status: status,
+              search: search,
               onMonthChanged: onMonthChanged,
               onEmployeeChanged: onEmployeeChanged,
               onStatusChanged: onStatusChanged,
+              onSearchChanged: onSearchChanged,
               onReset: onReset,
             ),
             const SizedBox(height: 16),
@@ -1790,9 +1806,9 @@ class _PayrollPanel extends StatelessWidget {
           if (!fixedHeight) ...[
             const SizedBox(height: 16),
             Text(
-              rows.isEmpty
+              visibleRows.isEmpty
                   ? 'No payroll rows for these filters.'
-                  : 'Showing ${rows.length} employee${rows.length == 1 ? '' : 's'}',
+                  : 'Showing ${visibleRows.length} employee${visibleRows.length == 1 ? '' : 's'}',
               style: const TextStyle(color: Color(0xFF596176), fontSize: 13),
             ),
           ],
@@ -1810,20 +1826,23 @@ class _PayrollFilters extends StatelessWidget {
     required this.employee,
     required this.employees,
     required this.status,
+    required this.search,
     required this.onMonthChanged,
     required this.onEmployeeChanged,
     required this.onStatusChanged,
+    required this.onSearchChanged,
     required this.onReset,
   });
 
   final String monthKey;
   final bool compact;
   final List<_MonthOption> months;
-  final String employee, status;
+  final String employee, status, search;
   final List<String> employees;
   final ValueChanged<String?> onMonthChanged,
       onEmployeeChanged,
       onStatusChanged;
+  final ValueChanged<String> onSearchChanged;
   final VoidCallback onReset;
 
   @override
@@ -1837,6 +1856,19 @@ class _PayrollFilters extends StatelessWidget {
         if (compact) {
           return Row(
             children: [
+              SizedBox(
+                width: 250,
+                child: TextFormField(
+                  key: ValueKey('payroll-search-${search.isEmpty ? 'empty' : 'entered'}'),
+                  initialValue: search,
+                  onChanged: onSearchChanged,
+                  decoration: _compactFieldDecoration().copyWith(
+                    hintText: 'Search by name',
+                    prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
               Expanded(
                 child: Tooltip(
                   message: 'Payroll ending month',
@@ -1950,6 +1982,19 @@ class _PayrollFilters extends StatelessWidget {
           runSpacing: 14,
           crossAxisAlignment: WrapCrossAlignment.end,
           children: [
+            _FilterField(
+              label: 'Search employee',
+              width: width,
+              child: TextFormField(
+                key: ValueKey('payroll-search-wide-${search.isEmpty ? 'empty' : 'entered'}'),
+                initialValue: search,
+                onChanged: onSearchChanged,
+                decoration: _fieldDecoration().copyWith(
+                  hintText: 'Name',
+                  prefixIcon: const Icon(Icons.search_rounded),
+                ),
+              ),
+            ),
             _FilterField(
               label: 'Payroll ending month',
               width: width,

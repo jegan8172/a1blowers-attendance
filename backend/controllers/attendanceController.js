@@ -686,6 +686,29 @@ async function clockLogCalendar(req, res) {
     const end = `${month}-${String(new Date(Date.UTC(year, monthNumber, 0)).getUTCDate()).padStart(2, '0')}`;
     const overrides = await calendar.overridesForPeriod(start, end);
     const resolver = await weeklyOffTemplates.offDaysForProfileByDate(db, Number(profile.id), start, end, [0]);
+    const [requests] = await db.query(
+      `SELECT id, request_type, request_date, permission_start_time, permission_end_time,
+              correction_kind, reason, salary_mode, status, reviewed_by, reviewed_at, created_at
+       FROM attendance_permission_requests
+       WHERE employee_id = ? AND request_date >= ? AND request_date <= ?
+       ORDER BY created_at DESC`,
+      [employeeId, start, end]
+    );
+    // Payroll owns paid/unpaid and attendance-day classification.  Returning
+    // its projection here prevents the clock-log calendar from independently
+    // deriving a different status for the same employee and date.
+    const projection = await payrollController.projectionForEmployee(
+      employeeId,
+      year,
+      monthNumber,
+      policy.todayIstDate()
+    );
+    const canonicalDays = projection && projection.dayStatuses && typeof projection.dayStatuses === 'object'
+      ? projection.dayStatuses
+      : {};
+    const canonicalPaidUnits = projection && projection.paidUnitsByDate && typeof projection.paidUnitsByDate === 'object'
+      ? projection.paidUnitsByDate
+      : {};
     const days = [];
     for (let day = 1; day <= Number(end.slice(-2)); day += 1) {
       const date = `${month}-${String(day).padStart(2, '0')}`;
@@ -700,14 +723,29 @@ async function clockLogCalendar(req, res) {
       // as Absent. Admin must show the exact same effective status instead
       // of hiding it as "No record".
       else if (status === 'No record' && date < policy.todayIstDate()) status = 'Absent';
+      // Only working dates in the payroll period appear in canonicalDays, so
+      // holiday, weekly-off and future protections above remain authoritative.
+      if (canonicalDays[date]) status = canonicalDays[date];
       days.push({
         date, day, status, editable: context.editable, hasRecord: Boolean(context.record),
         checkIn: context.record ? policy.formatDisplayTime(sqlDateTime(context.record.check_in_at)) : null,
         checkOut: context.record ? policy.formatDisplayTime(sqlDateTime(context.record.check_out_at)) : null,
         adminReason: context.record && context.record.admin_override_reason || null,
+        paidUnits: Number(canonicalPaidUnits[date] || 0),
       });
     }
-    return ok(res, { employee: { id: employeeId, name: person.full_name, staffId: person.staff_id, role: person.role || null }, month, days });
+    return ok(res, {
+      employee: { id: employeeId, profileId: Number(profile.id), name: person.full_name, staffId: person.staff_id, role: person.role || null, isActive: Boolean(Number(person.is_active)) },
+      month,
+      projection,
+      days,
+      requests: requests.map((row) => ({
+        id: Number(row.id), type: String(row.request_type || '').replace(/_/g, ' '), date: sqlDate(row.request_date),
+        startTime: row.permission_start_time || null, endTime: row.permission_end_time || null,
+        correctionKind: row.correction_kind || null, reason: row.reason || null, salaryMode: row.salary_mode || null,
+        status: capitalize(row.status), reviewedBy: row.reviewed_by || null, reviewedAt: sqlDateTime(row.reviewed_at), createdAt: sqlDateTime(row.created_at)
+      }))
+    });
   } catch (error) {
     console.error('GET /attendance/clock-logs/calendar', error);
     return fail(res, 500, 'Unable to load the attendance calendar. Please try again.');

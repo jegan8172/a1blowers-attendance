@@ -1116,7 +1116,9 @@ class _EmployeeAttendance {
     int asInt(dynamic value) =>
         value is int ? value : int.tryParse('$value') ?? 0;
     return _EmployeeAttendance(
-      id: asInt(json['id'] ?? json['employeeId']),
+      // Dashboard rows carry both the HR profile id and the employee login id.
+      // Attendance endpoints are keyed by employee_users.id, not profile.id.
+      id: asInt(json['employeeUserId'] ?? json['employeeId'] ?? json['id']),
       name: (json['name'] ?? '').toString(),
       designation: (json['designation'] ?? '').toString(),
       present: asInt(json['present']),
