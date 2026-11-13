@@ -3009,10 +3009,7 @@ class _EmployeeTrackingDetailsDialogState
   );
 
   List<Widget> _routeHistoryRows() {
-    final recentPoints = _activityPoints.length > 3
-        ? _activityPoints.sublist(_activityPoints.length - 3)
-        : _activityPoints;
-    return recentPoints.map((point) {
+    return _activityPoints.map((point) {
       final isStart = point == _activityPoints.first;
       final isEnd =
           _sessionStoppedOnSelectedDate && point == _activityPoints.last;
@@ -3130,7 +3127,7 @@ class _EmployeeTrackingDetailsDialogState
 
   Widget _tabs() {
     const labels = [
-      'Latest 3 pings',
+      'All pings',
       'Waiting Popup Comments',
       'Permanent Comments',
     ];
