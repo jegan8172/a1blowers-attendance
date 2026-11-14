@@ -335,9 +335,13 @@ class _AttendanceCorrectionDrawerState extends State<_AttendanceCorrectionDrawer
                 ],
               ),
             ),
-            IconButton(onPressed: _saving ? null : () => _moveFocusDate(-1), icon: const Icon(Icons.chevron_left)),
-            OutlinedButton.icon(onPressed: _saving ? null : _pickFocusDate, icon: const Icon(Icons.calendar_month_outlined, size: 19), label: Text(DateFormat('d MMMM yyyy').format(_focusDate))),
-            IconButton(onPressed: _saving ? null : () => _moveFocusDate(1), icon: const Icon(Icons.chevron_right)),
+            _ProfileDateNavigator(
+              date: _focusDate,
+              enabled: !_saving,
+              onPrevious: () => _moveFocusDate(-1),
+              onNext: () => _moveFocusDate(1),
+              onPick: _pickFocusDate,
+            ),
           ],
         ),
       );
@@ -547,7 +551,20 @@ class _AttendanceCorrectionDrawerState extends State<_AttendanceCorrectionDrawer
         const SizedBox(width: 14),
         Expanded(child: Text(DateFormat('MMMM yyyy').format(month), style: const TextStyle(color: Color(0xFF10265C), fontSize: 17, fontWeight: FontWeight.w800))),
         _chip(status, paid ? const Color(0xFFE2F8E8) : const Color(0xFFFFEEDC), paid ? const Color(0xFF118839) : const Color(0xFFE06E00)),
-        const SizedBox(width: 22),
+        const SizedBox(width: 14),
+        OutlinedButton.icon(
+          onPressed: () => _showDayWisePayroll(item, month),
+          icon: const Icon(Icons.receipt_long_outlined, size: 17),
+          label: const Text('View day-wise payroll'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: const Color(0xFF1769E0),
+            side: const BorderSide(color: Color(0xFFBBD0FA)),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+          ),
+        ),
+        const SizedBox(width: 14),
         _historyMetric('Working', '${item['workingDays'] ?? 0}'),
         _historyMetric('Paid days', '${item['paidDays'] ?? 0}'),
         _historyMetric('LOP', '${item['lopDays'] ?? 0}', ink: const Color(0xFFD93445)),
@@ -561,6 +578,18 @@ class _AttendanceCorrectionDrawerState extends State<_AttendanceCorrectionDrawer
       ]),
     );
   }
+
+  Future<void> _showDayWisePayroll(Map<String, dynamic> item, DateTime month) => showDialog<void>(
+    context: context,
+    builder: (_) => _DayWisePayrollDialog(
+      employeeId: widget.employeeId,
+      profileId: int.tryParse('${_employee?['profileId'] ?? item['profileId'] ?? 0}') ?? 0,
+      employeeName: _employeeName,
+      staffId: _employeeStaffId,
+      month: month,
+      fallbackPayroll: item,
+    ),
+  );
 
   Widget _historyMetric(String label, String value, {Color ink = const Color(0xFF142C63)}) => SizedBox(width: 78, child: Column(children: [Text(label, style: const TextStyle(color: Color(0xFF8795B0), fontSize: 12)), const SizedBox(height: 5), Text(value, style: TextStyle(color: ink, fontSize: 19, fontWeight: FontWeight.w800))]));
   Widget _historyAmount(String label, String value) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(label, style: const TextStyle(color: Color(0xFF8190AC), fontSize: 11)), const SizedBox(height: 3), Text(value, style: const TextStyle(color: Color(0xFF142C63), fontSize: 13, fontWeight: FontWeight.w800))]);
@@ -765,6 +794,394 @@ class _AttendanceCorrectionDrawerState extends State<_AttendanceCorrectionDrawer
   );
 }
 
+class _DayWisePayrollDialog extends StatefulWidget {
+  const _DayWisePayrollDialog({
+    required this.employeeId,
+    required this.profileId,
+    required this.employeeName,
+    required this.staffId,
+    required this.month,
+    required this.fallbackPayroll,
+  });
+
+  final int employeeId;
+  final int profileId;
+  final String employeeName;
+  final String staffId;
+  final DateTime month;
+  final Map<String, dynamic> fallbackPayroll;
+
+  @override
+  State<_DayWisePayrollDialog> createState() => _DayWisePayrollDialogState();
+}
+
+class _DayWisePayrollDialogState extends State<_DayWisePayrollDialog> {
+  late Future<Map<String, dynamic>> _future;
+  late DateTime _month;
+
+  @override
+  void initState() {
+    super.initState();
+    _month = DateTime(widget.month.year, widget.month.month);
+    _future = _load();
+  }
+
+  List<DateTime> get _months {
+    final months = List<DateTime>.generate(12, (index) =>
+        DateTime(DateTime.now().year, DateTime.now().month - index));
+    if (!months.any((value) => value.year == _month.year && value.month == _month.month)) {
+      months.add(_month);
+      months.sort((a, b) => b.compareTo(a));
+    }
+    return months;
+  }
+
+  void _selectMonth(DateTime month) {
+    setState(() {
+      _month = DateTime(month.year, month.month);
+      _future = _load();
+    });
+  }
+
+  Future<Map<String, dynamic>> _load() async {
+    Map<String, dynamic>? calendar;
+    Map<String, dynamic>? ledger;
+    try {
+      calendar = await HrmsClockLogsApi.calendar(
+        employeeId: widget.employeeId,
+        month: _month,
+      );
+    } catch (_) {
+      // A saved payroll ledger remains available even if calendar refresh is
+      // temporarily unavailable.
+    }
+    if (widget.profileId > 0) {
+      try {
+        ledger = await HrmsPayrollApi.deductionHistory(
+          profileId: widget.profileId,
+          year: _month.year,
+          month: _month.month,
+        );
+      } catch (_) {
+        // The calendar projection below is the normal live-period source.
+      }
+    }
+    return {'calendar': calendar, 'ledger': ledger};
+  }
+
+  num _number(dynamic value) {
+    if (value is num) return value;
+    return num.tryParse('$value'.replaceAll(RegExp(r'[^0-9.-]'), '')) ?? 0;
+  }
+
+  String _money(dynamic value) => '₹${_number(value).toStringAsFixed(0)}';
+
+  String _units(dynamic value) {
+    final units = _number(value);
+    return units == units.roundToDouble() ? units.toInt().toString() : units.toStringAsFixed(1);
+  }
+
+  (Color, Color) _statusStyle(String status) {
+    switch (status.toLowerCase()) {
+      case 'present':
+        return (const Color(0xFFDDF6EA), const Color(0xFF078A48));
+      case 'late':
+      case 'early exit':
+        return (const Color(0xFFFFEDD9), const Color(0xFFE16E00));
+      case 'absent':
+        return (const Color(0xFFFFE6E8), const Color(0xFFD93445));
+      case 'on leave':
+      case 'half leave':
+        return (const Color(0xFFF0E5FF), const Color(0xFF7B3FBE));
+      default:
+        return (const Color(0xFFEDF0F5), const Color(0xFF657080));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Dialog(
+        backgroundColor: const Color(0xFFF7F9FE),
+        surfaceTintColor: const Color(0xFFF7F9FE),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 42, vertical: 34),
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1080, maxHeight: 720),
+          child: FutureBuilder<Map<String, dynamic>>(
+            future: _future,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const SizedBox(height: 360, child: Center(child: CircularProgressIndicator()));
+              }
+              if (snapshot.hasError) {
+                return SizedBox(
+                  height: 260,
+                  child: Center(
+                    child: TextButton.icon(
+                      onPressed: () => setState(() => _future = _load()),
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Could not load day-wise payroll. Retry'),
+                    ),
+                  ),
+                );
+              }
+              final data = snapshot.data ?? const <String, dynamic>{};
+              final calendar = data['calendar'];
+              final calendarProjection = calendar is Map && calendar['projection'] is Map
+                  ? Map<String, dynamic>.from(calendar['projection'] as Map)
+                  : const <String, dynamic>{};
+              final ledger = data['ledger'];
+              final ledgerSummary = ledger is Map && ledger['summary'] is Map
+                  ? Map<String, dynamic>.from(ledger['summary'] as Map)
+                  : const <String, dynamic>{};
+              final ledgerOverview = ledger is Map && ledger['overview'] is Map
+                  ? Map<String, dynamic>.from(ledger['overview'] as Map)
+                  : const <String, dynamic>{};
+              final projection = calendarProjection.isNotEmpty
+                  ? calendarProjection
+                  : {...widget.fallbackPayroll, ...ledgerOverview, ...ledgerSummary};
+              final calendarRows = (calendarProjection['dailyEntries'] as List? ?? const [])
+                  .whereType<Map>()
+                  .map((entry) => Map<String, dynamic>.from(entry))
+                  .toList();
+              final ledgerRows = (ledger is Map ? ledger['items'] : null) as List? ?? const [];
+              final rows = calendarRows.isNotEmpty
+                  ? calendarRows
+                  : ledgerRows.whereType<Map>().map((entry) {
+                      final item = Map<String, dynamic>.from(entry);
+                      return <String, dynamic>{
+                        'date': item['attendance_date'],
+                        'status': item['attendance_status'],
+                        'paidUnits': item['paid_units'],
+                        'lopUnits': item['lop_units'],
+                        'dailySalary': item['daily_salary'],
+                        'absentAmount': item['absent_amount'],
+                        'timeDeduction': item['time_deduction'] ?? item['late_deduction'],
+                        'lateMinutes': item['late_minutes'],
+                        'earlyExitMinutes': item['early_exit_minutes'],
+                        'totalDeduction': item['total_deduction'],
+                        'presentAmount': item['present_amount'],
+                        'updatedSalary': item['updated_salary'],
+                        'checkIn': item['check_in_at'],
+                        'checkOut': item['check_out_at'],
+                      };
+                    }).toList();
+              rows.sort((left, right) => '${right['date']}'.compareTo('${left['date']}'));
+              return _content(projection, rows);
+            },
+          ),
+        ),
+      );
+
+  Widget _content(Map<String, dynamic> payroll, List<Map<String, dynamic>> rows) {
+    final companyHours = _companyHours(payroll);
+    return ColoredBox(
+      color: Colors.white,
+      child: Column(children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(28, 26, 24, 18),
+          child: Row(children: [
+            Text('${widget.employeeName} — Payroll history',
+                style: const TextStyle(color: Color(0xFF10265C), fontSize: 25, fontWeight: FontWeight.w800)),
+            const SizedBox(width: 18),
+            _headerFact('Total salary', _money(payroll['monthlySalary'] ?? payroll['salary'])),
+            if (companyHours != null) ...[
+              const SizedBox(width: 10),
+              _headerFact('Company hours', companyHours),
+            ],
+            const SizedBox(width: 10),
+            _headerFact('Working days', _units(payroll['workingDays'])),
+            const Spacer(),
+            IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close, color: Color(0xFF657080)), tooltip: 'Close'),
+          ]),
+        ),
+        const Divider(height: 1, color: _line),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(28, 14, 28, 16),
+          child: Row(children: [
+            Expanded(
+              child: InputDecorator(
+                decoration: const InputDecoration(labelText: 'Payroll month', border: OutlineInputBorder()),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<DateTime>(
+                    isExpanded: true,
+                    value: _month,
+                    icon: const Icon(Icons.arrow_drop_down, color: Color(0xFF657080)),
+                    items: _months.map((month) => DropdownMenuItem(value: month, child: Text(DateFormat('MMMM yyyy').format(month), style: const TextStyle(color: Color(0xFF10265C), fontWeight: FontWeight.w600)))).toList(),
+                    onChanged: (month) { if (month != null) _selectMonth(month); },
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 16),
+            OutlinedButton.icon(
+              onPressed: () => _selectMonth(_month),
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Refresh payroll'),
+              style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFF17336B), side: const BorderSide(color: Color(0xFFD7E2F4)), padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16)),
+            ),
+          ]),
+        ),
+        const Divider(height: 1, color: _line),
+        Expanded(
+          child: rows.isEmpty
+              ? const Center(child: Text('No payroll days are available for this period.', style: TextStyle(color: Color(0xFF7285AC))))
+              : Scrollbar(
+                  thumbVisibility: true,
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(28, 18, 28, 12),
+                    child: Column(children: [_tableHeader(), ...rows.map(_row)]),
+                  ),
+                ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(28, 0, 28, 16),
+          child: Align(alignment: Alignment.centerRight, child: TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))),
+        ),
+      ]),
+    );
+  }
+
+  Widget _headerFact(String label, String value) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    decoration: BoxDecoration(color: const Color(0xFFF5F8FE), border: Border.all(color: const Color(0xFFD7E2F4)), borderRadius: BorderRadius.circular(9)),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label, style: const TextStyle(color: Color(0xFF7183A9), fontSize: 11, fontWeight: FontWeight.w700)),
+      const SizedBox(height: 3),
+      Text(value, style: const TextStyle(color: Color(0xFF10265C), fontSize: 14, fontWeight: FontWeight.w800)),
+    ]),
+  );
+
+  String? _companyHours(Map<String, dynamic> payroll) {
+    final start = '${payroll['shiftStart'] ?? ''}';
+    final end = '${payroll['shiftEnd'] ?? ''}';
+    final minutes = _number(payroll['shiftMinutes']);
+    if (start.isEmpty || end.isEmpty || minutes <= 0) return null;
+    final hours = minutes / 60;
+    return '${_singleTime('2000-01-01 $start')} – ${_singleTime('2000-01-01 $end')} (${hours == hours.roundToDouble() ? hours.toInt() : hours.toStringAsFixed(1)}h)';
+  }
+
+  Widget _summaryMetric(String label, String value, {Color ink = const Color(0xFF10265C)}) => Expanded(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: const BoxDecoration(border: Border(right: BorderSide(color: Color(0xFFE3EAF6)))),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(label, style: const TextStyle(color: Color(0xFF8190AC), fontSize: 12)),
+            const SizedBox(height: 6),
+            Text(value, style: TextStyle(color: ink, fontSize: 18, fontWeight: FontWeight.w800)),
+          ]),
+        ),
+      );
+
+  Widget _tableHeader() => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
+        decoration: BoxDecoration(color: const Color(0xFFF5F8FE), borderRadius: BorderRadius.circular(8)),
+        child: const Row(children: [
+          Expanded(flex: 11, child: _PayrollColumnHeader('Date')),
+          Expanded(flex: 9, child: _PayrollColumnHeader('Salary')),
+          Expanded(flex: 9, child: _PayrollColumnHeader('Check in')),
+          Expanded(flex: 9, child: _PayrollColumnHeader('Check out')),
+          Expanded(flex: 9, child: _PayrollColumnHeader('Status')),
+          Expanded(flex: 14, child: _PayrollColumnHeader('Late deduction time')),
+          Expanded(flex: 11, child: _PayrollColumnHeader('Late deduction')),
+          Expanded(flex: 11, child: _PayrollColumnHeader('Absent amount')),
+          Expanded(flex: 12, child: _PayrollColumnHeader('Total deduction')),
+          Expanded(flex: 11, child: _PayrollColumnHeader('Present amount')),
+        ]),
+      );
+
+  Widget _row(Map<String, dynamic> row) {
+    final date = DateTime.tryParse('${row['date']}');
+    final status = '${row['status'] ?? '—'}';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 15),
+      decoration: const BoxDecoration(color: Colors.white, border: Border(bottom: BorderSide(color: Color(0xFFDCE5F4)))),
+      child: Row(children: [
+        Expanded(flex: 11, child: _PayrollColumnValue(date == null ? '—' : DateFormat('yyyy-MM-dd').format(date), bold: true)),
+        Expanded(flex: 9, child: _PayrollColumnValue(_money(row['dailySalary']), bold: true)),
+        Expanded(flex: 9, child: _PayrollColumnValue(_singleTime(row['checkIn']))),
+        Expanded(flex: 9, child: _PayrollColumnValue(_singleTime(row['checkOut']))),
+        Expanded(flex: 9, child: _PayrollColumnValue(status, bold: true)),
+        Expanded(flex: 14, child: _PayrollColumnValue(_lateTime(row))),
+        Expanded(flex: 11, child: _PayrollColumnValue(_money(row['timeDeduction']), color: const Color(0xFFE16E00), bold: true)),
+        Expanded(flex: 11, child: _PayrollColumnValue(_money(row['absentAmount']), color: const Color(0xFFD93445), bold: true)),
+        Expanded(flex: 12, child: _PayrollColumnValue(_money(row['totalDeduction']), bold: true)),
+        Expanded(flex: 11, child: _PayrollColumnValue(_money(row['presentAmount']), color: const Color(0xFF078A48), bold: true)),
+      ]),
+    );
+  }
+
+  String _lateTime(Map<String, dynamic> row) {
+    final minutes = _number(row['lateMinutes']) + _number(row['earlyExitMinutes']);
+    return minutes <= 0 ? '—' : '${_units(minutes)} min';
+  }
+
+  String _singleTime(dynamic raw) {
+    final parsed = DateTime.tryParse('${raw ?? ''}');
+    return parsed == null ? '—' : DateFormat('h:mm a').format(parsed);
+  }
+
+  String _clockTime(dynamic checkIn, dynamic checkOut) {
+    String value(dynamic raw) {
+      final parsed = DateTime.tryParse('${raw ?? ''}');
+      return parsed == null ? '—' : DateFormat('h:mm a').format(parsed);
+    }
+    final start = value(checkIn);
+    final end = value(checkOut);
+    return start == '—' && end == '—' ? '—' : '$start – $end';
+  }
+}
+
+class _PayrollTableStyle {
+  static const header = TextStyle(color: Color(0xFF7183A9), fontSize: 12, fontWeight: FontWeight.w800);
+}
+
+/// A flexible table cell for the payroll dialog.  The dialog deliberately
+/// keeps every column inside its available width; long labels are shortened
+/// instead of introducing a horizontal scrollbar.
+class _PayrollColumnHeader extends StatelessWidget {
+  const _PayrollColumnHeader(this.value);
+
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: _PayrollTableStyle.header,
+        ),
+      );
+}
+
+class _PayrollColumnValue extends StatelessWidget {
+  const _PayrollColumnValue(
+    this.value, {
+    this.color = const Color(0xFF203967),
+    this.bold = false,
+  });
+
+  final String value;
+  final Color color;
+  final bool bold;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: color,
+            fontWeight: bold ? FontWeight.w700 : FontWeight.w500,
+          ),
+        ),
+      );
+}
+
 class _OverviewTab extends StatelessWidget {
   const _OverviewTab({required this.icon, required this.label, this.active = false, required this.onTap});
   final IconData icon;
@@ -785,6 +1202,65 @@ class _OverviewTab extends StatelessWidget {
       Text(label, style: TextStyle(color: active ? const Color(0xFF1769E0) : const Color(0xFF7B8AA6), fontSize: 16, fontWeight: active ? FontWeight.w800 : FontWeight.w500)),
       ]),
     ),
+  );
+}
+
+/// The single date navigator used by the shared employee overview, whether
+/// it was opened from Clock Logs or from the Employees page.
+class _ProfileDateNavigator extends StatelessWidget {
+  const _ProfileDateNavigator({
+    required this.date,
+    required this.enabled,
+    required this.onPrevious,
+    required this.onNext,
+    required this.onPick,
+  });
+
+  final DateTime date;
+  final bool enabled;
+  final VoidCallback onPrevious;
+  final VoidCallback onNext;
+  final VoidCallback onPick;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      IconButton(
+        tooltip: 'Previous day',
+        onPressed: enabled ? onPrevious : null,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints.tightFor(width: 30, height: 38),
+        icon: const Icon(Icons.chevron_left, size: 25),
+      ),
+      const SizedBox(width: 6),
+      SizedBox(
+        width: 210,
+        height: 38,
+        child: OutlinedButton.icon(
+          onPressed: enabled ? onPick : null,
+          icon: const Icon(Icons.calendar_month_outlined, size: 18),
+          label: Text(DateFormat('d MMMM yyyy').format(date)),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: const Color(0xFF233B73),
+            side: const BorderSide(color: Color(0xFFD8E1F0)),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(11),
+            ),
+          ),
+        ),
+      ),
+      const SizedBox(width: 6),
+      IconButton(
+        tooltip: 'Next day',
+        onPressed: enabled ? onNext : null,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints.tightFor(width: 30, height: 38),
+        icon: const Icon(Icons.chevron_right, size: 25),
+      ),
+    ],
   );
 }
 

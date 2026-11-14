@@ -1,6 +1,4 @@
 const db = require('../config/db');
-const weeklyOffTemplates = require('../lib/weeklyOffTemplates');
-const calendarWorkingDays = require('../lib/calendarWorkingDays');
 const payrollController = require('./hrmsPayrollController');
 
 const ok = (res, data, message) => res.json({ success: true, message: message || 'OK', data });
@@ -45,18 +43,6 @@ function requireAdmin(req, res, next) {
   return next();
 }
 
-function _countWorkingDays(start, end) {
-  let total = 0;
-  const d = new Date(start + 'T00:00:00Z');
-  const endMs = new Date(end + 'T00:00:00Z').getTime();
-  while (d.getTime() <= endMs) {
-    const dow = d.getUTCDay();
-    if (dow !== 0) total += 1; // Sunday off by default
-    d.setUTCDate(d.getUTCDate() + 1);
-  }
-  return total;
-}
-function _ymd(date) { return date.toISOString().slice(0, 10); }
 function _formatMoney(n) { return '₹' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 }); }
 
 async function summary(req, res) {
@@ -182,9 +168,6 @@ async function myHistory(req, res) {
     const fallback = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
     const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(raw) ? raw : fallback;
     const [year, monthNumber] = month.split('-').map(Number);
-    const start = `${month}-01`;
-    const end = _ymd(new Date(Date.UTC(year, monthNumber, 0)));
-    const cutoff = month === fallback && _ymd(now) < end ? _ymd(now) : end;
     const [[profile]] = await db.query('SELECT id, monthly_salary FROM hrms_employee_profiles WHERE employee_user_id = ? LIMIT 1', [req.user.id]);
     if (!profile) return fail(res, 404, 'Employee profile not found');
     await payrollController.refreshUnpaidForEmployee(req.user.id, `${month}-01`);
@@ -193,8 +176,7 @@ async function myHistory(req, res) {
       WHERE p.profile_id = ? AND p.pay_year = ? AND p.pay_month = ?
       ORDER BY p.id DESC LIMIT 1`, [profile.id, year, monthNumber]);
     const [dailySnapshot] = await db.query(`SELECT DATE_FORMAT(attendance_date, '%Y-%m-%d') AS date,
-      daily_salary AS salary, CASE WHEN attendance_status IN ('Present', 'Late', 'On Leave') THEN 1
-        WHEN attendance_status = 'Half Leave' THEN 0.5 ELSE 0 END AS working,
+      daily_salary AS salary, paid_units AS working, paid_units, lop_units,
       DATE_FORMAT(check_in_at, '%Y-%m-%d %H:%i:%s') AS check_in,
       DATE_FORMAT(check_out_at, '%Y-%m-%d %H:%i:%s') AS check_out,
       attendance_status AS status,
@@ -207,44 +189,29 @@ async function myHistory(req, res) {
     if (dailySnapshot.length) {
       return ok(res, { month, summary: snapshotPayroll, items: dailySnapshot });
     }
+    // The saved daily ledger is normally created by refreshUnpaidForEmployee
+    // above. If a legacy period has no saved rows, project it through the
+    // payroll owner rather than rebuilding attendance/payroll math here.
     const projection = await payrollController.projectionForEmployee(req.user.id, year, monthNumber);
-    await weeklyOffTemplates.ensureWeeklyOffTemplateTables(db);
-    const weeklyResolver = await weeklyOffTemplates.offDaysForProfileByDate(db, profile.id, start, end, [0]);
-    const calendarOverrides = await calendarWorkingDays.overridesForPeriod(start, end);
-    const [[comp]] = await db.query(`SELECT monthly_salary FROM hrms_employee_compensation
-      WHERE employee_user_id = ? AND effective_from <= ? ORDER BY effective_from DESC, id DESC LIMIT 1`, [req.user.id, end]);
-    const monthlySalary = Number((comp && comp.monthly_salary) || profile.monthly_salary || 0);
-    let workingDaysCount = 0;
-    for (let d = new Date(`${start}T00:00:00Z`); d.toISOString().slice(0, 10) <= end; d.setUTCDate(d.getUTCDate() + 1)) {
-      if (calendarWorkingDays.isEmployeeWorkingDay(_ymd(d), weeklyResolver, calendarOverrides)) workingDaysCount++;
-    }
-    const workingDays = Math.max(1, workingDaysCount);
-    const dailySalary = monthlySalary / workingDays;
-    const [[payroll]] = await db.query(`SELECT p.* FROM hrms_payroll_items p
-      WHERE p.employee_user_id = ? AND p.pay_year = ? AND p.pay_month = ?
-      ORDER BY p.id DESC LIMIT 1`, [req.user.id, year, monthNumber]);
-    const [attendance] = await db.query(`SELECT DATE_FORMAT(attendance_date, '%Y-%m-%d') AS day,
-      check_in_at, check_out_at, is_late, attendance_status
-      FROM attendance_records WHERE employee_id = ? AND attendance_date BETWEEN ? AND ?`, [req.user.id, start, cutoff]);
-    const [deductions] = await db.query(`SELECT DATE_FORMAT(attendance_date, '%Y-%m-%d') AS day,
-      deduction_type, late_minutes, amount FROM hrms_payroll_deduction_entries
-      WHERE employee_user_id = ? AND pay_year = ? AND pay_month = ?`, [req.user.id, year, monthNumber]);
-    const byDay = new Map(attendance.map((r) => [String(r.day), r]));
-    const dedByDay = new Map();
-    deductions.forEach((d) => { const key = String(d.day); const current = dedByDay.get(key) || { late: 0, absent: 0 }; if (d.deduction_type === 'late') current.late += Number(d.amount || 0); else current.absent += Number(d.amount || 0); dedByDay.set(key, current); });
-    const rows = [];
-    for (let d = new Date(`${start}T00:00:00Z`); d.toISOString().slice(0, 10) <= cutoff; d.setUTCDate(d.getUTCDate() + 1)) {
-      const day = _ymd(d); const a = byDay.get(day); const saved = dedByDay.get(day) || { late: 0, absent: 0 };
-      if (!calendarWorkingDays.isEmployeeWorkingDay(day, weeklyResolver, calendarOverrides)) continue;
-      const present = Boolean(a && a.check_in_at); const late = present && (Boolean(a.is_late) || String(a.attendance_status || '').toLowerCase() === 'late');
-      const status = late ? 'Late' : present ? 'Present' : 'Absent';
-      const lateDeduction = late ? saved.late : 0;
-      const absentDeduction = status === 'Absent' ? (saved.absent || dailySalary) : 0;
-      rows.push({ date: day, salary: dailySalary, working: present ? 1 : 0, check_in: a && a.check_in_at, check_out: a && a.check_out_at, status, late_deduction: lateDeduction, absent_deduction: absentDeduction, total_deduction: lateDeduction + absentDeduction });
-    }
-    let balance = 0;
-    rows.forEach((r) => { if (r.status === 'Present') balance += r.salary; else if (r.status === 'Late') balance += r.salary - r.late_deduction; r.updated_salary = balance; });
-    rows.reverse();
+    const items = (projection && Array.isArray(projection.dailyEntries) ? projection.dailyEntries : [])
+      .map((entry) => ({
+        date: entry.date,
+        salary: Number(entry.dailySalary || 0),
+        working: Number(entry.paidUnits || 0),
+        paid_units: Number(entry.paidUnits || 0),
+        lop_units: Number(entry.lopUnits || 0),
+        check_in: entry.checkIn || null,
+        check_out: entry.checkOut || null,
+        status: entry.status || '—',
+        late_deduction: Number(entry.timeDeduction || 0),
+        late_minutes: Number(entry.lateMinutes || 0),
+        early_exit_minutes: Number(entry.earlyExitMinutes || 0),
+        early_exit_deduction: Number(entry.earlyExitDeduction || 0),
+        absent_deduction: Number(entry.absentAmount || 0),
+        total_deduction: Number(entry.totalDeduction || 0),
+        present_amount: Number(entry.presentAmount || 0),
+        updated_salary: Number(entry.updatedSalary || 0),
+      })).sort((a, b) => String(b.date).localeCompare(String(a.date)));
     const sharedSummary = projection
       ? {
           monthly_salary: Number(projection.monthlySalary || 0),
@@ -257,8 +224,8 @@ async function myHistory(req, res) {
           net_pay: Number(projection.netPay || 0),
           status: String(projection.status || 'Pending').toLowerCase(),
         }
-      : { monthly_salary: monthlySalary, working_days: workingDays, net_pay: balance };
-    return ok(res, { month, summary: payroll || sharedSummary, items: rows });
+      : { monthly_salary: Number(profile.monthly_salary || 0), working_days: 0, net_pay: 0 };
+    return ok(res, { month, summary: snapshotPayroll || sharedSummary, items });
   } catch (error) { return fail(res, 500, error.message); }
 }
 

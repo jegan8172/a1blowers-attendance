@@ -965,7 +965,7 @@ class EmployeeProfileMenu extends StatelessWidget {
     },
     itemBuilder: (_) => [
       PopupMenuItem<String>(
-        enabled: false,
+        value: 'profile',
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

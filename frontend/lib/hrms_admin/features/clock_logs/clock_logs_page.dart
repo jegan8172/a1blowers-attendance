@@ -2150,11 +2150,29 @@ class _ClockWorkspaceState extends State<_ClockWorkspace> {
                                                     (entry) {
                                                       final log = entry.value;
                                                       return DataRow(
-                                                      onSelectChanged: (_) =>
-                                                          _openAttendanceCorrection(log),
                                                       cells: [
                                                         DataCell(Text('${current * perPage + entry.key + 1}')),
-                                                        DataCell(Text('${log['employeeName'] ?? '-'}')),
+                                                        DataCell(
+                                                          Tooltip(
+                                                            message: 'Open employee overview',
+                                                            child: InkWell(
+                                                              onTap: () => _openAttendanceCorrection(log),
+                                                              borderRadius: BorderRadius.circular(4),
+                                                              child: Padding(
+                                                                padding: const EdgeInsets.symmetric(vertical: 4),
+                                                                child: Text(
+                                                                  '${log['employeeName'] ?? '-'}',
+                                                                  style: const TextStyle(
+                                                                    color: _blue,
+                                                                    fontWeight: FontWeight.w700,
+                                                                    decoration: TextDecoration.underline,
+                                                                    decorationColor: _blue,
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ),
                                                         DataCell(
                                                           Text(
                                                             '${log['role'] ?? '-'}',

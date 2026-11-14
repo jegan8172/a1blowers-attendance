@@ -82,6 +82,8 @@ async function ensureDailyPayrollStorage() {
     check_out_at DATETIME NULL,
     attendance_status VARCHAR(32) NOT NULL,
     daily_salary DECIMAL(12,2) NOT NULL DEFAULT 0,
+    paid_units DECIMAL(4,2) NOT NULL DEFAULT 0,
+    lop_units DECIMAL(4,2) NOT NULL DEFAULT 0,
     late_minutes INT UNSIGNED NOT NULL DEFAULT 0,
     late_deduction DECIMAL(12,2) NOT NULL DEFAULT 0,
     early_exit_minutes INT UNSIGNED NOT NULL DEFAULT 0,
@@ -95,6 +97,8 @@ async function ensureDailyPayrollStorage() {
     KEY idx_payroll_daily_employee (employee_user_id, pay_year, pay_month)
   )`);
   for (const definition of [
+    'paid_units DECIMAL(4,2) NOT NULL DEFAULT 0 AFTER daily_salary',
+    'lop_units DECIMAL(4,2) NOT NULL DEFAULT 0 AFTER paid_units',
     'early_exit_minutes INT UNSIGNED NOT NULL DEFAULT 0 AFTER late_deduction',
     'early_exit_deduction DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER early_exit_minutes'
   ]) {
@@ -329,10 +333,13 @@ async function computeRows(year, month, today, options) {
   const queryEnd = ymd(year, month, daysInMonth(year, month));
   const calendarOverrides = await calendar.overridesForPeriod(queryStart, queryEnd);
 
+  // The regular payroll list intentionally shows only active employees. A
+  // specifically requested employee, however, is used by the employee
+  // overview and must retain access to the same historical/live projection
+  // even after being marked inactive.
   const profileSql = `
     SELECT p.* FROM hrms_employee_profiles p JOIN employee_users u ON u.id = p.employee_user_id
-    WHERE p.employment_status <> 'Inactive' AND u.is_active = 1
-    ${requestedProfileIds.length ? 'AND p.id IN (?)' : ''}
+    WHERE ${requestedProfileIds.length ? 'p.id IN (?)' : "p.employment_status <> 'Inactive' AND u.is_active = 1"}
     ORDER BY p.full_name ASC`;
   const [profiles] = await db.query(profileSql, requestedProfileIds.length ? [requestedProfileIds] : []);
   await weeklyOffTemplates.ensureWeeklyOffTemplateTables(db);
@@ -664,11 +671,14 @@ async function computeRows(year, month, today, options) {
         checkIn: entry.record && entry.record.check_in_at ? entry.record.check_in_at : null,
         checkOut: entry.record && entry.record.check_out_at ? entry.record.check_out_at : null,
         status: entry.status,
+        paidUnits: entry.paidUnits,
+        lopUnits: entry.absentUnits,
         dailySalary: Math.round(dailyRate * 100) / 100,
         lateMinutes: entry.lateMinutes,
         lateDeduction,
         earlyExitMinutes: Number(entry.earlyExitMinutes || 0),
         earlyExitDeduction,
+        timeDeduction: Math.round((lateDeduction + earlyExitDeduction) * 100) / 100,
         absentAmount,
         totalDeduction: Math.round((lateDeduction + earlyExitDeduction + absentAmount) * 100) / 100,
         presentAmount,
@@ -683,8 +693,10 @@ async function computeRows(year, month, today, options) {
         name: String(profile.full_name || '').trim(), employeeCode: profile.employee_code,
         department: profile.department, monthlySalary: salaryNumber || null, salary: formatSalary(salaryNumber || null),
         salaryType: period.salaryType, periodStart: period.start, periodEnd: period.end, cycleOverridden: Boolean(period.overridden),
+        shiftStart: schedule.shiftStart, shiftEnd: schedule.shiftEnd, shiftMinutes,
         dailySalary: salaryNumber ? Math.round(dailyRate * 100) / 100 : null,
         workingDays, paidDays, lopDays, deductions: 0, deductionsLabel: 'Review required',
+        dailyEntries,
         netPay: 0, netPayLabel: 'Review required', status: 'Review required', paidAt: '',
         integrityError: 'Saved payroll has inconsistent ownership or missing paid salary. An audited correction is required.' };
     }
@@ -695,10 +707,12 @@ async function computeRows(year, month, today, options) {
         name: String(profile.full_name || '').trim(), employeeCode: profile.employee_code,
         department: profile.department, monthlySalary: null, salary: 'Not Set',
         salaryType: period.salaryType, periodStart: period.start, periodEnd: period.end, cycleOverridden: Boolean(period.overridden),
+        shiftStart: schedule.shiftStart, shiftEnd: schedule.shiftEnd, shiftMinutes,
         dailySalary: null,
         workingDays: workingDays, presentDays: present, lateDays: late, leaveDays: leaveDays, absentDays: absent,
         dayStatuses,
         paidUnitsByDate,
+        dailyEntries,
         paidDays: paidDays, lopDays: lopDays, deductions: 0, deductionsLabel: '–',
         lateDeductions: 0, absentDeductions: 0, netPay: 0, netPayLabel: '–',
         status: 'Salary required', paidAt: '',
@@ -713,12 +727,14 @@ async function computeRows(year, month, today, options) {
         name: String(profile.full_name || '').trim(), employeeCode: profile.employee_code,
         department: profile.department, monthlySalary: Number(saved.monthly_salary || 0), salary: formatSalary(saved.monthly_salary),
         salaryType: period.salaryType, periodStart: savedPeriodStart, periodEnd: savedPeriodEnd, cycleOverridden: Boolean(period.overridden),
+        shiftStart: schedule.shiftStart, shiftEnd: schedule.shiftEnd, shiftMinutes,
         dailySalary: Number(saved.working_days || 0) > 0
           ? Math.round((Number(saved.monthly_salary || 0) / Number(saved.working_days)) * 100) / 100
           : null,
         workingDays: Number(saved.working_days || 0), presentDays: present, lateDays: late, leaveDays: leaveDays, absentDays: absent,
         dayStatuses,
         paidUnitsByDate,
+        dailyEntries,
         paidDays: Number(saved.paid_days || 0), lopDays: Number(saved.lop_days || 0), deductions: Number(saved.deductions || 0),
         deductionsLabel: formatSalary(saved.deductions),
         lateDeductions: Number(saved.late_deductions || saved.deductions || 0),
@@ -741,6 +757,9 @@ async function computeRows(year, month, today, options) {
       periodStart: period.start,
       periodEnd: period.end,
       cycleOverridden: Boolean(period.overridden),
+      shiftStart: schedule.shiftStart,
+      shiftEnd: schedule.shiftEnd,
+      shiftMinutes,
       monthlySalary: salaryNumber || null,
       salary: formatSalary(salaryNumber),
       dailySalary: Math.round(dailyRate * 100) / 100,
@@ -922,13 +941,13 @@ async function replaceDailySnapshots(payrollItemId, item, year, month) {
       `INSERT INTO hrms_payroll_daily_entries
         (payroll_item_id, profile_id, employee_user_id, pay_year, pay_month,
          attendance_date, check_in_at, check_out_at, attendance_status,
-         daily_salary, late_minutes, late_deduction, early_exit_minutes, early_exit_deduction, absent_amount,
+         daily_salary, paid_units, lop_units, late_minutes, late_deduction, early_exit_minutes, early_exit_deduction, absent_amount,
          total_deduction, present_amount, updated_salary)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         payrollItemId, item.profileId, item.employeeUserId, year, month,
         day.date, day.checkIn, day.checkOut, day.status,
-        day.dailySalary, day.lateMinutes, day.lateDeduction, day.earlyExitMinutes, day.earlyExitDeduction, day.absentAmount,
+        day.dailySalary, day.paidUnits, day.lopUnits, day.lateMinutes, day.lateDeduction, day.earlyExitMinutes, day.earlyExitDeduction, day.absentAmount,
         day.totalDeduction, day.presentAmount, day.updatedSalary,
       ]
     );
@@ -1241,7 +1260,7 @@ async function deductionHistory(req, res) {
     // admin payroll, employee salary and the history modal in agreement.
     const [dailyRows] = await db.query(
       `SELECT DATE_FORMAT(attendance_date, '%Y-%m-%d') AS attendance_date,
-              attendance_status, late_minutes, daily_salary, late_deduction,
+              attendance_status, paid_units, lop_units, late_minutes, daily_salary, late_deduction,
               early_exit_minutes, early_exit_deduction,
               absent_amount, total_deduction, present_amount, updated_salary,
               DATE_FORMAT(check_in_at, '%Y-%m-%d %H:%i:%s') AS check_in_at,
@@ -1273,6 +1292,12 @@ async function deductionHistory(req, res) {
           const status = String(row.attendance_status || '');
           const isLate = status === 'Late' || status === 'Early Exit';
           const isAbsence = status === 'Absent' || status === 'Half Leave';
+          const dailySalary = Number(row.daily_salary || 0);
+          const timeDeduction = Number(row.late_deduction || 0) + Number(row.early_exit_deduction || 0);
+          // Units are persisted with the ledger. The UI only renders them;
+          // it never infers payroll values from attendance text or money.
+          const paidUnits = Number(row.paid_units || 0);
+          const lopUnits = Number(row.lop_units || 0);
           // Keep `amount` for older consumers, but make it describe the
           // applicable deduction for the row. Newer clients should use the
           // explicit amount fields below.
@@ -1286,7 +1311,9 @@ async function deductionHistory(req, res) {
           deduction_type: isLate ? 'late' : isAbsence ? 'absent' : status === 'In Progress' ? 'pending' : 'present',
           late_minutes: Number(row.late_minutes || 0),
           amount,
-          daily_salary: Number(row.daily_salary || 0),
+          daily_salary: dailySalary,
+          paid_units: paidUnits,
+          lop_units: lopUnits,
           updated_salary: Number(row.updated_salary || 0),
           check_in_at: row.check_in_at,
           check_out_at: row.check_out_at,
@@ -1294,7 +1321,8 @@ async function deductionHistory(req, res) {
           // Existing tables have one time-deduction column.  It shows both
           // late-arrival and early-checkout deductions without changing the
           // established column layout; raw values remain available too.
-          late_deduction: Number(row.late_deduction || 0) + Number(row.early_exit_deduction || 0),
+          late_deduction: timeDeduction,
+          time_deduction: timeDeduction,
           early_exit_minutes: Number(row.early_exit_minutes || 0),
           early_exit_deduction: Number(row.early_exit_deduction || 0),
           absent_amount: Number(row.absent_amount || 0),

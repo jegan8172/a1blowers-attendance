@@ -12,6 +12,7 @@ import 'package:printing/printing.dart';
 
 import '../../shared/widgets/admin_top_nav.dart';
 import '../../shared/theme/admin_surface_palette.dart';
+import '../clock_logs/attendance_correction_drawer.dart';
 import '../../../services/hrms_employees_api.dart';
 import '../../../services/api_config.dart';
 import '../../../services/auth_storage.dart';
@@ -528,7 +529,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
                                                   _showEmployeeDetails(
                                                     employee,
                                                   ),
-                                              onOpenDetails: _openFullEmployeeDetails,
+                                              onOpenDetails: _showEmployeeDetails,
                                               onEdit: (employee) =>
                                                   _showEmployeeForm(
                                                     employee: employee,
@@ -558,7 +559,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
                                                 },
                                                 onView: _showEmployeeDetails,
                                                 onOpenDetails:
-                                                    _openFullEmployeeDetails,
+                                                    _showEmployeeDetails,
                                                 onEdit: (employee) =>
                                                     _showEmployeeForm(
                                                       employee: employee,
@@ -1706,8 +1707,22 @@ class _EmployeesPageState extends State<EmployeesPage> {
   }
 
   Future<void> _showEmployeeDetails(_Employee employee) async {
-    // Keep the employee list full-width; details are available through
-    // the explicit View profile action.
+    if (employee.employeeUserId <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This employee is not linked to a login account.')),
+      );
+      return;
+    }
+
+    await showAttendanceCorrectionDrawer(
+      context,
+      employeeId: employee.employeeUserId,
+      employeeName: employee.name,
+      staffId: employee.id.isEmpty ? '${employee.employeeUserId}' : employee.id,
+      employeeRole: employee.designation,
+      initialMonth: DateTime.now(),
+      onChanged: _loadEmployees,
+    );
   }
 
   void _closeEmployeeDetails() {
@@ -4633,6 +4648,7 @@ class _EmployeeDetailLine extends StatelessWidget {
 class _Employee {
   const _Employee(
     this.profileId,
+    this.employeeUserId,
     this.name,
     this.id,
     this.department,
@@ -4660,6 +4676,7 @@ class _Employee {
     this.trackingTemplateName,
   );
   final int profileId;
+  final int employeeUserId;
   final String name,
       id,
       department,
@@ -4690,11 +4707,15 @@ class _Employee {
     final profileId = json['id'] is int
         ? json['id'] as int
         : int.tryParse('${json['id']}') ?? 0;
+    final employeeUserId = json['employeeUserId'] is int
+        ? json['employeeUserId'] as int
+        : int.tryParse('${json['employeeUserId']}') ?? 0;
     final code = (json['employeeCode'] ?? json['employeeId'] ?? '').toString();
     final mode = (json['workMode'] ?? 'Office').toString();
     final color = json['modeColor'];
     return _Employee(
       profileId,
+      employeeUserId,
       (json['name'] ?? '').toString(),
       code,
       (json['department'] ?? '').toString(),

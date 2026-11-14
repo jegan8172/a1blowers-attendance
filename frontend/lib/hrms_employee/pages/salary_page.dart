@@ -297,36 +297,185 @@ class _PayrollHistoryDialogState extends State<_PayrollHistoryDialog> {
 
   @override
   Widget build(BuildContext context) => Dialog(
-        insetPadding: const EdgeInsets.all(24),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 42, vertical: 28),
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1180, maxHeight: 760),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              Row(children: [
-                const Expanded(child: Text('Payroll history', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: employeeNavy))),
-                DropdownButton<String>(value: _month, items: _months.map((m) => DropdownMenuItem(value: m, child: Text(_displayMonth(m)))).toList(), onChanged: (v) { if (v == null) return; setState(() { _month = v; _future = HrmsPayslipApi.history(v); }); }),
-                const SizedBox(width: 12), IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
-              ]),
-              const SizedBox(height: 16),
-              Expanded(child: FutureBuilder<Map<String, dynamic>>(future: _future, builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-                if (snapshot.hasError) return Center(child: Text('Unable to load payroll history: ${snapshot.error}', style: const TextStyle(color: employeeMuted)));
-                final rawItems = snapshot.data?['items'];
-                final items = rawItems is List
-                    ? rawItems.whereType<Map>().map((row) => Map<String, dynamic>.from(row)).toList()
-                    : <Map<String, dynamic>>[];
-                if (items.isEmpty) return const Center(child: Text('No payroll or attendance records for this month.', style: TextStyle(color: employeeMuted)));
-                return Scrollbar(child: SingleChildScrollView(child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: DataTable(columns: const [
-                  DataColumn(label: Text('Date')), DataColumn(label: Text('Salary')), DataColumn(label: Text('Working')), DataColumn(label: Text('Check-in')), DataColumn(label: Text('Check-out')), DataColumn(label: Text('Status')), DataColumn(label: Text('Late deduction')), DataColumn(label: Text('Absent/LOP')), DataColumn(label: Text('Total deduction')), DataColumn(label: Text('Updated salary')),
-                ], rows: items.map((r) => DataRow(cells: [
-                  DataCell(Text('${r['date'] ?? '-'}')), DataCell(Text(_money(r['salary']))), DataCell(Text('${r['working'] ?? 0}')), DataCell(Text(_payrollTime(r['check_in']))), DataCell(Text(_payrollTime(r['check_out']))), DataCell(Text('${r['status'] ?? '-'}')), DataCell(Text(_money(r['late_deduction']))), DataCell(Text(_money(r['absent_deduction']))), DataCell(Text(_money(r['total_deduction']))), DataCell(Text(_money(r['updated_salary']))),
-                ])).toList()))));
-              })),
-            ]),
+          constraints: const BoxConstraints(maxWidth: 1750, maxHeight: 820),
+          child: FutureBuilder<Map<String, dynamic>>(
+            future: _future,
+            builder: (context, snapshot) {
+              final payload = snapshot.data ?? const <String, dynamic>{};
+              final summary = _dataMap(payload['summary']);
+              final rawItems = payload['items'];
+              final items = rawItems is List
+                  ? rawItems.whereType<Map>().map((row) => Map<String, dynamic>.from(row)).toList()
+                  : <Map<String, dynamic>>[];
+              return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(30, 24, 18, 18),
+                  child: Row(children: [
+                    const Expanded(child: Text('Payroll history', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: employeeNavy))),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 13),
+                      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: employeeLine))),
+                      child: DropdownButtonHideUnderline(child: DropdownButton<String>(
+                        value: _month,
+                        icon: const Icon(Icons.arrow_drop_down_rounded, color: employeeMuted),
+                        items: _months.map((m) => DropdownMenuItem(value: m, child: Text(_displayMonth(m), style: const TextStyle(color: employeeNavy, fontWeight: FontWeight.w600)))).toList(),
+                        onChanged: (v) { if (v == null) return; setState(() { _month = v; _future = HrmsPayslipApi.history(v); }); },
+                      )),
+                    ),
+                    const SizedBox(width: 12),
+                    IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close_rounded, color: employeeMuted, size: 28)),
+                  ]),
+                ),
+                Container(height: 1, color: employeeLine),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 16),
+                  child: Wrap(spacing: 10, runSpacing: 10, children: [
+                    _PayrollHeaderChip(label: 'Total salary', value: _ledgerMoney(summary['monthly_salary'])),
+                    _PayrollHeaderChip(label: 'Working days', value: '${_amount(summary['working_days']).toStringAsFixed(0)}'),
+                    _PayrollHeaderChip(label: 'Paid days', value: '${_amount(summary['paid_days']).toStringAsFixed(1).replaceFirst(RegExp(r'\.0$'), '')}'),
+                    _PayrollHeaderChip(label: 'LOP', value: '${_amount(summary['lop_days']).toStringAsFixed(1).replaceFirst(RegExp(r'\.0$'), '')}', valueColor: const Color(0xFFD93445)),
+                    _PayrollHeaderChip(label: 'Net pay', value: _ledgerMoney(summary['net_pay']), valueColor: employeeBlue),
+                  ]),
+                ),
+                Container(height: 1, color: employeeLine),
+                Expanded(child: Builder(builder: (context) {
+                  if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+                  if (snapshot.hasError) return Center(child: Padding(padding: const EdgeInsets.all(30), child: Text('Unable to load payroll history.', style: TextStyle(color: employeeMuted))));
+                  if (items.isEmpty) return const Center(child: Text('No payroll days are available for this period.', style: TextStyle(color: employeeMuted)));
+                  return _PayrollLedgerTable(items: items);
+                })),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(22, 8, 30, 18),
+                  child: Align(alignment: Alignment.centerRight, child: TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))),
+                ),
+              ]);
+            },
           ),
         ),
       );
+}
+
+String _ledgerMoney(dynamic value) {
+  final amount = _amount(value);
+  return amount == amount.roundToDouble() ? '₹${amount.toStringAsFixed(0)}' : '₹${amount.toStringAsFixed(2)}';
+}
+
+class _PayrollHeaderChip extends StatelessWidget {
+  const _PayrollHeaderChip({required this.label, required this.value, this.valueColor = employeeNavy});
+  final String label;
+  final String value;
+  final Color valueColor;
+  @override
+  Widget build(BuildContext context) => Container(
+    width: 138,
+    padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+    decoration: BoxDecoration(color: const Color(0xFFF4F7FD), border: Border.all(color: employeeLine), borderRadius: BorderRadius.circular(10)),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label, style: const TextStyle(color: employeeMuted, fontSize: 11)),
+      const SizedBox(height: 3),
+      Text(value, style: TextStyle(color: valueColor, fontWeight: FontWeight.w800, fontSize: 15)),
+    ]),
+  );
+}
+
+class _PayrollLedgerTable extends StatelessWidget {
+  const _PayrollLedgerTable({required this.items});
+  final List<Map<String, dynamic>> items;
+
+  @override
+  Widget build(BuildContext context) => Scrollbar(
+    child: SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(30, 16, 30, 0),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 1450),
+          child: Column(children: [
+            const _PayrollLedgerRow(header: true),
+            ...items.map((item) => _PayrollLedgerRow(item: item)),
+          ]),
+        ),
+      ),
+    ),
+  );
+}
+
+class _PayrollLedgerRow extends StatelessWidget {
+  const _PayrollLedgerRow({this.item, this.header = false});
+  final Map<String, dynamic>? item;
+  final bool header;
+  static const _widths = [150.0, 125.0, 112.0, 145.0, 145.0, 135.0, 170.0, 150.0, 155.0, 155.0, 150.0];
+  static const _labels = ['Date', 'Salary', 'Working', 'Check in', 'Check out', 'Status', 'Late deduction time', 'Late deduction', 'Absent / LOP', 'Total deduction', 'Present amount'];
+
+  @override
+  Widget build(BuildContext context) {
+    if (header) return Container(
+      height: 46,
+      decoration: BoxDecoration(color: const Color(0xFFF4F7FD), borderRadius: BorderRadius.circular(9)),
+      child: Row(children: List.generate(_labels.length, (i) => _PayrollLedgerCell(width: _widths[i], value: _labels[i], header: true))),
+    );
+    final row = item!;
+    final status = '${row['status'] ?? '—'}';
+    final lateMinutes = _amount(row['late_minutes']).toStringAsFixed(0);
+    return Container(
+      height: 60,
+      decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: employeeLine))),
+      child: Row(children: [
+        _PayrollLedgerCell(width: _widths[0], value: _ledgerDate(row['date'])),
+        _PayrollLedgerCell(width: _widths[1], value: _ledgerMoney(row['salary'])),
+        _PayrollLedgerCell(width: _widths[2], value: _amount(row['working']).toStringAsFixed(1).replaceFirst(RegExp(r'\.0$'), '')),
+        _PayrollLedgerCell(width: _widths[3], value: _payrollTime(row['check_in'])),
+        _PayrollLedgerCell(width: _widths[4], value: _payrollTime(row['check_out'])),
+        _PayrollLedgerCell(width: _widths[5], child: _PayrollStatus(status: status)),
+        _PayrollLedgerCell(width: _widths[6], value: lateMinutes == '0' ? '—' : '$lateMinutes min'),
+        _PayrollLedgerCell(width: _widths[7], value: _ledgerMoney(row['late_deduction']), color: const Color(0xFFE06E00)),
+        _PayrollLedgerCell(width: _widths[8], value: _ledgerMoney(row['absent_deduction']), color: const Color(0xFFD93445)),
+        _PayrollLedgerCell(width: _widths[9], value: _ledgerMoney(row['total_deduction']), color: const Color(0xFFD93445)),
+        _PayrollLedgerCell(width: _widths[10], value: _ledgerMoney(row['present_amount']), color: const Color(0xFF008944)),
+      ]),
+    );
+  }
+}
+
+class _PayrollLedgerCell extends StatelessWidget {
+  const _PayrollLedgerCell({required this.width, this.value, this.child, this.header = false, this.color = employeeNavy});
+  final double width;
+  final String? value;
+  final Widget? child;
+  final bool header;
+  final Color color;
+  @override
+  Widget build(BuildContext context) => SizedBox(width: width, child: Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 12),
+    child: Align(alignment: Alignment.centerLeft, child: child ?? Text(value ?? '—', overflow: TextOverflow.ellipsis, style: TextStyle(color: header ? employeeMuted : color, fontSize: header ? 13 : 14, fontWeight: header ? FontWeight.w700 : FontWeight.w500))),
+  ));
+}
+
+class _PayrollStatus extends StatelessWidget {
+  const _PayrollStatus({required this.status});
+  final String status;
+  @override
+  Widget build(BuildContext context) {
+    final value = status.toLowerCase();
+    final present = value.contains('present') || value.contains('late');
+    final absent = value.contains('absent') || value.contains('lop');
+    final color = present ? const Color(0xFF008944) : absent ? const Color(0xFFD93445) : employeeMuted;
+    final bg = present ? const Color(0xFFE1F8EA) : absent ? const Color(0xFFFFE8EA) : const Color(0xFFF0F3F8);
+    return Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(7)), child: Text(status, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w700)));
+  }
+}
+
+String _ledgerDate(dynamic value) {
+  final raw = '$value';
+  final date = DateTime.tryParse(raw);
+  if (date == null) return raw;
+  const shortMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  return '${date.day.toString().padLeft(2, '0')} ${shortMonths[date.month - 1]}, ${weekdays[date.weekday - 1]}';
 }
 
 String _payrollTime(dynamic value) {
