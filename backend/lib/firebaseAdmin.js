@@ -18,6 +18,10 @@ function initializeFirebaseAdmin() {
     } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
       // applicationDefault() reads the securely mounted service-account file.
       credential = admin.credential.applicationDefault();
+    } else if (process.env.FIREBASE_USE_APPLICATION_DEFAULT_CREDENTIALS === 'true') {
+      // Explicit Cloud Run / Workload Identity opt-in. No downloaded key is
+      // used; Google supplies short-lived credentials for the runtime identity.
+      credential = admin.credential.applicationDefault();
     } else {
       console.info('Firebase push disabled: no Firebase credential is configured.');
       return null;

@@ -17,13 +17,22 @@ The backend chooses credentials in this order:
 
 1. `FIREBASE_SERVICE_ACCOUNT_JSON`: the complete service-account JSON, stored only in the deployment platform's secret manager.
 2. `GOOGLE_APPLICATION_CREDENTIALS`: an absolute path to a securely mounted service-account JSON file.
-3. No credential: push is disabled safely; all chat and attendance APIs still work.
+3. `FIREBASE_USE_APPLICATION_DEFAULT_CREDENTIALS=true`: explicit Cloud Run / Workload Identity opt-in, using its runtime service account and no downloaded key.
+4. No credential: push is disabled safely; all chat and attendance APIs still work.
 
 Never commit a service-account JSON, private key, `.env`, or either environment variable's value. The repository ignores commonly named service-account files. If organization policy prevents creating private keys, use a runtime service account/Workload Identity with Application Default Credentials instead of weakening that policy.
 
 ### Cloud Run with Secret Manager
 
 Create a Secret Manager secret named `FIREBASE_SERVICE_ACCOUNT_JSON`, grant the Cloud Run runtime service account access to that secret, and expose it to the `attendance-api` container as the environment variable of the same name. Do not place the JSON into a Cloud Run command, source file, GitHub Actions log, or shell history. Redeploy after linking the secret.
+
+### Cloud Run without a private key (recommended)
+
+Set `FIREBASE_USE_APPLICATION_DEFAULT_CREDENTIALS=true` on `attendance-api`,
+then grant its runtime service account the minimum Firebase Cloud Messaging
+permissions required by your organization. Cloud Run supplies short-lived
+Application Default Credentials automatically; no secret JSON is created,
+stored, or mounted.
 
 For local development, keep the JSON outside the repository and set only one of:
 
