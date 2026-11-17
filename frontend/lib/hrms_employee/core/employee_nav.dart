@@ -8,7 +8,8 @@ enum EmployeeNavItem {
   leave('Leave', '/employee/leave'),
   extraHours('Extra Hours', '/employee/extra-hours'),
   salary('Salary', '/employee/salary'),
-  tracking('Tracking', '/employee/tracking');
+  tracking('Tracking', '/employee/tracking'),
+  chat('Chat', '/employee/chat');
 
   final String label;
   final String route;

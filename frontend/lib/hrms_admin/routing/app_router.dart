@@ -7,6 +7,7 @@ import '../features/payroll/payroll_page.dart';
 import '../features/tracking/tracking_page.dart';
 import '../features/settings/settings_page.dart';
 import '../features/settings/weekly_off_templates_page.dart';
+import '../features/chat/admin_chat_page.dart';
 
 /// Routes per HRMS_PROJECT_BLUEPRINT.md, Section 1 (Approved Admin pages).
 /// One "Approvals" route covers Leave + Extra Hours; there is no separate
@@ -23,5 +24,6 @@ class AppRouter {
     '/admin/tracking': TrackingPage.builder,
     '/admin/settings': SettingsPage.builder,
     '/admin/weekly-off-templates': WeeklyOffTemplatesPage.builder,
+    '/admin/chat': AdminChatPage.builder,
   };
 }

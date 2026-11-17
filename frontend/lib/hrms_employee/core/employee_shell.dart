@@ -248,15 +248,24 @@ class _MobileShell extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const _Logo(),
-        actions: const [
-          _BellIcon(),
-          SizedBox(width: 12),
-          CircleAvatar(
+        actions: [
+          IconButton(
+            tooltip: 'Chat',
+            icon: const Icon(Icons.chat_bubble_outline),
+            onPressed: () {
+              if (current != EmployeeNavItem.chat) {
+                Navigator.of(context).pushNamed('/employee/chat');
+              }
+            },
+          ),
+          const _BellIcon(),
+          const SizedBox(width: 12),
+          const CircleAvatar(
             radius: 16,
             backgroundColor: HrmsColors.infoBg,
             child: Icon(Icons.person, color: HrmsColors.primary, size: 18),
           ),
-          SizedBox(width: 12),
+          const SizedBox(width: 12),
         ],
       ),
       body: body,

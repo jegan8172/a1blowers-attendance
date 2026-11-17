@@ -15,14 +15,51 @@ const { createApp: createEmployeeAttendanceApp } = require('./attendance/app');
 const clockOutReminder = require('./lib/clockOutReminder');
 const { closeForgottenCheckouts } = require('./lib/endOfDayAutoClockout');
 const cron = require('node-cron');
+const http = require('http');
+const { Server } = require('socket.io');
+const jwt = require('jsonwebtoken');
+const { ensureMessagingTables } = require('./lib/ensureMessagingTables');
+const attendanceMessaging = require('./lib/attendanceMessaging');
+const messaging = require('./lib/messaging');
+const onlineUsers = new Map();
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
+const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: process.env.CORS_ORIGIN || true, credentials: true } });
+app.set('io', io);
+
+io.use((socket, next) => {
+  try {
+    const token = socket.handshake.auth && socket.handshake.auth.token || socket.handshake.headers.authorization?.replace(/^Bearer\s+/i, '');
+    socket.user = jwt.verify(token, process.env.JWT_SECRET || 'change-this-in-production');
+    next();
+  } catch (_) { next(new Error('Unauthorized socket')); }
+});
+io.on('connection', socket => {
+  const userId = Number(socket.user.id);
+  const connections = (onlineUsers.get(userId) || 0) + 1;
+  onlineUsers.set(userId, connections);
+  if (connections === 1) io.emit('chat:presence', { userId, online: true });
+  socket.join(`user:${socket.user.id}`);
+  socket.on('chat:join', async ({ conversationId }) => {
+    if (await messaging.isParticipant(db, Number(conversationId), socket.user.id)) socket.join(`conversation:${Number(conversationId)}`);
+  });
+  socket.on('disconnect', async () => {
+    const left = (onlineUsers.get(userId) || 1) - 1;
+    if (left > 0) return onlineUsers.set(userId, left);
+    onlineUsers.delete(userId);
+    const lastSeenAt = new Date();
+    try { await db.query('INSERT INTO chat_user_presence (user_id,last_seen_at) VALUES (?,?) ON DUPLICATE KEY UPDATE last_seen_at=VALUES(last_seen_at)', [userId, lastSeenAt]); } catch (error) { console.error('Chat presence update failed:', error.message); }
+    io.emit('chat:presence', { userId, online: false, lastSeenAt });
+  });
+});
 
 app.disable('x-powered-by');
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
+app.use('/uploads', express.static(require('path').join(__dirname, 'uploads')));
 
 // The only retained feature area is Attendance. Authentication and the employee
 // directory remain because attendance records are always tied to signed-in staff.
@@ -41,6 +78,7 @@ app.use('/api/hrms/payroll', require('./routes/hrmsPayroll'));
 app.use('/api/hrms/payslips', require('./routes/hrmsPayslips'));
 app.use('/api/hrms/tracking', require('./routes/hrmsTracking'));
 app.use('/api/hrms/weekly-off-templates', require('./routes/hrmsWeeklyOffTemplates'));
+app.use('/api/chat', require('./routes/chat'));
 
 app.get('/', (_req, res) => res.json({ status: 'ok', service: 'GoDigital Attendance API' }));
 app.use((_req, res) => res.status(404).json({ success: false, message: 'Route not found' }));
@@ -65,12 +103,13 @@ async function start() {
   await ensureHrmsEmployeeTables(db);
   await ensureHrmsTrackingTables(db);
   await ensureWeeklyOffTemplateTables(db);
+  await ensureMessagingTables(db);
   await payroll.ensureDailyPayrollStorage();
 
   // The API must become available as soon as its schema is ready. Payroll
   // generation can be slow on a large database, so it must not block every
   // attendance endpoint during server startup.
-  app.listen(port, () => console.log(`Attendance API running at http://localhost:${port}`));
+  server.listen(port, () => console.log(`Attendance API running at http://localhost:${port}`));
 
   // Run once on startup so a restart after midnight can catch up. The
   // scheduled job below is the normal daily trigger.
@@ -101,6 +140,10 @@ async function start() {
     clockOutReminder.processAll(db).catch((error) =>
       console.error('Clock-out reminder scheduler failed:', error.message));
   }, 60 * 1000).unref();
+  setInterval(() => {
+    attendanceMessaging.process(db, io).catch((error) => console.error('Attendance messaging scheduler failed:', error.message));
+  }, 60 * 1000).unref();
+  attendanceMessaging.process(db, io).catch((error) => console.error('Attendance messaging startup failed:', error.message));
 }
 
 start().catch((error) => {

@@ -220,6 +220,7 @@ class _DashboardTopNav extends StatelessWidget {
     ('Extra Hours', '/employee/extra-hours'),
     ('Salary', '/employee/salary'),
     ('Tracking', '/employee/tracking'),
+    ('Chat', '/employee/chat'),
   ];
 
   @override
@@ -418,7 +419,8 @@ class _Menu extends StatelessWidget {
     ('Permission', Icons.verified_user_outlined, '/employee/permission'),
     ('Extra Hours', Icons.more_time_rounded, '/employee/extra-hours'),
     ('Salary', Icons.currency_rupee_rounded, '/employee/salary'),
-    ('Tracking', Icons.location_on_outlined, '/employee/tracking')
+    ('Tracking', Icons.location_on_outlined, '/employee/tracking'),
+    ('Chat', Icons.chat_bubble_outline_rounded, '/employee/chat'),
   ];
   @override
   Widget build(BuildContext context) => Stack(children: [

@@ -124,6 +124,7 @@ class EmployeeMobileBottomNav extends StatelessWidget {
     _NavItem('/employee/extra-hours', 'Extra Hours', Icons.more_time_rounded),
     _NavItem('/employee/salary', 'Salary', Icons.currency_rupee_rounded),
     _NavItem('/employee/tracking', 'Tracking', Icons.location_on_rounded),
+    _NavItem('/employee/chat', 'Chat', Icons.chat_bubble_outline_rounded),
   ];
 
   bool get _moreActive => _moreItems.any((item) => item.route == route);
@@ -260,6 +261,7 @@ class EmployeeSidebar extends StatelessWidget {
     _NavItem('/employee/extra-hours', 'Extra Hours', Icons.more_time_rounded),
     _NavItem('/employee/salary', 'Salary', Icons.currency_rupee_rounded),
     _NavItem('/employee/tracking', 'Tracking', Icons.location_on_rounded),
+    _NavItem('/employee/chat', 'Chat', Icons.chat_bubble_outline_rounded),
   ];
 
   @override

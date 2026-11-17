@@ -8,6 +8,7 @@ enum AdminNavItem {
   approvals('Approvals', '/admin/approvals'),
   payroll('Payroll', '/admin/payroll'),
   tracking('Tracking', '/admin/tracking'),
+  chat('Chat', '/admin/chat'),
   settings('Settings', '/admin/settings');
 
   final String label;

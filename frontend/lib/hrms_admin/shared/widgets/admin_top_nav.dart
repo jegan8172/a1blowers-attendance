@@ -55,6 +55,7 @@ class AdminTopNav extends StatelessWidget {
     ('Approvals', '/admin/approvals'),
     ('Payroll', '/admin/payroll'),
     ('Tracking', '/admin/tracking'),
+    ('Chat', '/admin/chat'),
     ('Settings', '/admin/settings'),
   ];
 
@@ -597,6 +598,7 @@ class _DesktopNav extends StatelessWidget {
     '/admin/approvals' => Icons.fact_check_outlined,
     '/admin/payroll' => Icons.account_balance_wallet_outlined,
     '/admin/tracking' => Icons.location_on_outlined,
+    '/admin/chat' => Icons.chat_bubble_outline_rounded,
     _ => Icons.settings_outlined,
   };
 

@@ -16,7 +16,7 @@ class ApiConfig {
           Uri.base.host == '127.0.0.1') {
         // Use IPv4 explicitly in local web development. On this machine,
         // `localhost` resolves to a different stale service over IPv6.
-        return 'http://127.0.0.1:3001/api';
+        return 'http://127.0.0.1:3000/api';
       }
 
       return '/api';
@@ -32,7 +32,7 @@ class ApiConfig {
           (Uri.base.port != 0 && Uri.base.port != 80 && Uri.base.port != 443) ||
           Uri.base.host == 'localhost' ||
           Uri.base.host == '127.0.0.1') {
-        return 'http://127.0.0.1:3001';
+        return 'http://127.0.0.1:3000';
       }
 
       return Uri.base.origin;

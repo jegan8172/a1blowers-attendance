@@ -7,6 +7,7 @@ const clockOutReminder = require('../lib/clockOutReminder');
 const calendar = require('../lib/calendarWorkingDays');
 const weeklyOffTemplates = require('../lib/weeklyOffTemplates');
 const payrollController = require('./hrmsPayrollController');
+const messaging = require('../lib/messaging');
 
 function ok(res, data, message) {
   message = message || 'OK';
@@ -1497,7 +1498,19 @@ async function checkIn(req, res) {
     // Attendance is the input to the payroll ledger. Refreshing the unpaid
     // period here keeps admin and employee salary views in sync immediately.
     try { await payrollController.refreshUnpaidForEmployee(employeeId, date); } catch (error) { console.error('Payroll refresh after check-in failed:', error.message); }
-    return ok(res, serializeRecord(record), 'Checked in');
+    const serialized = serializeRecord(record);
+    const person = await staff.findStaffById(db, employeeId);
+    const lateMinutes = late ? Math.max(0, Math.floor((policy.timeToSeconds(String(at).slice(11)) - policy.timeToSeconds(shift.lateAfter)) / 60)) : 0;
+    const checkInBody = late
+      ? `${person && person.full_name || 'Employee'} checked in at ${String(at).slice(11, 16)} — ${lateMinutes} min late.`
+      : `${person && person.full_name || 'Employee'} checked in at ${String(at).slice(11, 16)}.`;
+    const cards = await messaging.createAttendanceSystemCards(db, {
+      employeeId, attendanceDate: date, eventType: late ? 'late_check_in' : 'check_in', eventKey: `check-in-record:${record.id}`,
+      body: checkInBody, payload: { attendanceId: record.id, checkInAt: at, isLate: late, lateMinutes }
+    });
+    const io = req.app.get('io');
+    await messaging.emitMessages(io, db, cards);
+    return ok(res, serialized, 'Checked in');
   } catch (error) {
     if (connection) await connection.rollback();
     if (error instanceof locationPolicy.LocationPolicyError) return fail(res, error.status, error.message);
@@ -1574,6 +1587,14 @@ async function checkOut(req, res) {
 
     const updated = await getRecord(employeeId, sqlDate(record.attendance_date));
     try { await payrollController.refreshUnpaidForEmployee(employeeId, sqlDate(record.attendance_date)); } catch (error) { console.error('Payroll refresh after check-out failed:', error.message); }
+    const person = await staff.findStaffById(db, employeeId);
+    const cards = await messaging.createAttendanceSystemCards(db, {
+      employeeId, attendanceDate: sqlDate(record.attendance_date), eventType: 'check_out', eventKey: `check-out-record:${record.id}`,
+      body: `${person && person.full_name || 'Employee'} checked out at ${String(at).slice(11, 16)}.`,
+      payload: { attendanceId: record.id, checkOutAt: at, workingMinutes }
+    });
+    const io = req.app.get('io');
+    await messaging.emitMessages(io, db, cards);
     return ok(res, serializeRecord(updated), 'Checked out');
   } catch (error) {
     console.error('POST /attendance/check-out', error);
@@ -2000,7 +2021,7 @@ async function reviewPermission(req, res) {
     if (status !== 'approved' && status !== 'rejected') return fail(res, 400, 'status must be approved or rejected');
     const at = policy.nowIstDateTime();
     const [[request]] = await db.query(
-      "SELECT request_type FROM attendance_permission_requests WHERE id = ? AND status = 'pending'",
+      "SELECT request_type, employee_id, request_date, permission_start_time, permission_end_time FROM attendance_permission_requests WHERE id = ? AND status = 'pending'",
       [id]
     );
     if (!request) return fail(res, 404, 'Pending request not found');
@@ -2013,6 +2034,13 @@ async function reviewPermission(req, res) {
       [status, request.request_type === 'permission' && status === 'approved' ? salaryMode : null, req.user.id, at, id]
     );
     if (!result.affectedRows) return fail(res, 404, 'Pending request not found');
+    const conversationId = await messaging.directConversation(db, request.employee_id, req.user.id);
+    const window = request.permission_start_time && request.permission_end_time
+      ? ` (${String(request.permission_start_time).slice(0, 5)}–${String(request.permission_end_time).slice(0, 5)})` : '';
+    const decision = status === 'approved' ? `approved${request.request_type === 'permission' ? ` as ${salaryMode} permission` : ''}` : 'rejected';
+    const messageId = await messaging.addMessage(db, { conversationId, kind: 'system', eventType: 'permission_decision', body: `Your ${String(request.request_type).replace(/_/g, ' ')} request for ${request.request_date} was ${decision}${window}.`, payload: { requestId: id, status, salaryMode: salaryMode || null } });
+    const io = req.app.get('io'); const message = await messaging.messageFor(db, messageId);
+    await messaging.emitMessages(io, db, [message]);
     return ok(res, { id: id, status: capitalize(status) }, 'Request updated');
   } catch (error) {
     console.error('PATCH /attendance/permissions/:id', error);
