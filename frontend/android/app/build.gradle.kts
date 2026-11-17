@@ -13,6 +13,12 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Keep ordinary builds working until the non-secret Firebase client file is
+// supplied. Production Android push requires google-services.json here.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 android {
     namespace = "com.a1blowers.attendance"
     // flutter_plugin_android_lifecycle requires Android API 36.

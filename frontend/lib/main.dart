@@ -20,6 +20,8 @@ import 'package:godigital_portal/hrms_employee/pages/chat_page.dart';
 import 'package:godigital_portal/hrms_employee/shared/field_waiting_prompt_host.dart';
 import 'package:godigital_portal/hrms_employee/shared/live_tracking_coordinator.dart';
 import 'package:godigital_portal/hrms_employee/shared/android_live_tracking_service.dart';
+import 'package:godigital_portal/services/push_notifications.dart';
+import 'package:godigital_portal/hrms_admin/features/chat/admin_chat_page.dart';
 
 final appNavigatorKey = GlobalKey<NavigatorState>();
 
@@ -28,6 +30,7 @@ Future<void> main() async {
   if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
     await AndroidLiveTrackingService.configure();
   }
+  await PushNotifications.instance.initialize(appNavigatorKey);
   runApp(const AttendanceApp());
 }
 
@@ -70,6 +73,7 @@ class AttendanceApp extends StatelessWidget {
         '/employee/tracking': (_) => const EmployeeTrackingPage(),
         '/employee/profile': (_) => const EmployeeProfilePage(),
         '/employee/chat': (_) => const EmployeeChatPage(),
+        '/admin/chat': (_) => const AdminChatPage(),
       },
       // The admin portal is a nested MaterialApp. Register its deep links in
       // the root app too, so a browser refresh or Flutter hot restart while

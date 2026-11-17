@@ -7,6 +7,12 @@ frontend/.flutter-plugins-dependencies
 .env
 backend/.env
 .env.*
+firebase-service-account.json
+service-account*.json
+*-firebase-adminsdk-*.json
+secrets/
+frontend/android/app/google-services.json
+frontend/ios/Runner/GoogleService-Info.plist
 *.log
 .idea/
 .vscode/

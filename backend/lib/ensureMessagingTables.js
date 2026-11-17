@@ -58,6 +58,8 @@ async function ensureMessagingTables(db) {
   ]) {
     try { await db.query(sql); } catch (error) { if (error.code !== 'ER_DUP_FIELDNAME') throw error; }
   }
+  // Earlier chat releases accepted Android and web tokens only.
+  await db.query("ALTER TABLE chat_push_tokens MODIFY platform ENUM('android','ios','web') NOT NULL");
   for (const statement of [
     `CREATE TABLE IF NOT EXISTS chat_message_pins (
       message_id BIGINT UNSIGNED NOT NULL, conversation_id BIGINT UNSIGNED NOT NULL,

@@ -6,7 +6,6 @@ const chat = require('../lib/messaging');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const chatPush = require('../lib/chatPush');
 
 const TEXT_LIMIT = 4000;
 function ok(res, data, message) { return res.json({ success: true, message, data }); }
@@ -146,7 +145,6 @@ async function uploadAttachment(req, res) {
     await db.query('INSERT INTO chat_attachments (message_id,storage_key,original_name,content_type,byte_size) VALUES (?,?,?,?,?)', [messageId, storageKey, file.originalname, file.mimetype, file.size]);
     const message = await chat.messageFor(db, messageId); message.attachments = [{ storage_key: storageKey, original_name: file.originalname, content_type: file.mimetype, byte_size: file.size, url: storageKey }];
     await chat.emitMessages(req.app.get('io'), db, [message]);
-    chatPush.notifyConversation(db, conversationId, req.user.id, 'New attachment', file.originalname).catch(() => {});
     return ok(res, message, 'Attachment sent');
   } catch (error) { return fail(res, 500, error.message); }
 }
@@ -159,7 +157,6 @@ async function send(req, res) {
     const id = await chat.addMessage(db, { conversationId, senderUserId: req.user.id, body });
     const message = await chat.messageFor(db, id);
     await chat.emitMessages(req.app.get('io'), db, [message]);
-    chatPush.notifyConversation(db, conversationId, req.user.id, 'New message', body).catch(() => {});
     return ok(res, message, 'Message sent');
   } catch (error) { return fail(res, 500, error.message); }
 }
@@ -187,7 +184,7 @@ async function mute(req, res) {
 async function registerPushToken(req, res) {
   try {
     const token = String(req.body && req.body.token || '').trim(); const platform = String(req.body && req.body.platform || '').toLowerCase();
-    if (!token || token.length > 512 || !['android', 'web'].includes(platform)) return fail(res, 400, 'Valid push token and platform required');
+    if (!token || token.length > 512 || !['android', 'ios', 'web'].includes(platform)) return fail(res, 400, 'Valid push token and platform required');
     await db.query('INSERT INTO chat_push_tokens (user_id,token,platform) VALUES (?,?,?) ON DUPLICATE KEY UPDATE user_id=VALUES(user_id),platform=VALUES(platform),updated_at=CURRENT_TIMESTAMP', [req.user.id, token, platform]);
     return ok(res, {}, 'Push device registered');
   } catch (error) { return fail(res, 500, error.message); }

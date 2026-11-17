@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../services/auth_storage.dart';
 import '../../services/api_config.dart';
 import '../../services/chat_api.dart';
+import '../../services/chat_navigation.dart';
 
 String _relativeTime(dynamic value) {
   if (value == null) return '';
@@ -47,8 +48,15 @@ class _ChatPageState extends State<ChatPage> {
     if (raw != null) {
       try { _myId = (jsonDecode(raw) as Map)['id'] as int?; } catch (_) {}
     }
-    try { _conversations = await ChatApi.conversations(); }
-    finally { if (mounted) setState(() => _loading = false); }
+    try {
+      _conversations = await ChatApi.conversations();
+      final pendingId = ChatNavigation.takePendingConversationId();
+      if (pendingId != null) {
+        for (final item in _conversations) {
+          if (item['id'] == pendingId) { await _select(item); break; }
+        }
+      }
+    } finally { if (mounted) setState(() => _loading = false); }
   }
 
   Future<void> _select(Map<String, dynamic> item) async {
