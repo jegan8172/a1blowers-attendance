@@ -30,6 +30,9 @@ class ChatApi {
   static Future<Map<String, dynamic>> messages(int id) async => Map<String, dynamic>.from(await _request('GET', '/conversations/$id/messages') as Map);
   static Future<List<Map<String, dynamic>>> attachments(int id) async => List<Map<String, dynamic>>.from(await _request('GET', '/conversations/$id/attachments') as List);
   static Future<void> send(int id, String body) async { await _request('POST', '/conversations/$id/messages', body: {'body': body}); }
+  static Future<void> registerPushToken(String token, String platform) async {
+    await _request('POST', '/push-tokens', body: {'token': token, 'platform': platform});
+  }
   static Future<void> read(int id, int messageId) async { await _request('POST', '/conversations/$id/read', body: {'messageId': messageId}); }
   static Future<void> mute(int id, int minutes) async { await _request('PUT', '/conversations/$id/mute', body: {'minutes': minutes}); }
   static Future<List<Map<String, dynamic>>> search(int id, String query) async => List<Map<String, dynamic>>.from(await _request('GET', '/conversations/$id/search?q=${Uri.encodeQueryComponent(query)}') as List);

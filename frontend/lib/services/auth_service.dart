@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import 'api_config.dart';
 import 'auth_storage.dart';
+import 'push_notifications.dart';
 
 class AuthService extends ChangeNotifier {
   static String get baseUrl => ApiConfig.baseUrl;
@@ -148,6 +149,7 @@ class AuthService extends ChangeNotifier {
         _error = null;
         _isLoading = false;
         notifyListeners();
+        PushNotifications.instance.registerDevice();
 
         return true;
       }

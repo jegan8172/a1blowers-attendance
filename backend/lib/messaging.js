@@ -1,6 +1,7 @@
 'use strict';
 
 const staff = require('./staffDirectory');
+const chatPush = require('./chatPush');
 
 function directKey(a, b) { return [Number(a), Number(b)].sort((x, y) => x - y).join(':'); }
 function parseJson(value) { try { return value ? JSON.parse(value) : null; } catch (_) { return null; } }
@@ -55,11 +56,23 @@ async function createAttendanceSystemCards(db, { employeeId, attendanceDate, eve
 }
 
 async function emitMessages(io, db, messages) {
-  if (!io) return;
   for (const message of messages) {
-    io.to(`conversation:${message.conversation_id}`).emit('chat:message', message);
+    if (!message) continue;
+    if (io) io.to(`conversation:${message.conversation_id}`).emit('chat:message', message);
     const [participants] = await db.query('SELECT user_id FROM chat_participants WHERE conversation_id=?', [message.conversation_id]);
-    for (const participant of participants) io.to(`user:${participant.user_id}`).emit('chat:message', message);
+    if (io) for (const participant of participants) io.to(`user:${participant.user_id}`).emit('chat:message', message);
+    const isAttendanceUpdate = message.message_kind === 'system';
+    const title = isAttendanceUpdate
+      ? 'Attendance update'
+      : message.message_kind === 'attachment' ? 'New attachment' : 'New message';
+    chatPush.notifyConversation(
+      db,
+      message.conversation_id,
+      message.sender_user_id,
+      title,
+      message.body || title,
+      isAttendanceUpdate ? 'attendance_update' : 'chat_message'
+    ).catch(() => {});
   }
 }
 
