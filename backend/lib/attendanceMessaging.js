@@ -6,6 +6,15 @@ const staff = require('./staffDirectory');
 const messaging = require('./messaging');
 
 function hhmm(value) { return String(value || '').slice(0, 5); }
+// The scheduler is periodic, so do not require it to land on one exact
+// minute.  The event key in createAttendanceSystemCards still guarantees one
+// reminder per employee and shift.
+function inCheckInReminderWindow(time, schedule) {
+  const start = hhmm(schedule.shiftStart);
+  const lateAfter = hhmm(schedule.lateAfter);
+  if (lateAfter <= start) return time === start;
+  return time >= start && time < lateAfter;
+}
 async function isWorkingDay(db, date) {
   try {
     await calendar.ensureCalendarTables();
@@ -41,7 +50,7 @@ async function process(db, io, now = new Date()) {
     const schedule = await effectiveSchedule(db, person.id, profile?.gender, date);
     const [[record]] = await db.query('SELECT id,check_in_at,check_out_at FROM attendance_records WHERE employee_id=? AND attendance_date=? LIMIT 1', [person.id, date]);
     let cards = [];
-    if (time === hhmm(schedule.shiftStart) && !record?.check_in_at) {
+    if (inCheckInReminderWindow(time, schedule) && !record?.check_in_at) {
       cards = await messaging.createAttendanceSystemCards(db, { employeeId: person.id, attendanceDate: date, eventType: 'check_in_reminder', eventKey: `check-in:${date}:${hhmm(schedule.shiftStart)}`, body: `Reminder: please check in for your shift starting at ${hhmm(schedule.shiftStart)}.`, payload: { shiftStart: schedule.shiftStart } });
     }
     if (time === hhmm(schedule.shiftEnd) && record?.check_in_at && !record?.check_out_at) {
