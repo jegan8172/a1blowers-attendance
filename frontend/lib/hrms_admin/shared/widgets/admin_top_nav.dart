@@ -5,6 +5,7 @@ import '../../../services/api_config.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:provider/provider.dart';
 
 import '../../../services/hrms_notifications_api.dart';
@@ -410,21 +411,28 @@ class AdminMobileBottomNav extends StatelessWidget {
     return SafeArea(
       top: false,
       minimum: const EdgeInsets.fromLTRB(14, 4, 14, 12),
-      child: Container(
-        height: 62,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        decoration: BoxDecoration(
-          color: const Color(0xFF081B3C),
-          borderRadius: BorderRadius.circular(34),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x33000000),
-              blurRadius: 18,
-              offset: Offset(0, 8),
-            ),
-          ],
-        ),
-        child: Row(
+      child: Listener(
+        behavior: HitTestBehavior.opaque,
+        onPointerSignal: (event) {
+          if (event is PointerScrollEvent) {
+            GestureBinding.instance.pointerSignalResolver.register(event, (_) {});
+          }
+        },
+        child: Container(
+          height: 62,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFF081B3C),
+            borderRadius: BorderRadius.circular(34),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x33000000),
+                blurRadius: 18,
+                offset: Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Row(
           children: [
             _dockItem(
               context,
@@ -464,11 +472,18 @@ class AdminMobileBottomNav extends StatelessWidget {
             ),
             _dockItem(
               context,
+              icon: Icons.chat_bubble_outline_rounded,
+              label: 'Chat',
+              route: '/admin/chat',
+            ),
+            _dockItem(
+              context,
               icon: Icons.settings_rounded,
               label: 'Settings',
               route: '/admin/settings',
             ),
           ],
+          ),
         ),
       ),
     );

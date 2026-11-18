@@ -11,6 +11,7 @@ class AdminChatPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) => const Scaffold(
         backgroundColor: Colors.transparent,
+        bottomNavigationBar: AdminMobileBottomNav(activeRoute: '/admin/chat'),
         body: Column(
           children: [
             AdminTopNav(activeRoute: '/admin/chat'),
