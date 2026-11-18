@@ -11,6 +11,10 @@ const TEXT_LIMIT = 4000;
 function ok(res, data, message) { return res.json({ success: true, message, data }); }
 function fail(res, status, message) { return res.status(status).json({ success: false, message }); }
 function asId(value) { const id = Number(value); return Number.isInteger(id) && id > 0 ? id : null; }
+function parseEventPayload(value) {
+  if (!value || typeof value === 'object') return value || null;
+  try { return JSON.parse(value); } catch (_) { return null; }
+}
 function isAdmin(req) { return String(req.user && req.user.userType).toLowerCase() === 'admin'; }
 async function roleFor(conversationId, userId) { const [[row]] = await db.query('SELECT member_role FROM chat_participants WHERE conversation_id=? AND user_id=?', [conversationId, userId]); return row && row.member_role; }
 async function canManage(conversationId, req) { return isAdmin(req) || ['owner', 'admin'].includes(await roleFor(conversationId, req.user.id)); }
@@ -77,7 +81,7 @@ async function messages(req, res) {
        WHERE m.conversation_id=?${older} ORDER BY m.id DESC LIMIT ?`, args);
     const sliced = rows.slice(0, 50).reverse().map(r => ({
       ...r,
-      event_payload: r.event_payload ? JSON.parse(r.event_payload) : null,
+      event_payload: parseEventPayload(r.event_payload),
       delivery_status: r.sender_user_id === Number(req.user.id)
         ? (Number(r.recipient_last_read_message_id) >= Number(r.id) ? 'read' : 'sent')
         : null

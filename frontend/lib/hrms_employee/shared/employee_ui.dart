@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -108,16 +109,15 @@ class EmployeeMobileBottomNav extends StatelessWidget {
   const EmployeeMobileBottomNav({super.key, required this.route});
   final String route;
 
-  static const _primaryItems = <_NavItem>[
+  // Keep every destination visible in the dock. This matches the Admin icon
+  // dock and avoids hiding chat and attendance actions behind a "More" menu.
+  static const _items = <_NavItem>[
     _NavItem('/employee/dashboard', 'Dashboard', Icons.grid_view_rounded),
     _NavItem(
       '/employee/attendance',
       'Attendance',
       Icons.calendar_month_outlined,
     ),
-  ];
-
-  static const _moreItems = <_NavItem>[
     _NavItem('/employee/clock-log', 'Clock In / Out', Icons.schedule_rounded),
     _NavItem('/employee/leave', 'Leave', Icons.description_outlined),
     _NavItem('/employee/permission', 'Permission', Icons.verified_user_outlined),
@@ -126,54 +126,6 @@ class EmployeeMobileBottomNav extends StatelessWidget {
     _NavItem('/employee/tracking', 'Tracking', Icons.location_on_rounded),
     _NavItem('/employee/chat', 'Chat', Icons.chat_bubble_outline_rounded),
   ];
-
-  bool get _moreActive => _moreItems.any((item) => item.route == route);
-
-  Future<void> _showMore(BuildContext context) => showModalBottomSheet<void>(
-    context: context,
-    showDragHandle: true,
-    backgroundColor: Colors.white,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
-    ),
-    builder: (sheetContext) => SafeArea(
-      top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('More', style: TextStyle(
-              color: employeeNavy, fontSize: 20, fontWeight: FontWeight.w800,
-            )),
-            const SizedBox(height: 12),
-            ..._moreItems.map((item) => ListTile(
-              leading: Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFE8EB),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(item.icon, color: employeeBlue),
-              ),
-              title: Text(item.label, style: const TextStyle(
-                color: employeeNavy, fontWeight: FontWeight.w700,
-              )),
-              trailing: const Icon(Icons.chevron_right_rounded, color: employeeMuted),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                if (item.route != route) {
-                  Navigator.of(context).pushReplacementNamed(item.route);
-                }
-              },
-            )),
-          ],
-        ),
-      ),
-    ),
-  );
 
   @override
   Widget build(BuildContext context) => SafeArea(
@@ -193,23 +145,36 @@ class EmployeeMobileBottomNav extends StatelessWidget {
           ),
         ],
       ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        physics: const BouncingScrollPhysics(),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [..._primaryItems, ..._moreItems]
-              .map((item) => _mobileItem(context, item))
-              .toList(),
+      child: Listener(
+        behavior: HitTestBehavior.opaque,
+        // A fixed dock must not horizontally shift when a desktop mouse wheel
+        // is over it. The page content can still scroll outside this area.
+        onPointerSignal: (event) {
+          if (event is PointerScrollEvent) {
+            GestureBinding.instance.pointerSignalResolver.register(event, (_) {});
+          }
+        },
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final diameter = (constraints.maxWidth / _items.length)
+                .clamp(34.0, 48.0)
+                .toDouble();
+            return Row(
+              children: _items
+                  .map((item) => Expanded(
+                        child: _mobileItem(context, item, diameter),
+                      ))
+                  .toList(),
+            );
+          },
         ),
       ),
     ),
   );
 
-  Widget _mobileItem(BuildContext context, _NavItem item) {
+  Widget _mobileItem(BuildContext context, _NavItem item, double diameter) {
     final active = item.route == route;
     return SizedBox(
-      width: 72,
       height: 62,
       child: Tooltip(
         message: item.label,
@@ -220,13 +185,13 @@ class EmployeeMobileBottomNav extends StatelessWidget {
           borderRadius: BorderRadius.circular(25),
           child: Center(
             child: Container(
-              width: 50,
-              height: 50,
+              width: diameter,
+              height: diameter,
               decoration: BoxDecoration(
                 color: active ? employeeBlue : Colors.transparent,
                 shape: BoxShape.circle,
               ),
-              child: Icon(item.icon, color: Colors.white, size: 22),
+              child: Icon(item.icon, color: Colors.white, size: diameter < 40 ? 18 : 21),
             ),
           ),
         ),
@@ -647,7 +612,7 @@ class _EmployeeTopNavigationState extends State<EmployeeTopNavigation> {
     builder: (context, constraints) {
       final compact = constraints.maxWidth < 1120;
       return Container(
-        height: 88,
+        height: 64,
         padding: EdgeInsets.symmetric(horizontal: compact ? 18 : 28),
         decoration: const BoxDecoration(
           color: Colors.white,
@@ -664,8 +629,8 @@ class _EmployeeTopNavigationState extends State<EmployeeTopNavigation> {
           children: [
             Image.asset(
               'assets/images/godigital_logo.png',
-              height: compact ? 50 : 60,
-              width: compact ? 145 : 185,
+              height: compact ? 42 : 48,
+              width: compact ? 132 : 164,
               fit: BoxFit.contain,
               alignment: Alignment.centerLeft,
             ),
@@ -674,25 +639,17 @@ class _EmployeeTopNavigationState extends State<EmployeeTopNavigation> {
               child: Center(
                 child: SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
-                  child: Container(
-                    padding: const EdgeInsets.all(5),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF5F7FB),
-                      borderRadius: BorderRadius.circular(32),
-                      border: Border.all(color: const Color(0xFFE7ECF4)),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: EmployeeSidebar.items
-                          .map(
-                            (item) => _TopNavigationItem(
-                              item: item,
-                              active: widget.route == item.route,
-                              compact: compact,
-                            ),
-                          )
-                          .toList(),
-                    ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: EmployeeSidebar.items
+                      .map(
+                        (item) => _TopNavigationItem(
+                          item: item,
+                          active: widget.route == item.route,
+                          compact: compact,
+                        ),
+                      )
+                      .toList(),
                   ),
                 ),
               ),
@@ -761,28 +718,38 @@ class _TopNavigationItem extends StatelessWidget {
   final bool compact;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 2),
-    child: Material(
-      color: active ? employeeBlue : Colors.transparent,
-      borderRadius: BorderRadius.circular(26),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(26),
-        onTap: active ? null : () => Navigator.pushNamed(context, item.route),
-        child: Padding(
-          padding: EdgeInsets.symmetric(
-            horizontal: compact ? 13 : 18,
-            vertical: 12,
-          ),
-          child: Text(
-            item.label,
-            style: TextStyle(
-              color: active ? Colors.white : employeeMuted,
-              fontSize: compact ? 12 : 13,
-              fontWeight: active ? FontWeight.w700 : FontWeight.w500,
-            ),
+  Widget build(BuildContext context) => InkWell(
+    onTap: active ? null : () => Navigator.pushReplacementNamed(context, item.route),
+    borderRadius: BorderRadius.circular(9),
+    child: AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      margin: const EdgeInsets.symmetric(horizontal: 3),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 8 : 11,
+        vertical: 11,
+      ),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+            color: active ? employeeBlue : Colors.transparent,
+            width: 3,
           ),
         ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(item.icon, size: 18, color: active ? employeeBlue : employeeNavy),
+          const SizedBox(width: 7),
+          Text(
+            item.label,
+            style: TextStyle(
+              color: active ? employeeBlue : employeeNavy,
+              fontSize: compact ? 12 : 14,
+              fontWeight: active ? FontWeight.w800 : FontWeight.w600,
+            ),
+          ),
+        ],
       ),
     ),
   );

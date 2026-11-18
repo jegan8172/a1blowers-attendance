@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
@@ -39,9 +40,43 @@ class _ChatPageState extends State<ChatPage> {
   bool _loading = true;
   bool _sending = false;
   bool _detailsOpen = false;
+  bool _threadLoading = false;
+  String? _threadError;
+  Timer? _refreshTimer;
+  bool _refreshInFlight = false;
 
-  @override void initState() { super.initState(); _load(); }
-  @override void dispose() { _composer.dispose(); super.dispose(); }
+  @override
+  void initState() {
+    super.initState();
+    _load();
+    // The backend stores messages, but this page does not keep a Socket.IO
+    // connection. Polling keeps both open chat windows in sync immediately.
+    _refreshTimer = Timer.periodic(const Duration(seconds: 2), (_) => _poll());
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    _composer.dispose();
+    super.dispose();
+  }
+
+  Future<void> _poll() async {
+    if (_refreshInFlight || _sending) return;
+    _refreshInFlight = true;
+    try {
+      final conversations = await ChatApi.conversations();
+      if (!mounted) return;
+      setState(() => _conversations = conversations);
+
+      final id = _conversationId;
+      if (id != null) await _refreshThread();
+    } catch (_) {
+      // A short temporary network failure should not disrupt an open chat.
+    } finally {
+      _refreshInFlight = false;
+    }
+  }
 
   Future<void> _load() async {
     final raw = await AuthStorage.getString('user_data');
@@ -61,17 +96,41 @@ class _ChatPageState extends State<ChatPage> {
 
   Future<void> _select(Map<String, dynamic> item) async {
     final id = item['id'] as int;
-    setState(() { _conversationId = id; _name = item['other_name']?.toString() ?? 'Conversation'; _messages = []; });
-    final data = await ChatApi.messages(id);
-    if (!mounted || id != _conversationId) return;
-    setState(() => _messages = List<Map<String, dynamic>>.from(data['items'] as List));
-    if (_messages.isNotEmpty) await ChatApi.read(id, _messages.last['id'] as int);
+    setState(() { _conversationId = id; _name = item['other_name']?.toString() ?? 'Conversation'; _messages = []; _threadLoading = true; _threadError = null; });
+    try {
+      final data = await ChatApi.messages(id);
+      if (!mounted || id != _conversationId) return;
+      setState(() => _messages = List<Map<String, dynamic>>.from(data['items'] as List));
+      await _markMessagesDelivered(id);
+      if (_messages.isNotEmpty) await ChatApi.read(id, _messages.last['id'] as int);
+    } catch (error) {
+      if (mounted && id == _conversationId) setState(() => _threadError = '$error');
+    } finally {
+      if (mounted && id == _conversationId) setState(() => _threadLoading = false);
+    }
   }
 
   Future<void> _refreshThread() async {
-    if (_conversationId == null) return;
-    final data = await ChatApi.messages(_conversationId!);
-    if (mounted) setState(() => _messages = List<Map<String, dynamic>>.from(data['items'] as List));
+    final id = _conversationId;
+    if (id == null) return;
+    try {
+      final data = await ChatApi.messages(id);
+      if (!mounted || id != _conversationId) return;
+      setState(() { _messages = List<Map<String, dynamic>>.from(data['items'] as List); _threadError = null; });
+      await _markMessagesDelivered(id);
+      if (_messages.isNotEmpty) await ChatApi.read(id, _messages.last['id'] as int);
+    } catch (error) {
+      if (mounted) setState(() => _threadError = '$error');
+    }
+  }
+
+  Future<void> _markMessagesDelivered(int conversationId) async {
+    final received = _messages
+        .where((message) => message['sender_user_id'] != null && message['sender_user_id'] != _myId)
+        .map((message) => message['id'] as int)
+        .fold<int?>(null, (latest, id) => latest == null || id > latest ? id : latest);
+    if (received == null) return;
+    try { await ChatApi.delivered(conversationId, received); } catch (_) {}
   }
 
   Future<void> _send() async {
@@ -187,7 +246,7 @@ class _ChatPageState extends State<ChatPage> {
       return Container(color: const Color(0xFFF5F7FB), child: Row(children: [
         if (!mobile || _conversationId == null) SizedBox(width: mobile ? size.maxWidth : 350, child: _Inbox(items: _conversations, selected: _conversationId, onSelect: _select, onNewMessage: _startConversation)),
         if (!mobile) const VerticalDivider(width: 1),
-        Expanded(child: _conversationId == null ? const _EmptyChat() : _Conversation(name: _name, messages: _messages, myId: _myId, composer: _composer, sending: _sending, onSend: _send, onAttach: _attach, onQuickReply: _insertQuickReply, onMute: _muteConversation, onBack: mobile ? () => setState(() => _conversationId = null) : null, detailsOpen: wide && _detailsOpen, onToggleDetails: wide ? () => setState(() => _detailsOpen = !_detailsOpen) : null)),
+        Expanded(child: _conversationId == null ? const _EmptyChat() : _Conversation(name: _name, messages: _messages, myId: _myId, threadLoading: _threadLoading, threadError: _threadError, composer: _composer, sending: _sending, onSend: _send, onAttach: _attach, onQuickReply: _insertQuickReply, onMute: _muteConversation, onBack: mobile ? () => setState(() => _conversationId = null) : null, detailsOpen: wide && _detailsOpen, onToggleDetails: wide ? () => setState(() => _detailsOpen = !_detailsOpen) : null)),
         if (wide) _AnimatedDetailsPanel(isOpen: _detailsOpen, conversationId: _conversationId, name: _name),
       ]));
     });
@@ -283,14 +342,82 @@ class _Badge extends StatelessWidget { const _Badge(this.text); final String tex
 class _Filter extends StatelessWidget { const _Filter(this.label,this.active,this.onTap); final String label; final bool active; final VoidCallback onTap; @override Widget build(BuildContext c)=>Semantics(button:true,selected:active,label:'Filter conversations by $label',child:InkWell(onTap:onTap,borderRadius:BorderRadius.circular(7),child:Container(padding:const EdgeInsets.symmetric(horizontal:9,vertical:5),decoration:BoxDecoration(color:active?const Color(0xFFEBF2FE):Colors.transparent,borderRadius:BorderRadius.circular(7)),child:Text(label,style:TextStyle(fontSize:11,fontWeight:active?FontWeight.w800:FontWeight.w600,color:active?const Color(0xFF1A56DB):const Color(0xFF64748B)))))); }
 class _EmptyChat extends StatelessWidget { const _EmptyChat(); @override Widget build(BuildContext c)=>const Center(child:Column(mainAxisSize:MainAxisSize.min,children:[CircleAvatar(radius:34,backgroundColor:Color(0xFFE9F1FF),child:Icon(Icons.forum_outlined,size:32,color:Color(0xFF1A56DB))),SizedBox(height:18),Text('Choose a conversation',style:TextStyle(fontSize:20,fontWeight:FontWeight.w800,color:Color(0xFF0F2348))),SizedBox(height:6),Text('Select a person from Messages to start chatting.',style:TextStyle(color:Color(0xFF64748B)))])); }
 
-class _Conversation extends StatelessWidget {
-  const _Conversation({required this.name,required this.messages,required this.myId,required this.composer,required this.sending,required this.onSend,required this.onAttach,required this.onQuickReply,required this.onMute,this.onBack,this.onToggleDetails,this.detailsOpen = false});
-  final String name; final List<Map<String,dynamic>> messages; final int? myId; final TextEditingController composer; final bool sending; final VoidCallback onSend,onAttach,onMute; final ValueChanged<String> onQuickReply; final VoidCallback? onBack; final VoidCallback? onToggleDetails; final bool detailsOpen;
-  @override Widget build(BuildContext context) => Column(children: [
-    Container(height:76,color:Colors.white,padding:const EdgeInsets.symmetric(horizontal:22),child:Row(children:[if(onBack!=null)IconButton(onPressed:onBack,icon:const Icon(Icons.arrow_back)),CircleAvatar(radius:21,backgroundColor:const Color(0xFFDBEAFE),foregroundColor:const Color(0xFF1A56DB),child:Text(name[0].toUpperCase(),style:const TextStyle(fontWeight:FontWeight.w800))),const SizedBox(width:12),Expanded(child:Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Row(children:[Flexible(child:Text(name,style:const TextStyle(fontWeight:FontWeight.w800,fontSize:16,color:Color(0xFF0F2348)))),const SizedBox(width:8),Container(padding:const EdgeInsets.symmetric(horizontal:7,vertical:3),decoration:BoxDecoration(color:const Color(0xFFECFDF5),borderRadius:BorderRadius.circular(7),border:Border.all(color:const Color(0xFFA7F3D0))),child:const Text('Available',style:TextStyle(fontSize:10,color:Color(0xFF047857),fontWeight:FontWeight.w800)))]),const SizedBox(height:3),const Text('Direct message · Attendance-enabled chat',style:TextStyle(fontSize:12,color:Color(0xFF64748B)))])),PopupMenuButton<String>(onSelected:(value){if(value=='mute')onMute();},icon:const Icon(Icons.more_horiz,color:Color(0xFF64748B)),itemBuilder:(_)=>const [PopupMenuItem(value:'profile',child:Text('Open employee profile')),PopupMenuItem(value:'attendance',child:Text('View attendance')),PopupMenuItem(value:'mute',child:Text('Mute notifications'))]),if(onToggleDetails != null) IconButton(tooltip: detailsOpen ? 'Hide conversation details' : 'Show conversation details',onPressed:onToggleDetails,icon:Icon(Icons.info_outline,color:detailsOpen?const Color(0xFF0F4CC7):const Color(0xFF1A56DB)))])),
+class _Conversation extends StatefulWidget {
+  const _Conversation({required this.name,required this.messages,required this.myId,required this.threadLoading,required this.threadError,required this.composer,required this.sending,required this.onSend,required this.onAttach,required this.onQuickReply,required this.onMute,this.onBack,this.onToggleDetails,this.detailsOpen = false});
+  final String name; final List<Map<String,dynamic>> messages; final int? myId; final bool threadLoading; final String? threadError; final TextEditingController composer; final bool sending; final VoidCallback onSend,onAttach,onMute; final ValueChanged<String> onQuickReply; final VoidCallback? onBack; final VoidCallback? onToggleDetails; final bool detailsOpen;
+
+  @override
+  State<_Conversation> createState() => _ConversationState();
+}
+
+class _ConversationState extends State<_Conversation> {
+  final _scrollController = ScrollController();
+  bool _nearBottom = true;
+  bool _hasNewMessagesBelow = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+  }
+
+  @override
+  void didUpdateWidget(covariant _Conversation oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldLastId = oldWidget.messages.isEmpty ? null : oldWidget.messages.last['id'];
+    final newLastId = widget.messages.isEmpty ? null : widget.messages.last['id'];
+    if (newLastId == null || newLastId == oldLastId) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_nearBottom) {
+        _scrollToLatest(animate: oldLastId != null);
+      } else if (!_hasNewMessagesBelow) {
+        setState(() => _hasNewMessagesBelow = true);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _scrollController
+      ..removeListener(_onScroll)
+      ..dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final nearBottom = _scrollController.position.maxScrollExtent - _scrollController.offset <= 72;
+    if (nearBottom == _nearBottom && (!nearBottom || !_hasNewMessagesBelow)) return;
+    setState(() {
+      _nearBottom = nearBottom;
+      if (nearBottom) _hasNewMessagesBelow = false;
+    });
+  }
+
+  void _scrollToLatest({bool animate = true}) {
+    if (!_scrollController.hasClients) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _scrollToLatest(animate: animate);
+      });
+      return;
+    }
+    final target = _scrollController.position.maxScrollExtent;
+    if (animate && !MediaQuery.disableAnimationsOf(context)) {
+      _scrollController.animateTo(target, duration: const Duration(milliseconds: 220), curve: Curves.easeOutCubic);
+    } else {
+      _scrollController.jumpTo(target);
+    }
+    if (_hasNewMessagesBelow) setState(() => _hasNewMessagesBelow = false);
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(children: [
+    Container(height:76,color:Colors.white,padding:const EdgeInsets.symmetric(horizontal:22),child:Row(children:[if(widget.onBack!=null)IconButton(onPressed:widget.onBack,icon:const Icon(Icons.arrow_back)),CircleAvatar(radius:21,backgroundColor:const Color(0xFFDBEAFE),foregroundColor:const Color(0xFF1A56DB),child:Text(widget.name.isEmpty ? '?' : widget.name[0].toUpperCase(),style:const TextStyle(fontWeight:FontWeight.w800))),const SizedBox(width:12),Expanded(child:Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Row(children:[Flexible(child:Text(widget.name,style:const TextStyle(fontWeight:FontWeight.w800,fontSize:16,color:Color(0xFF0F2348)))),const SizedBox(width:8),Container(padding:const EdgeInsets.symmetric(horizontal:7,vertical:3),decoration:BoxDecoration(color:const Color(0xFFECFDF5),borderRadius:BorderRadius.circular(7),border:Border.all(color:const Color(0xFFA7F3D0))),child:const Text('Available',style:TextStyle(fontSize:10,color:Color(0xFF047857),fontWeight:FontWeight.w800)))]),const SizedBox(height:3),const Text('Direct message · Attendance-enabled chat',style:TextStyle(fontSize:12,color:Color(0xFF64748B)))])),PopupMenuButton<String>(onSelected:(value){if(value=='mute')widget.onMute();},icon:const Icon(Icons.more_horiz,color:Color(0xFF64748B)),itemBuilder:(_)=>const [PopupMenuItem(value:'profile',child:Text('Open employee profile')),PopupMenuItem(value:'attendance',child:Text('View attendance')),PopupMenuItem(value:'mute',child:Text('Mute notifications'))]),if(widget.onToggleDetails != null) IconButton(tooltip: widget.detailsOpen ? 'Hide conversation details' : 'Show conversation details',onPressed:widget.onToggleDetails,icon:Icon(Icons.info_outline,color:widget.detailsOpen?const Color(0xFF0F4CC7):const Color(0xFF1A56DB)))])),
     const Divider(height:1,color:Color(0xFFE4EAF3)), const Padding(padding:EdgeInsets.only(top:16),child:Text('TODAY',style:TextStyle(fontSize:10,letterSpacing:1,fontWeight:FontWeight.w800,color:Color(0xFF71809B))),),
-    Expanded(child:ListView.builder(padding:const EdgeInsets.fromLTRB(34,14,34,18),itemCount:messages.length,itemBuilder:(_,i)=>_Message(message:messages[i],mine:messages[i]['sender_user_id']==myId))),
-    _Composer(controller:composer,sending:sending,onSend:onSend,onAttach:onAttach,onQuickReply:onQuickReply),
+    Expanded(child:widget.threadLoading?const Center(child:CircularProgressIndicator()):widget.threadError!=null?Center(child:Padding(padding:const EdgeInsets.all(24),child:Text('Could not load messages.\n${widget.threadError}',textAlign:TextAlign.center,style:const TextStyle(color:Color(0xFFB91C1C))))):widget.messages.isEmpty?const Center(child:Text('No messages yet. Start the conversation.',style:TextStyle(color:Color(0xFF64748B)))):Stack(children:[ListView.builder(controller:_scrollController,padding:const EdgeInsets.fromLTRB(34,14,34,18),itemCount:widget.messages.length,itemBuilder:(_,i)=>_Message(message:widget.messages[i],mine:widget.messages[i]['sender_user_id']==widget.myId)),if(!_nearBottom)Positioned(left:0,right:0,bottom:18,child:Center(child:Semantics(button:true,label:'Jump to latest messages',child:Tooltip(message:_hasNewMessagesBelow?'New messages':'Latest messages',child:Material(color:const Color(0xFF1A56DB),shape:const CircleBorder(),elevation:5,child:InkWell(onTap:_scrollToLatest,customBorder:const CircleBorder(),child:const SizedBox(width:44,height:44,child:Icon(Icons.keyboard_arrow_down_rounded,color:Colors.white,size:29)))))))) ])),
+    _Composer(controller:widget.composer,sending:widget.sending,onSend:widget.onSend,onAttach:widget.onAttach,onQuickReply:widget.onQuickReply),
   ]);
 }
 

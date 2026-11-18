@@ -30,12 +30,25 @@ Future<void> main() async {
   if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
     await AndroidLiveTrackingService.configure();
   }
-  await PushNotifications.instance.initialize(appNavigatorKey);
   runApp(const AttendanceApp());
 }
 
-class AttendanceApp extends StatelessWidget {
+class AttendanceApp extends StatefulWidget {
   const AttendanceApp({super.key});
+
+  @override
+  State<AttendanceApp> createState() => _AttendanceAppState();
+}
+
+class _AttendanceAppState extends State<AttendanceApp> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      PushNotifications.instance.initialize(appNavigatorKey);
+    });
+  }
+
   @override
   Widget build(BuildContext context) => MultiProvider(
     providers: [
