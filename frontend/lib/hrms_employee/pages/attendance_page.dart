@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -231,7 +232,21 @@ class _AttendanceViewState extends State<_AttendanceView> {
         year++;
       }
     });
+    _showMonthShiftToast('Loading $monthLabel...');
     _fetchMonthData();
+  }
+
+  void _showMonthShiftToast(String message) {
+    final overlay = Overlay.of(context, rootOverlay: true);
+    late OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (_) => _AttendanceToast(
+        title: 'Month Shift',
+        message: message,
+        onDismissed: entry.remove,
+      ),
+    );
+    overlay.insert(entry);
   }
 
   Map<String, dynamic> dataFor(int day) {
@@ -274,62 +289,35 @@ class _AttendanceViewState extends State<_AttendanceView> {
     final selected = DateTime(year, month, day);
     final info = dataFor(day);
     final status = '${info['status'] ?? ''}';
-    showDialog<void>(
+    final isMobile = MediaQuery.sizeOf(context).width < 600;
+    showGeneralDialog<void>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Row(
-          children: [
-            const Icon(Icons.calendar_month_outlined, color: employeeBlue),
-            const SizedBox(width: 10),
-            const Expanded(child: Text('Attendance details')),
-            IconButton(
-              tooltip: 'Close',
-              onPressed: () => Navigator.pop(dialogContext),
-              icon: const Icon(Icons.close),
-            ),
-          ],
-        ),
-        content: SizedBox(
-          width: 380,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                DateFormat('EEEE, d MMMM yyyy').format(selected),
-                style: const TextStyle(
-                  color: employeeNavy,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 16),
-              _AttendanceDetailLine(
-                label: 'Status',
-                value: _statusLabel(status),
-              ),
-              _AttendanceDetailLine(
-                label: 'Check in',
-                value: _formatClock(info['clock_in']),
-              ),
-              _AttendanceDetailLine(
-                label: 'Check out',
-                value: _formatClock(info['clock_out']),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Close'),
-          ),
-        ],
+      barrierDismissible: true,
+      barrierLabel: 'Dismiss attendance details',
+      barrierColor: const Color(0x990F172A),
+      transitionDuration: const Duration(milliseconds: 280),
+      pageBuilder: (dialogContext, _, __) => _AttendanceDetailsSheet(
+        mobile: isMobile,
+        date: selected,
+        status: status,
+        statusLabel: _statusLabel(status),
+        checkIn: _formatClock(info['clock_in']),
+        checkOut: _formatClock(info['clock_out']),
+        onClose: () => Navigator.of(dialogContext).pop(),
       ),
+      transitionBuilder: (_, animation, __, child) {
+        final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+        if (!isMobile) return FadeTransition(opacity: curved, child: child);
+        return SlideTransition(
+          position: Tween<Offset>(begin: const Offset(0, 1), end: Offset.zero).animate(curved),
+          child: child,
+        );
+      },
     );
   }
 
   Future<void> _requestCorrection() async {
+    final isMobile = MediaQuery.sizeOf(context).width < 600;
     final today = DateTime.now();
     final lastDayOfMonth = DateTime(year, month + 1, 0).day;
     DateTime date = _selectedDate ??
@@ -344,12 +332,16 @@ class _AttendanceViewState extends State<_AttendanceView> {
     String type = 'incorrect_automatic_absence';
     bool isSubmitting = false;
     String? errorMessage;
-    await showDialog<void>(
+    await showGeneralDialog<void>(
       context: context,
-      builder: (dialogContext) => StatefulBuilder(
+      barrierDismissible: true,
+      barrierLabel: 'Dismiss correction form',
+      barrierColor: const Color(0x990F172A),
+      transitionDuration: const Duration(milliseconds: 340),
+      pageBuilder: (dialogContext, _, __) => StatefulBuilder(
         builder: (context, setDialogState) {
           const borderColor = Color(0xFFD6E1F4);
-          const surfaceColor = Color(0xFFF6F8FC);
+          final surfaceColor = isMobile ? Colors.white : const Color(0xFFF6F8FC);
           final fieldBorder = OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
             borderSide: const BorderSide(color: borderColor),
@@ -383,32 +375,85 @@ class _AttendanceViewState extends State<_AttendanceView> {
           }
 
           return Dialog(
-            insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+            alignment: isMobile ? Alignment.bottomCenter : null,
+            insetPadding: isMobile
+                ? EdgeInsets.zero
+                : const EdgeInsets.symmetric(horizontal: 24),
             backgroundColor: Colors.white,
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(22),
+              borderRadius: isMobile
+                  ? const BorderRadius.vertical(top: Radius.circular(28))
+                  : BorderRadius.circular(22),
             ),
-            child: ConstrainedBox(
+            child: SizedBox(
+              width: isMobile ? double.infinity : null,
+              child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 470),
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(24, 26, 24, 20),
+                padding: EdgeInsets.fromLTRB(24, isMobile ? 14 : 26, 24, 20),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Row(
+                    if (isMobile)
+                      Center(
+                        child: Container(
+                          width: 48,
+                          height: 4,
+                          margin: const EdgeInsets.only(bottom: 16),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFE2E8F0),
+                            borderRadius: BorderRadius.circular(99),
+                          ),
+                        ),
+                      ),
+                    Row(
                       children: [
-                        Icon(Icons.edit_calendar_outlined,
-                            color: Color(0xFF0969F9), size: 24),
-                        SizedBox(width: 10),
-                        Text('Request Correction',
-                            style: TextStyle(
-                                color: Color(0xFF0C1C49),
-                                fontSize: 22,
-                                fontWeight: FontWeight.w800)),
+                        Container(
+                          width: 38,
+                          height: 38,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEFF6FF),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFFDBEAFE)),
+                          ),
+                          child: const Icon(Icons.edit_calendar_outlined,
+                              color: employeeBlue, size: 21),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Request Correction',
+                                  style: GoogleFonts.inter(
+                                      color: employeeNavy,
+                                      fontSize: isMobile ? 18 : 22,
+                                      fontWeight: FontWeight.w800)),
+                              if (isMobile)
+                                Text('Submit missed punch or dispute',
+                                    style: GoogleFonts.inter(
+                                        color: employeeMuted,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w500)),
+                            ],
+                          ),
+                        ),
+                        if (isMobile)
+                          IconButton(
+                            onPressed: () => Navigator.pop(dialogContext),
+                            icon: const Icon(Icons.close_rounded),
+                            style: IconButton.styleFrom(
+                              backgroundColor: const Color(0xFFF1F5F9),
+                              foregroundColor: employeeNavy,
+                            ),
+                          ),
                       ],
                     ),
-                    const SizedBox(height: 30),
+                    SizedBox(height: isMobile ? 20 : 30),
+                    if (isMobile)
+                      Text('Select Date', style: GoogleFonts.inter(color: employeeNavy, fontSize: 10, fontWeight: FontWeight.w700)),
+                    if (isMobile) const SizedBox(height: 5),
                     InkWell(
                       onTap: isSubmitting
                           ? null
@@ -426,17 +471,24 @@ class _AttendanceViewState extends State<_AttendanceView> {
                                 });
                               }
                             },
-                      child: Row(
+                      child: Container(
+                        padding: isMobile ? const EdgeInsets.symmetric(horizontal: 12, vertical: 10) : EdgeInsets.zero,
+                        decoration: isMobile ? BoxDecoration(border: Border.all(color: const Color(0xFFD6E1F4)), borderRadius: BorderRadius.circular(12)) : null,
+                        child: Row(
                         children: [
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Text('Attendance date',
-                                    style: TextStyle(
-                                        color: Color(0xFF66789B), fontSize: 13)),
-                                const SizedBox(height: 3),
-                                Text(DateFormat('dd MMM yyyy').format(date),
+                                if (!isMobile)
+                                  const Text('Attendance date',
+                                      style: TextStyle(
+                                          color: Color(0xFF66789B), fontSize: 13)),
+                                if (!isMobile) const SizedBox(height: 3),
+                                Text(
+                                    isMobile
+                                        ? DateFormat('dd-MM-yyyy').format(date)
+                                        : DateFormat('dd MMM yyyy').format(date),
                                     style: const TextStyle(
                                         color: Color(0xFF0C1C49),
                                         fontSize: 15,
@@ -447,9 +499,15 @@ class _AttendanceViewState extends State<_AttendanceView> {
                           const Icon(Icons.calendar_today_outlined,
                               color: Color(0xFF0969F9), size: 23),
                         ],
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 22),
+                    SizedBox(height: isMobile ? 14 : 22),
+                    if (isMobile)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 5),
+                        child: Text('Correction Type', style: GoogleFonts.inter(color: employeeNavy, fontSize: 10, fontWeight: FontWeight.w700)),
+                      ),
                     SizedBox(
                       height: 48,
                       child: DropdownButtonFormField<String>(
@@ -522,6 +580,11 @@ class _AttendanceViewState extends State<_AttendanceView> {
                       ),
                     ),
                     if (type == 'missing_check_out' || type == 'incorrect_time') const SizedBox(height: 13),
+                    if (isMobile)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 5),
+                        child: Text('Reason / Notes', style: GoogleFonts.inter(color: employeeNavy, fontSize: 10, fontWeight: FontWeight.w700)),
+                      ),
                     SizedBox(
                       height: 70,
                       child: TextField(
@@ -547,11 +610,11 @@ class _AttendanceViewState extends State<_AttendanceView> {
                     ],
                     const SizedBox(height: 12),
                     Align(
-                      alignment: Alignment.centerRight,
+                      alignment: isMobile ? Alignment.center : Alignment.centerRight,
                       child: Row(
-                        mainAxisSize: MainAxisSize.min,
+                        mainAxisSize: isMobile ? MainAxisSize.max : MainAxisSize.min,
                         children: [
-                          TextButton(
+                          if (!isMobile) TextButton(
                             onPressed: isSubmitting
                                 ? null
                                 : () => Navigator.pop(dialogContext),
@@ -562,9 +625,11 @@ class _AttendanceViewState extends State<_AttendanceView> {
                             ),
                             child: const Text('Cancel'),
                           ),
-                          const SizedBox(width: 13),
-                          SizedBox(
-                            height: 36,
+                          if (!isMobile) const SizedBox(width: 13),
+                          Flexible(
+                            fit: isMobile ? FlexFit.tight : FlexFit.loose,
+                            child: SizedBox(
+                            height: isMobile ? 48 : 36,
                             child: FilledButton(
                               onPressed: isSubmitting
                                   ? null
@@ -691,7 +756,8 @@ class _AttendanceViewState extends State<_AttendanceView> {
                                       child: CircularProgressIndicator(
                                           strokeWidth: 2, color: Colors.white),
                                     )
-                                  : const Text('Submit'),
+                                  : Text(isMobile ? 'Submit for Approval' : 'Submit'),
+                            ),
                             ),
                           ),
                         ],
@@ -701,9 +767,22 @@ class _AttendanceViewState extends State<_AttendanceView> {
                 ),
               ),
             ),
+          ),
           );
         },
       ),
+      transitionBuilder: (_, animation, __, child) {
+        if (!isMobile) {
+          return FadeTransition(opacity: animation, child: child);
+        }
+        return SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0, 1),
+            end: Offset.zero,
+          ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
+          child: child,
+        );
+      },
     );
     reason.dispose();
     checkIn.dispose();
@@ -733,31 +812,29 @@ class _AttendanceViewState extends State<_AttendanceView> {
         absent: _absentCount,
         late: _lateCount,
         workingDays: _workingDaysCount,
+        premiumMobile: widget.mobile,
       ),
       const SizedBox(height: 16),
       _RecentAttendanceCard(
         month: monthNames[month - 1],
         session: _monthDays.isNotEmpty ? _monthDays.values.last : null,
+        premiumMobile: widget.mobile,
       ),
     ]);
 
     final content = widget.mobile
         ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const MobileEmployeeHeader(showGreeting: false),
-        const SizedBox(height: 24),
-        const Text('Attendance Calendar',
-            style: TextStyle(
-                color: employeeNavy,
-                fontSize: 28,
-                fontWeight: FontWeight.w800)),
-        const SizedBox(height: 5),
-        Text('Your attendance for $monthLabel',
-            style: const TextStyle(color: employeeMuted, fontSize: 16)),
-        const SizedBox(height: 18),
-        calendar,
-        const SizedBox(height: 16),
-        details,
-      ])
+            const _PremiumAttendanceHeading(),
+            const SizedBox(height: 16),
+            calendar,
+            const SizedBox(height: 16),
+            _PremiumCorrectionBanner(
+              monthLabel: monthLabel,
+              onTap: _requestCorrection,
+            ),
+            const SizedBox(height: 16),
+            details,
+          ])
         : LayoutBuilder(builder: (context, constraints) {
           if (constraints.maxWidth < 980) {
             return Column(
@@ -773,19 +850,6 @@ class _AttendanceViewState extends State<_AttendanceView> {
     if (widget.mobile) {
       return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         if (_loading) const LinearProgressIndicator(),
-        Align(
-          alignment: Alignment.centerRight,
-          child: FilledButton.icon(
-            onPressed: _requestCorrection,
-            style: FilledButton.styleFrom(
-              backgroundColor: employeeBlue,
-              foregroundColor: Colors.white,
-            ),
-            icon: const Icon(Icons.edit_calendar_outlined),
-            label: const Text('Request Correction'),
-          ),
-        ),
-        const SizedBox(height: 12),
         content,
       ]);
     }
@@ -795,6 +859,236 @@ class _AttendanceViewState extends State<_AttendanceView> {
       content,
     ]);
   }
+}
+
+class _AttendanceToast extends StatefulWidget {
+  const _AttendanceToast({
+    required this.title,
+    required this.message,
+    required this.onDismissed,
+  });
+
+  final String title;
+  final String message;
+  final VoidCallback onDismissed;
+
+  @override
+  State<_AttendanceToast> createState() => _AttendanceToastState();
+}
+
+class _AttendanceToastState extends State<_AttendanceToast>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<Offset> _slide;
+  bool _dismissed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 340),
+      reverseDuration: const Duration(milliseconds: 220),
+    );
+    _slide = Tween<Offset>(begin: const Offset(1.1, 0), end: Offset.zero)
+        .animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
+    _controller.forward();
+    _dismissLater();
+  }
+
+  Future<void> _dismissLater() async {
+    await Future<void>.delayed(const Duration(seconds: 3));
+    if (!mounted || _dismissed) return;
+    await _controller.reverse();
+    if (mounted && !_dismissed) {
+      _dismissed = true;
+      widget.onDismissed();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: SlideTransition(
+            position: _slide,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(18, 10, 18, 0),
+              child: Material(
+                color: Colors.transparent,
+                child: Container(
+                  width: 390,
+                  padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0F172A),
+                    borderRadius: BorderRadius.circular(17),
+                    border: Border.all(color: const Color(0xFF26354F)),
+                    boxShadow: const [
+                      BoxShadow(color: Color(0x420F172A), blurRadius: 22, offset: Offset(0, 10)),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 34,
+                        height: 34,
+                        decoration: const BoxDecoration(color: employeeBlue, shape: BoxShape.circle),
+                        child: const Icon(Icons.calendar_month_rounded, color: Colors.white, size: 18),
+                      ),
+                      const SizedBox(width: 11),
+                      Expanded(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(widget.title, style: GoogleFonts.inter(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800)),
+                            const SizedBox(height: 2),
+                            Text(widget.message, maxLines: 1, overflow: TextOverflow.ellipsis, style: GoogleFonts.inter(color: const Color(0xFFBFDBFE), fontSize: 11, fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () async {
+                          if (_dismissed) return;
+                          _dismissed = true;
+                          await _controller.reverse();
+                          if (mounted) widget.onDismissed();
+                        },
+                        icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 18),
+                        tooltip: 'Dismiss',
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+}
+
+class _PremiumAttendanceHeading extends StatelessWidget {
+  const _PremiumAttendanceHeading();
+
+  @override
+  Widget build(BuildContext context) => Consumer<AuthService>(
+        builder: (_, auth, __) {
+          final staffId = '${auth.user?['staffId'] ?? auth.user?['employeeId'] ?? 'EMPLOYEE'}';
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Attendance Calendar',
+                      style: GoogleFonts.inter(
+                        color: employeeNavy,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -.45,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(staffId,
+                        style: GoogleFonts.inter(color: employeeBlue, fontSize: 11, fontWeight: FontWeight.w800)),
+                  ],
+                ),
+              ),
+              Container(
+                margin: const EdgeInsets.only(top: 3),
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFECFDF5),
+                  border: Border.all(color: const Color(0xFFA7F3D0)),
+                  borderRadius: BorderRadius.circular(99),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(width: 6, height: 6, decoration: const BoxDecoration(color: Color(0xFF10B981), shape: BoxShape.circle)),
+                    const SizedBox(width: 5),
+                    Text('Live Synced', style: GoogleFonts.inter(color: const Color(0xFF047857), fontSize: 10, fontWeight: FontWeight.w800)),
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
+      );
+}
+
+class _PremiumCorrectionBanner extends StatelessWidget {
+  const _PremiumCorrectionBanner({required this.monthLabel, required this.onTap});
+  final String monthLabel;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0F172A),
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: const [BoxShadow(color: Color(0x260F172A), blurRadius: 14, offset: Offset(0, 6))],
+        ),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: const BoxDecoration(color: employeeBlue, shape: BoxShape.circle),
+                  child: const Icon(Icons.edit_calendar_outlined, color: Colors.white, size: 21),
+                ),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Row(children: [
+                      Text('Request Correction', style: GoogleFonts.inter(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                        decoration: BoxDecoration(color: employeeBlue, borderRadius: BorderRadius.circular(5)),
+                        child: Text('FAST-TRACK', style: GoogleFonts.inter(color: Colors.white, fontSize: 8, fontWeight: FontWeight.w800)),
+                      ),
+                    ]),
+                    const SizedBox(height: 3),
+                    Text('Found punch discrepancy or missing log?', style: GoogleFonts.inter(color: const Color(0xFFCBD5E1), fontSize: 11)),
+                  ]),
+                ),
+                TextButton(
+                  onPressed: onTap,
+                  style: TextButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: employeeNavy,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('Apply', style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w800)),
+                      const SizedBox(width: 4),
+                      const Icon(Icons.arrow_forward_rounded, size: 15),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+
 }
 
 class _CalendarCard extends StatelessWidget {
@@ -819,22 +1113,60 @@ class _CalendarCard extends StatelessWidget {
   final ValueChanged<int> onDayTap;
 
   @override
-  Widget build(BuildContext context) => EmployeeCard(
-        padding: EdgeInsets.all(mobile ? 14 : 22),
-        child: Column(children: [
+  Widget build(BuildContext context) {
+    final card = Column(children: [
+          if (mobile)
+            Container(
+              height: 3,
+              margin: const EdgeInsets.only(bottom: 13),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [employeeBlue, Color(0xFF60A5FA), employeeBlue],
+                ),
+                borderRadius: BorderRadius.circular(99),
+              ),
+            ),
           Row(children: [
             _CalendarArrow(
-                icon: Icons.chevron_left_rounded, onPressed: onPrevious),
+                icon: Icons.chevron_left_rounded,
+                onPressed: onPrevious,
+                compact: mobile),
             Expanded(
-              child: Text(label,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                      color: employeeBlue,
-                      fontSize: mobile ? 22 : 25,
-                      fontWeight: FontWeight.w800)),
+              child: mobile
+                  ? Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.circle, size: 8, color: employeeBlue),
+                        const SizedBox(width: 7),
+                        Text.rich(
+                          TextSpan(
+                            text: '${label.split(' ').first} ',
+                            style: GoogleFonts.inter(
+                              color: employeeNavy,
+                              fontSize: 17,
+                              fontWeight: FontWeight.w800,
+                            ),
+                            children: [
+                              TextSpan(
+                                text: '$year',
+                                style: const TextStyle(color: employeeBlue),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    )
+                  : Text(label,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          color: employeeBlue,
+                          fontSize: 25,
+                          fontWeight: FontWeight.w800)),
             ),
             _CalendarArrow(
-                icon: Icons.chevron_right_rounded, onPressed: onNext),
+                icon: Icons.chevron_right_rounded,
+                onPressed: onNext,
+                compact: mobile),
           ]),
           const SizedBox(height: 12),
           const Divider(height: 1, color: employeeLine),
@@ -854,8 +1186,21 @@ class _CalendarCard extends StatelessWidget {
                 _LegendStatus('HL', 'Half Leave', employeePurple),
                 _LegendStatus('OFF', 'Weekly Off', Color(0xFF7D8FAA)),
               ]),
-        ]),
-      );
+        ]);
+    if (!mobile) return EmployeeCard(padding: const EdgeInsets.all(22), child: card);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 15),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: const [
+          BoxShadow(color: Color(0x100F172A), blurRadius: 12, offset: Offset(0, 4)),
+        ],
+      ),
+      child: card,
+    );
+  }
 }
 
 class _AttendanceCalendar extends StatelessWidget {
@@ -889,6 +1234,7 @@ class _AttendanceCalendar extends StatelessWidget {
           day: day,
           status: info['status']?.toString() ?? '',
           clockIn: info['clock_in']?.toString(),
+          mobile: mobile,
           onTap: () => onDayTap(day),
         );
       }),
@@ -898,61 +1244,245 @@ class _AttendanceCalendar extends StatelessWidget {
     return Column(children: [
       Row(
         children: weekdays
-            .map((day) => Expanded(
+            .asMap()
+            .entries
+            .map((entry) => Expanded(
                   child: SizedBox(
                     height: 34,
                     child: Center(
-                      child: Text(day,
+                      child: Text(entry.value,
                           style: TextStyle(
-                              color: employeeMuted,
-                              fontSize: mobile ? 9 : 11,
+                              color: mobile && entry.key >= 5
+                                  ? employeeBlue
+                                  : (mobile ? employeeNavy : employeeMuted),
+                              fontSize: mobile ? 10 : 11,
                               fontWeight: FontWeight.w800)),
                     ),
                   ),
                 ))
             .toList(),
       ),
-      GridView.count(
-        crossAxisCount: 7,
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        childAspectRatio: mobile ? .65 : 1.0,
-        children: cells,
+      ClipRRect(
+        borderRadius: mobile ? BorderRadius.circular(16) : BorderRadius.zero,
+        child: GridView.count(
+          crossAxisCount: 7,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          mainAxisExtent: mobile ? 60 : null,
+          childAspectRatio: mobile ? 1 : 1.0,
+          children: cells,
+        ),
       ),
+      if (mobile) ...[
+        const SizedBox(height: 14),
+        const Divider(height: 1, color: Color(0xFFE2E8F0)),
+        const SizedBox(height: 10),
+      ],
     ]);
   }
 }
 
-class _AttendanceDetailLine extends StatelessWidget {
-  const _AttendanceDetailLine({required this.label, required this.value});
+class _AttendanceDetailsSheet extends StatelessWidget {
+  const _AttendanceDetailsSheet({
+    required this.mobile,
+    required this.date,
+    required this.status,
+    required this.statusLabel,
+    required this.checkIn,
+    required this.checkOut,
+    required this.onClose,
+  });
+
+  final bool mobile;
+  final DateTime date;
+  final String status;
+  final String statusLabel;
+  final String checkIn;
+  final String checkOut;
+  final VoidCallback onClose;
+
+  Color get _statusColor => switch (status) {
+        'P' => const Color(0xFF059669),
+        'L' => const Color(0xFFD97706),
+        'A' => const Color(0xFFDC2626),
+        'OFF' => const Color(0xFF64748B),
+        'HL' || 'EL' || 'CL' || 'SL' || 'OL' => const Color(0xFF7C3AED),
+        _ => employeeBlue,
+      };
+
+  Color get _statusSurface => switch (status) {
+        'P' => const Color(0xFFECFDF5),
+        'L' => const Color(0xFFFFF7ED),
+        'A' => const Color(0xFFFEF2F2),
+        'OFF' => const Color(0xFFF1F5F9),
+        'HL' || 'EL' || 'CL' || 'SL' || 'OL' => const Color(0xFFF5F3FF),
+        _ => const Color(0xFFEFF6FF),
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final body = Material(
+      color: Colors.transparent,
+      child: Container(
+        width: mobile ? double.infinity : 430,
+        padding: EdgeInsets.fromLTRB(24, mobile ? 10 : 22, 24, 22),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(
+            top: const Radius.circular(26),
+            bottom: Radius.circular(mobile ? 0 : 26),
+          ),
+          boxShadow: const [
+            BoxShadow(color: Color(0x330F172A), blurRadius: 30, offset: Offset(0, 14)),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (mobile)
+              Center(
+                child: Container(
+                  width: 48,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 17),
+                  decoration: BoxDecoration(color: const Color(0xFFDCE5F1), borderRadius: BorderRadius.circular(99)),
+                ),
+              ),
+            Row(children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEFF6FF),
+                  border: Border.all(color: const Color(0xFFD6E7FF)),
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: const Icon(Icons.event_note_rounded, color: employeeBlue, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('Attendance details', style: GoogleFonts.inter(color: employeeNavy, fontSize: 19, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 3),
+                  Text('Daily attendance record', style: GoogleFonts.inter(color: employeeMuted, fontSize: 11, fontWeight: FontWeight.w500)),
+                ]),
+              ),
+              InkWell(
+                onTap: onClose,
+                borderRadius: BorderRadius.circular(99),
+                child: Container(
+                  width: 38,
+                  height: 38,
+                  decoration: const BoxDecoration(color: Color(0xFFF1F5F9), shape: BoxShape.circle),
+                  child: const Icon(Icons.close_rounded, color: employeeNavy, size: 21),
+                ),
+              ),
+            ]),
+            const SizedBox(height: 20),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(children: [
+                const Icon(Icons.calendar_today_outlined, size: 17, color: employeeBlue),
+                const SizedBox(width: 10),
+                Expanded(child: Text(DateFormat('EEEE, d MMMM yyyy').format(date), style: GoogleFonts.inter(color: employeeNavy, fontSize: 13, fontWeight: FontWeight.w700))),
+              ]),
+            ),
+            const SizedBox(height: 13),
+            _AttendanceDetailsValue(
+              label: 'Attendance status',
+              value: statusLabel,
+              leading: Icons.verified_rounded,
+              valueColor: _statusColor,
+              valueSurface: _statusSurface,
+              pill: true,
+            ),
+            const SizedBox(height: 10),
+            Row(children: [
+              Expanded(
+                child: _AttendanceDetailsValue(
+                  label: 'Check in',
+                  value: checkIn,
+                  leading: Icons.login_rounded,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _AttendanceDetailsValue(
+                  label: 'Check out',
+                  value: checkOut,
+                  leading: Icons.logout_rounded,
+                ),
+              ),
+            ]),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: FilledButton(
+                onPressed: onClose,
+                style: FilledButton.styleFrom(
+                  backgroundColor: employeeBlue,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
+                ),
+                child: Text('Done', style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w800)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (mobile) return Align(alignment: Alignment.bottomCenter, child: body);
+    return Center(child: body);
+  }
+}
+
+class _AttendanceDetailsValue extends StatelessWidget {
+  const _AttendanceDetailsValue({
+    required this.label,
+    required this.value,
+    required this.leading,
+    this.valueColor = employeeNavy,
+    this.valueSurface = Colors.transparent,
+    this.pill = false,
+  });
 
   final String label;
   final String value;
+  final IconData leading;
+  final Color valueColor;
+  final Color valueSurface;
+  final bool pill;
 
   @override
   Widget build(BuildContext context) => Container(
-    width: double.infinity,
-    margin: const EdgeInsets.only(bottom: 8),
-    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-    decoration: BoxDecoration(
-      color: const Color(0xFFF7F9FD),
-      border: Border.all(color: employeeLine),
-      borderRadius: BorderRadius.circular(10),
-    ),
-    child: Row(
-      children: [
-        Text(label, style: const TextStyle(color: employeeMuted)),
-        const Spacer(),
-        Text(
-          value,
-          style: const TextStyle(
-            color: employeeNavy,
-            fontWeight: FontWeight.w700,
-          ),
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8FAFC),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          borderRadius: BorderRadius.circular(13),
         ),
-      ],
-    ),
-  );
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Icon(leading, size: 17, color: employeeBlue),
+          const SizedBox(height: 9),
+          Text(label, style: GoogleFonts.inter(color: employeeMuted, fontSize: 10, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          if (pill)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(color: valueSurface, borderRadius: BorderRadius.circular(99)),
+              child: Text(value, style: GoogleFonts.inter(color: valueColor, fontSize: 12, fontWeight: FontWeight.w800)),
+            )
+          else
+            Text(value, style: GoogleFonts.inter(color: valueColor, fontSize: 13, fontWeight: FontWeight.w800)),
+        ]),
+      );
 }
 
 class _EmptyCalendarDay extends StatelessWidget {
@@ -972,12 +1502,14 @@ class _CalendarDay extends StatelessWidget {
     required this.day,
     required this.status,
     this.clockIn,
+    this.mobile = false,
     this.onTap,
   });
 
   final int day;
   final String status;
   final String? clockIn;
+  final bool mobile;
   final VoidCallback? onTap;
 
   Color get color => switch (status) {
@@ -1002,6 +1534,12 @@ class _CalendarDay extends StatelessWidget {
     }
   }
 
+  String? get mobileTime {
+    final time = formattedTime;
+    if (time == null) return null;
+    return time.replaceFirst(' ', '\n');
+  }
+
   @override
   Widget build(BuildContext context) {
     final hasStatus = status.isNotEmpty;
@@ -1019,34 +1557,39 @@ class _CalendarDay extends StatelessWidget {
         children: [
           Text(
             '$day',
-            style: const TextStyle(
-                color: employeeNavy, fontSize: 13, fontWeight: FontWeight.w700),
+            style: TextStyle(
+                color: employeeNavy,
+                fontSize: mobile ? 13 : 13,
+                fontWeight: FontWeight.w800),
           ),
-          const SizedBox(height: 3),
+          SizedBox(height: mobile ? 1 : 3),
           if (status == 'OFF')
             Text('OFF',
                 style: TextStyle(
                     color: color, fontSize: 10, fontWeight: FontWeight.w600))
           else if (hasStatus)
             Container(
-              width: status == 'HL' ? 31 : 24,
-              height: 24,
+              width: status == 'HL' ? (mobile ? 24 : 31) : (mobile ? 20 : 24),
+              height: mobile ? 20 : 24,
               alignment: Alignment.center,
               decoration: BoxDecoration(color: color, shape: BoxShape.circle),
               child: Text(
                 status == 'LV' ? 'L' : status,
-                style: const TextStyle(
+                style: TextStyle(
                     color: Colors.white,
-                    fontSize: 10,
+                    fontSize: mobile ? 9 : 10,
                     fontWeight: FontWeight.w800),
               ),
             ),
           if (timeStr != null) ...[
-            const SizedBox(height: 3),
+            SizedBox(height: mobile ? 1 : 3),
             Text(
-              timeStr,
-              style: const TextStyle(
-                fontSize: 9,
+              mobile ? mobileTime! : timeStr,
+              textAlign: TextAlign.center,
+              maxLines: mobile ? 2 : 1,
+              style: TextStyle(
+                fontSize: mobile ? 7 : 9,
+                height: mobile ? .9 : null,
                 fontWeight: FontWeight.w700,
                 color: employeeNavy,
               ),
@@ -1060,22 +1603,35 @@ class _CalendarDay extends StatelessWidget {
 }
 
 class _CalendarArrow extends StatelessWidget {
-  const _CalendarArrow({required this.icon, required this.onPressed});
+  const _CalendarArrow({
+    required this.icon,
+    required this.onPressed,
+    this.compact = false,
+  });
   final IconData icon;
   final VoidCallback onPressed;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) => SizedBox(
-        width: 42,
-        height: 42,
+        width: compact ? 34 : 42,
+        height: compact ? 34 : 42,
         child: IconButton.outlined(
           onPressed: onPressed,
           padding: EdgeInsets.zero,
-          icon: Icon(icon, color: employeeBlue, size: 27),
+          icon: Icon(
+            icon,
+            color: compact ? employeeNavy : employeeBlue,
+            size: compact ? 21 : 27,
+          ),
           style: IconButton.styleFrom(
-              side: const BorderSide(color: employeeLine),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8))),
+              backgroundColor:
+                  compact ? const Color(0xFFF1F5F9) : Colors.transparent,
+              side: BorderSide(
+                  color: compact ? const Color(0xFFE2E8F0) : employeeLine),
+              shape: compact
+                  ? const CircleBorder()
+                  : RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
         ),
       );
 }
@@ -1119,6 +1675,7 @@ class _SummaryCard extends StatelessWidget {
     required this.absent,
     required this.late,
     required this.workingDays,
+    this.premiumMobile = false,
   });
 
   final String monthLabel;
@@ -1126,45 +1683,136 @@ class _SummaryCard extends StatelessWidget {
   final int absent;
   final int late;
   final int workingDays;
+  final bool premiumMobile;
 
   @override
-  Widget build(BuildContext context) => EmployeeCard(
-        padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('${monthLabel.split(' ').first} Summary',
-              style: const TextStyle(
-                  color: employeeBlue,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w800)),
+  Widget build(BuildContext context) {
+    final completed = present + late;
+    final ratio = workingDays <= 0
+        ? 0.0
+        : (completed / workingDays).clamp(0.0, 1.0);
+    // Stretch the children so the ratio track receives the card's full width.
+    // With `start`, a `double.infinity` child can be laid out with a zero
+    // intrinsic width inside this mobile card and the coloured segments vanish.
+    final child = Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('${monthLabel.split(' ').first} Summary',
+                  style: GoogleFonts.inter(
+                      color: employeeNavy,
+                      fontSize: premiumMobile ? 16 : 20,
+                      fontWeight: FontWeight.w800)),
+              if (premiumMobile)
+                Text('Insights  →', style: GoogleFonts.inter(color: employeeBlue, fontSize: 11, fontWeight: FontWeight.w700)),
+            ],
+          ),
           const SizedBox(height: 14),
-          Row(children: [
-            Expanded(
-                child: _SummaryCell(
-                    'Working Days', '$workingDays', employeeBlue)),
-            Expanded(
-                child: _SummaryCell(
-                    'Present', '$present', employeeBlue)),
-            Expanded(
-                child: _SummaryCell(
-                    'Absent', '$absent', const Color(0xFFF04438))),
-            Expanded(
-                child: _SummaryCell(
-                    'Late', '$late', employeeOrange, last: true)),
-          ]),
-        ]),
-      );
+          Container(
+            decoration: premiumMobile
+                ? BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                    borderRadius: BorderRadius.circular(16),
+                  )
+                : null,
+            child: Row(children: [
+              Expanded(
+                  child: _SummaryCell(
+                      premiumMobile ? 'Working' : 'Working Days', '$workingDays', employeeBlue,
+                      compact: premiumMobile)),
+              Expanded(
+                  child: _SummaryCell(
+                      'Present', '$present', employeeBlue, compact: premiumMobile)),
+              Expanded(
+                  child: _SummaryCell(
+                      'Absent', '$absent', const Color(0xFFF04438), compact: premiumMobile)),
+              Expanded(
+                  child: _SummaryCell(
+                      'Late', '$late', employeeOrange, last: true, compact: premiumMobile)),
+            ]),
+          ),
+          if (premiumMobile) ...[
+            const SizedBox(height: 15),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('Attendance Ratio', style: GoogleFonts.inter(color: employeeNavy, fontSize: 11, fontWeight: FontWeight.w800)),
+                Text('${(ratio * 100).toStringAsFixed(1)}% Completed', style: GoogleFonts.inter(color: employeeBlue, fontSize: 11, fontWeight: FontWeight.w800)),
+              ],
+            ),
+            const SizedBox(height: 7),
+            LayoutBuilder(builder: (context, constraints) {
+              // Paint each segment at an explicit percentage.  This avoids the
+              // flex children receiving a loose width when this card is inside
+              // the mobile scroll view.
+              final total = workingDays > 0 ? workingDays : 1;
+              final presentWidth = constraints.maxWidth * present / total;
+              final lateWidth = constraints.maxWidth * late / total;
+              final absentWidth = constraints.maxWidth * absent / total;
+              return Container(
+                height: 8,
+                clipBehavior: Clip.antiAlias,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEAF0F8),
+                  borderRadius: BorderRadius.circular(99),
+                ),
+                child: Stack(children: [
+                  if (presentWidth > 0)
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      bottom: 0,
+                      width: presentWidth,
+                      child: const ColoredBox(color: employeeBlue),
+                    ),
+                  if (lateWidth > 0)
+                    Positioned(
+                      left: presentWidth,
+                      top: 0,
+                      bottom: 0,
+                      width: lateWidth,
+                      child: const ColoredBox(color: employeeOrange),
+                    ),
+                  if (absentWidth > 0)
+                    Positioned(
+                      left: presentWidth + lateWidth,
+                      top: 0,
+                      bottom: 0,
+                      width: absentWidth,
+                      child: const ColoredBox(color: Color(0xFFDC2626)),
+                    ),
+                ]),
+              );
+            }),
+          ],
+        ]);
+    if (!premiumMobile) {
+      return EmployeeCard(padding: const EdgeInsets.all(16), child: child);
+    }
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: child,
+    );
+  }
 }
 
 class _SummaryCell extends StatelessWidget {
-  const _SummaryCell(this.label, this.value, this.color, {this.last = false});
+  const _SummaryCell(this.label, this.value, this.color, {this.last = false, this.compact = false});
   final String label;
   final String value;
   final Color color;
   final bool last;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 3),
+        padding: EdgeInsets.symmetric(vertical: compact ? 10 : 12, horizontal: 3),
         decoration: BoxDecoration(
           border: last
               ? null
@@ -1175,18 +1823,19 @@ class _SummaryCell extends StatelessWidget {
               maxLines: 2,
               textAlign: TextAlign.center,
               style: const TextStyle(color: employeeMuted, fontSize: 10)),
-          const SizedBox(height: 5),
+          SizedBox(height: compact ? 3 : 5),
           Text(value,
               style: TextStyle(
-                  color: color, fontSize: 25, fontWeight: FontWeight.w800)),
+                  color: color, fontSize: compact ? 20 : 25, fontWeight: FontWeight.w800)),
         ]),
       );
 }
 
 class _RecentAttendanceCard extends StatelessWidget {
-  const _RecentAttendanceCard({required this.month, this.session});
+  const _RecentAttendanceCard({required this.month, this.session, this.premiumMobile = false});
   final String month;
   final Map<String, dynamic>? session;
+  final bool premiumMobile;
 
   @override
   Widget build(BuildContext context) {
@@ -1204,16 +1853,114 @@ class _RecentAttendanceCard extends StatelessWidget {
       }
     }
 
-    return EmployeeCard(
-      padding: const EdgeInsets.all(16),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Text('Recent Attendance',
-            style: TextStyle(
-                color: employeeBlue,
-                fontSize: 20,
-                fontWeight: FontWeight.w800)),
-        const SizedBox(height: 10),
+    final child = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text('Recent Attendance',
+              style: GoogleFonts.inter(
+                  color: employeeNavy,
+                  fontSize: premiumMobile ? 17 : 20,
+                  fontWeight: FontWeight.w800)),
+          if (premiumMobile)
+            Text('Real-time',
+                style: GoogleFonts.inter(
+                    color: employeeMuted,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600)),
+        ],
+      ),
+      const SizedBox(height: 10),
+      if (premiumMobile)
+        _PremiumRecentAttendanceRow(
+          hasSession: hasSession,
+          hasCheckedOut: hasSession && session!['clock_out'] != null,
+          status: status,
+          statusColor: color,
+        )
+      else
         _RecentAttendanceRow('Today', status, timeStr, color),
+    ]);
+    if (!premiumMobile) {
+      return EmployeeCard(padding: const EdgeInsets.all(16), child: child);
+    }
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: child,
+    );
+  }
+}
+
+class _PremiumRecentAttendanceRow extends StatelessWidget {
+  const _PremiumRecentAttendanceRow({
+    required this.hasSession,
+    required this.hasCheckedOut,
+    required this.status,
+    required this.statusColor,
+  });
+
+  final bool hasSession;
+  final bool hasCheckedOut;
+  final String status;
+  final Color statusColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final badgeText = hasCheckedOut ? status : 'Pending Punch';
+    final badgeColor = hasCheckedOut ? statusColor : const Color(0xFF94A3B8);
+    final date = DateFormat('d MMM yyyy').format(DateTime.now());
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFBFDFF),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(children: [
+        Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color: const Color(0xFFEFF6FF),
+            border: Border.all(color: const Color(0xFFBFDBFE)),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(Icons.calendar_month_rounded, color: employeeBlue, size: 21),
+        ),
+        const SizedBox(width: 11),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Text('Today', style: GoogleFonts.inter(color: employeeNavy, fontSize: 14, fontWeight: FontWeight.w800)),
+              const SizedBox(width: 5),
+              const Icon(Icons.circle, color: employeeOrange, size: 6),
+            ]),
+            const SizedBox(height: 3),
+            Text('$date • General Shift',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.inter(color: employeeMuted, fontSize: 10, fontWeight: FontWeight.w600)),
+          ]),
+        ),
+        const SizedBox(width: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF1F5F9),
+            border: Border.all(color: const Color(0xFFDCE5F1)),
+            borderRadius: BorderRadius.circular(99),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.circle, color: badgeColor, size: 6),
+            const SizedBox(width: 5),
+            Text(badgeText, style: GoogleFonts.inter(color: employeeNavy, fontSize: 10, fontWeight: FontWeight.w700)),
+          ]),
+        ),
       ]),
     );
   }

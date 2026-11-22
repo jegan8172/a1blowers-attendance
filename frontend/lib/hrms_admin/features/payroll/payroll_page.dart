@@ -432,6 +432,7 @@ class _PayrollPageState extends State<PayrollPage> {
         _load();
       },
       onMarkPaid: _markPaid,
+      onRevertPaid: _revertPaid,
       onHistory: _viewHistory,
       onCycleOverride: _overrideCycle,
       onRowSelected: (row) => setState(() => selectedProfileId = row.profileId),
@@ -1663,6 +1664,7 @@ class _PayrollPanel extends StatelessWidget {
     required this.onSearchChanged,
     required this.onReset,
     required this.onMarkPaid,
+    required this.onRevertPaid,
     required this.onHistory,
     required this.onCycleOverride,
     required this.onRowSelected,
@@ -1683,6 +1685,7 @@ class _PayrollPanel extends StatelessWidget {
   final ValueChanged<String> onSearchChanged;
   final VoidCallback onReset;
   final ValueChanged<_PayrollRow> onMarkPaid;
+  final ValueChanged<_PayrollRow> onRevertPaid;
   final ValueChanged<_PayrollRow> onHistory;
   final ValueChanged<_PayrollRow> onCycleOverride;
   final ValueChanged<_PayrollRow> onRowSelected;
@@ -1708,6 +1711,7 @@ class _PayrollPanel extends StatelessWidget {
             selectedProfileId: selectedProfileId,
             onRowSelected: onRowSelected,
             onMarkPaid: onMarkPaid,
+            onRevertPaid: onRevertPaid,
             onHistory: onHistory,
             onCycleOverride: onCycleOverride,
           );
@@ -2619,6 +2623,7 @@ class _PayrollTable extends StatelessWidget {
     required this.selectedProfileId,
     required this.onRowSelected,
     required this.onMarkPaid,
+    required this.onRevertPaid,
     required this.onHistory,
     required this.onCycleOverride,
   });
@@ -2626,6 +2631,7 @@ class _PayrollTable extends StatelessWidget {
   final int? selectedProfileId;
   final ValueChanged<_PayrollRow> onRowSelected;
   final ValueChanged<_PayrollRow> onMarkPaid;
+  final ValueChanged<_PayrollRow> onRevertPaid;
   final ValueChanged<_PayrollRow> onHistory;
   final ValueChanged<_PayrollRow> onCycleOverride;
 
@@ -2661,6 +2667,7 @@ class _PayrollTable extends StatelessWidget {
                           selected: row.profileId == selectedProfileId,
                           onSelected: onRowSelected,
                           onMarkPaid: onMarkPaid,
+                          onRevertPaid: onRevertPaid,
                           onHistory: onHistory,
                           onCycleOverride: onCycleOverride,
                         );
@@ -2736,6 +2743,7 @@ class _PayrollTableRow extends StatelessWidget {
     required this.selected,
     required this.onSelected,
     required this.onMarkPaid,
+    required this.onRevertPaid,
     required this.onHistory,
     required this.onCycleOverride,
   });
@@ -2744,6 +2752,7 @@ class _PayrollTableRow extends StatelessWidget {
   final bool selected;
   final ValueChanged<_PayrollRow> onSelected;
   final ValueChanged<_PayrollRow> onMarkPaid;
+  final ValueChanged<_PayrollRow> onRevertPaid;
   final ValueChanged<_PayrollRow> onHistory;
   final ValueChanged<_PayrollRow> onCycleOverride;
 
@@ -2864,6 +2873,7 @@ class _PayrollTableRow extends StatelessWidget {
                       if (action == 0) onHistory(row);
                       if (action == 1) onCycleOverride(row);
                       if (action == 2) onMarkPaid(row);
+                      if (action == 3) onRevertPaid(row);
                     },
                     itemBuilder: (context) => [
                       const PopupMenuItem(
@@ -2887,6 +2897,14 @@ class _PayrollTableRow extends StatelessWidget {
                           child: ListTile(
                             leading: Icon(Icons.check_circle_outline),
                             title: Text('Mark paid'),
+                          ),
+                        ),
+                      if (row.status == 'Paid')
+                        const PopupMenuItem(
+                          value: 3,
+                          child: ListTile(
+                            leading: Icon(Icons.undo_rounded),
+                            title: Text('Revert paid'),
                           ),
                         ),
                     ],

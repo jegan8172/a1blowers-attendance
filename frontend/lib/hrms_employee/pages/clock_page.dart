@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -170,6 +171,7 @@ class _ClockViewState extends State<_ClockView> with WidgetsBindingObserver {
     }
     setState(() => _punching = true);
     String message;
+    var failed = false;
     try {
       final payload = clockOut ? <String, dynamic>{'reason': reason}
           : await AttendanceLocation.checkInPayload(client: _client, token: token);
@@ -177,6 +179,7 @@ class _ClockViewState extends State<_ClockView> with WidgetsBindingObserver {
       await _call(clockOut ? 'clock-out' : 'clock-in', token, post: true, payload: payload);
       message = clockOut ? 'You have been clocked out.' : 'You are now checked in.';
     } catch (error) {
+      failed = true;
       message = '${_message(error)} Refresh attendance before trying again.';
     }
 
@@ -184,7 +187,9 @@ class _ClockViewState extends State<_ClockView> with WidgetsBindingObserver {
     await _load();
     if (!mounted || token != _token) return;
     setState(() => _punching = false);
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context).showSnackBar(
+      employeePremiumSnackBar(message, isError: failed, isSuccess: !failed),
+    );
   }
 
   Future<String?> _clockOutReason() async {
@@ -267,6 +272,24 @@ class _ClockViewState extends State<_ClockView> with WidgetsBindingObserver {
         .toList()
       ..sort((left, right) => (right['work_date']?.toString() ?? '')
           .compareTo(left['work_date']?.toString() ?? ''));
+
+    if (widget.mobile) {
+      return _PremiumClockLogMobile(
+        loading: _loading,
+        error: _error,
+        checkedIn: checkedIn,
+        checkedOut: checkedOut,
+        punching: _punching,
+        canPunch: actions['can_clock_in'] == true || actions['can_clock_out'] == true,
+        punchIn: punchInDisplay,
+        worked: _formatDuration(workedSeconds),
+        extra: _formatDuration(extraSeconds),
+        progress: (workedSeconds / 28800).clamp(0.0, 1.0),
+        records: recentRecords.take(5).toList(),
+        onPunch: _punch,
+        onRetry: _load,
+      );
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -409,6 +432,134 @@ class _ClockViewState extends State<_ClockView> with WidgetsBindingObserver {
   }
 }
 
+class _PremiumClockLogMobile extends StatelessWidget {
+  const _PremiumClockLogMobile({
+    required this.loading,
+    required this.error,
+    required this.checkedIn,
+    required this.checkedOut,
+    required this.punching,
+    required this.canPunch,
+    required this.punchIn,
+    required this.worked,
+    required this.extra,
+    required this.progress,
+    required this.records,
+    required this.onPunch,
+    required this.onRetry,
+  });
+
+  final bool loading;
+  final String? error;
+  final bool checkedIn;
+  final bool checkedOut;
+  final bool punching;
+  final bool canPunch;
+  final String punchIn;
+  final String worked;
+  final String extra;
+  final double progress;
+  final List<Map<String, dynamic>> records;
+  final VoidCallback onPunch;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateFormat('d MMM yyyy').format(DateTime.now());
+    final actionText = punching ? 'Saving…' : checkedIn ? 'Clock Out Session' : checkedOut ? 'Session Completed' : 'Clock In Now';
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Clock Records', style: GoogleFonts.inter(color: employeeNavy, fontSize: 25, fontWeight: FontWeight.w800, letterSpacing: -.5)),
+          const SizedBox(height: 4),
+          Row(children: [
+            Text('Session Logs & Shift Summary', style: GoogleFonts.inter(color: employeeMuted, fontSize: 11, fontWeight: FontWeight.w500)),
+            const Padding(padding: EdgeInsets.symmetric(horizontal: 6), child: Text('•', style: TextStyle(color: Color(0xFF94A3B8)))),
+            Text('EMP1008', style: GoogleFonts.robotoMono(color: employeeBlue, fontSize: 11, fontWeight: FontWeight.w700)),
+          ]),
+        ])),
+        Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: const Color(0xFFEFF6FF), border: Border.all(color: const Color(0xFFBFDBFE)), borderRadius: BorderRadius.circular(99)), child: Row(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.circle, size: 6, color: employeeBlue), const SizedBox(width: 5), Text('Today', style: GoogleFonts.inter(color: employeeBlue, fontSize: 10, fontWeight: FontWeight.w800))])),
+      ]),
+      const SizedBox(height: 16),
+      if (loading) const LinearProgressIndicator(minHeight: 2),
+      if (error != null) Padding(padding: const EdgeInsets.only(bottom: 10), child: TextButton.icon(onPressed: onRetry, icon: const Icon(Icons.refresh_rounded), label: Text(error!))),
+      Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0xFF071B42),
+              Color(0xFF103D85),
+              Color(0xFF2B6DCC),
+              Color(0xFF123D82),
+              Color(0xFF061936),
+            ],
+            stops: [0, .28, .54, .73, 1],
+          ),
+          border: Border.all(color: const Color(0xFF5C97F0).withValues(alpha: .40)),
+          borderRadius: BorderRadius.circular(22),
+          boxShadow: const [BoxShadow(color: Color(0x2B0B3A88), blurRadius: 24, offset: Offset(0, 10))],
+        ),
+        child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Container(width: 30, height: 30, decoration: BoxDecoration(border: Border.all(color: const Color(0xFFE2E8F0)), shape: BoxShape.circle), child: const Icon(Icons.schedule_rounded, color: Colors.white, size: 17)),
+            const SizedBox(width: 10),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text("TODAY'S SESSION", style: GoogleFonts.inter(color: const Color(0xFFCBD5E1), fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: .6)), Text('$now • General Shift', style: GoogleFonts.inter(color: const Color(0xFFBFDBFE), fontSize: 10, fontWeight: FontWeight.w600))])),
+            Container(padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5), decoration: BoxDecoration(border: Border.all(color: const Color(0xFFE2E8F0)), borderRadius: BorderRadius.circular(99)), child: Text(checkedOut ? 'SHIFT CLOSED' : 'SHIFT OPEN', style: GoogleFonts.inter(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w800))),
+          ]),
+          const SizedBox(height: 14),
+          Container(padding: const EdgeInsets.all(14), decoration: BoxDecoration(color: const Color(0x18000000), border: Border.all(color: const Color(0x669DCCFF)), borderRadius: BorderRadius.circular(16)), child: Row(children: [
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(punchIn == '—:—' ? '--:--' : punchIn, style: GoogleFonts.robotoMono(color: Colors.white, fontSize: 30, fontWeight: FontWeight.w800)), const SizedBox(height: 5), Row(children: [Icon(Icons.circle, size: 7, color: checkedIn ? const Color(0xFF34D399) : const Color(0xFFFBBF24)), const SizedBox(width: 5), Text(checkedIn ? 'Clocked in and active' : checkedOut ? 'Shift completed' : 'Not clocked in', style: GoogleFonts.inter(color: const Color(0xFFCBD5E1), fontSize: 10, fontWeight: FontWeight.w600))])])),
+            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [Text('SHIFT WINDOW', style: GoogleFonts.inter(color: const Color(0xFF94A3B8), fontSize: 9, fontWeight: FontWeight.w800)), const SizedBox(height: 4), Container(padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5), decoration: BoxDecoration(border: Border.all(color: const Color(0xFFE2E8F0)), borderRadius: BorderRadius.circular(99)), child: Text('09:30 AM – 06:30 PM', style: GoogleFonts.robotoMono(color: const Color(0xFFDBEAFE), fontSize: 9, fontWeight: FontWeight.w700)))])
+          ])),
+          const SizedBox(height: 13),
+          Row(children: [Expanded(child: _DarkClockMetric(label: 'ELAPSED', value: worked, icon: Icons.timer_outlined)), const SizedBox(width: 10), Expanded(child: _DarkClockMetric(label: 'EXTRA (>8H)', value: extra, icon: Icons.more_time_rounded, amber: true))]),
+          const SizedBox(height: 14),
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('Workday Progress (8h Target)', style: GoogleFonts.inter(color: const Color(0xFFCBD5E1), fontSize: 10, fontWeight: FontWeight.w700)), Text('${(progress * 100).round()}%', style: GoogleFonts.robotoMono(color: const Color(0xFF93C5FD), fontSize: 10, fontWeight: FontWeight.w800))]),
+          const SizedBox(height: 6),
+          ClipRRect(borderRadius: BorderRadius.circular(99), child: LinearProgressIndicator(value: progress, minHeight: 8, backgroundColor: const Color(0xFF0B2856), valueColor: const AlwaysStoppedAnimation(Color(0xFF7DD3FC)))),
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            height: 49,
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(colors: [Color(0xFF38BDF8), Color(0xFF2563EB), Color(0xFF1D4ED8)]),
+              borderRadius: BorderRadius.circular(15),
+              boxShadow: const [BoxShadow(color: Color(0x4D38BDF8), blurRadius: 14, offset: Offset(0, 5))],
+            ),
+            child: FilledButton.icon(onPressed: !canPunch || loading || punching ? null : onPunch, icon: punching ? const SizedBox(width: 17, height: 17, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) : Icon(checkedIn ? Icons.logout_rounded : Icons.login_rounded), label: Text(actionText), style: FilledButton.styleFrom(backgroundColor: Colors.transparent, foregroundColor: Colors.white, disabledBackgroundColor: const Color(0xFF334155), shadowColor: Colors.transparent, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)), textStyle: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w800))),
+          ),
+          const SizedBox(height: 13),
+          Container(constraints: const BoxConstraints(minHeight: 72), padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: const Color(0x14000000), border: Border.all(color: const Color(0x559DCCFF)), borderRadius: BorderRadius.circular(15)), child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [const Icon(Icons.info_outline_rounded, color: Color(0xFFFCD34D), size: 16), const SizedBox(width: 9), Expanded(child: Text('Policy: Extra hours beyond the 8-hour shift are recorded on your attendance log for visibility only. They do not add to salary or generate compensation.', style: GoogleFonts.inter(color: Colors.white, fontSize: 10, height: 1.4, fontWeight: FontWeight.w600))) ])),
+        ]),
+      ),
+      ),
+      const SizedBox(height: 16),
+      _PremiumClockRecords(records: records),
+    ]);
+  }
+}
+
+class _DarkClockMetric extends StatelessWidget {
+  const _DarkClockMetric({required this.label, required this.value, required this.icon, this.amber = false});
+  final String label; final String value; final IconData icon; final bool amber;
+  @override Widget build(BuildContext context) { final tone = amber ? const Color(0xFFFCD34D) : const Color(0xFFE2E8F0); return Container(height: 98, padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: const Color(0x16000000), border: Border.all(color: const Color(0x669DCCFF)), borderRadius: BorderRadius.circular(16)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(label, style: GoogleFonts.inter(color: tone, fontSize: 9, fontWeight: FontWeight.w800)), Icon(icon, color: amber ? const Color(0xFFFCD34D) : Colors.white, size: 16)]), const Spacer(), Text(value, style: GoogleFonts.robotoMono(color: amber ? const Color(0xFFFFF3C7) : Colors.white, fontSize: 21, fontWeight: FontWeight.w800)), const SizedBox(height: 3), if (amber) Text('⚠ Uncompensated', style: GoogleFonts.inter(color: const Color(0xFFFCD34D), fontSize: 9, fontWeight: FontWeight.w700)) else Text('Session closed', style: GoogleFonts.inter(color: const Color(0xFFBFDBFE), fontSize: 9, fontWeight: FontWeight.w600))])); }
+}
+
+class _PremiumClockRecords extends StatelessWidget {
+  const _PremiumClockRecords({required this.records});
+  final List<Map<String, dynamic>> records;
+  @override Widget build(BuildContext context) => Container(padding: const EdgeInsets.all(15), decoration: BoxDecoration(color: const Color(0xFFFFFFFF), border: Border.all(color: const Color(0xFFE2E8F0)), borderRadius: BorderRadius.circular(19)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Row(children: [Container(width: 33,height:33,decoration: BoxDecoration(color: const Color(0xFFEFF6FF),borderRadius: BorderRadius.circular(10)),child: const Icon(Icons.history_rounded,color: employeeBlue,size:18)),const SizedBox(width:9),Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,children:[Text('Recent Clock Records',style:GoogleFonts.inter(color:employeeNavy,fontSize:16,fontWeight:FontWeight.w800)),Text('Your latest check-in and check-out sessions',style:GoogleFonts.inter(color:employeeMuted,fontSize:10))])),Container(padding:const EdgeInsets.symmetric(horizontal:7,vertical:4),decoration:BoxDecoration(color:const Color(0xFFF8FAFC),border:Border.all(color:const Color(0xFFE2E8F0)),borderRadius:BorderRadius.circular(99)),child:Text('${records.length} Entries',style:GoogleFonts.inter(color:employeeNavy,fontSize:9,fontWeight:FontWeight.w700)))]),const SizedBox(height:13),if(records.isEmpty)Padding(padding:const EdgeInsets.symmetric(vertical:22),child:Center(child:Text('No clock records yet.',style:GoogleFonts.inter(color:employeeMuted,fontSize:12)))) else ...records.map((r)=>_PremiumClockRecord(record:r))]));
+}
+
+class _PremiumClockRecord extends _RecentRecordRow {
+  const _PremiumClockRecord({required super.record}) : super(compact: true);
+}
+
 class _RecentClockRecords extends StatelessWidget {
   const _RecentClockRecords({required this.records});
 
@@ -494,16 +645,38 @@ class _RecentRecordRow extends StatelessWidget {
     final status = late ? 'Late' : active ? 'Active' : 'Present';
     final color = late ? employeeOrange : active ? employeeBlue : const Color(0xFF0AA85A);
     final background = late ? const Color(0xFFFFF3E9) : active ? const Color(0xFFEAF2FF) : const Color(0xFFEAF8F0);
-    final statusChip = Align(alignment: Alignment.centerLeft, child: Container(padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5), decoration: BoxDecoration(color: background, borderRadius: BorderRadius.circular(99)), child: Text(status, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w700))));
+    final statusChip = Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        decoration: BoxDecoration(
+          color: background,
+          border: Border.all(color: color.withValues(alpha: .28)),
+          borderRadius: BorderRadius.circular(99),
+        ),
+        child: Text(status, style: GoogleFonts.inter(color: color, fontSize: 10, fontWeight: FontWeight.w800)),
+      ),
+    );
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      decoration: BoxDecoration(color: const Color(0xFFFBFCFF), border: Border.all(color: const Color(0xFFE5EBF5)), borderRadius: BorderRadius.circular(8)),
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+      decoration: BoxDecoration(color: Colors.white, border: Border.all(color: const Color(0xFFE2E8F0)), borderRadius: BorderRadius.circular(compact ? 18 : 10)),
       child: compact
           ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [_value(_dateLabel(), bold: true), statusChip]),
-              const SizedBox(height: 10),
-              Row(children: [Expanded(child: _compactValue('Check in', _timeLabel(record['clock_in_at']))), Expanded(child: _compactValue('Check out', _timeLabel(record['clock_out_at']))), Expanded(child: _compactValue('Worked', _duration()))]),
+              Row(children: [
+                Expanded(child: Row(children: [Text(_dateLabel(), style: GoogleFonts.inter(color: employeeNavy, fontSize: 16, fontWeight: FontWeight.w800)), const SizedBox(width: 6), Text('• General Shift', style: GoogleFonts.inter(color: employeeMuted, fontSize: 10, fontWeight: FontWeight.w600))])),
+                statusChip,
+              ]),
+              const SizedBox(height: 11),
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 9),
+                decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(12)),
+                child: Row(children: [
+                  Expanded(child: _premiumCompactValue('Check In', _timeLabel(record['clock_in_at']), last: false)),
+                  Expanded(child: _premiumCompactValue('Check Out', _timeLabel(record['clock_out_at']), last: false)),
+                  Expanded(child: _premiumCompactValue('Worked', _duration(), last: true, blue: true)),
+                ]),
+              ),
             ])
           : Row(children: [
               Expanded(flex: 3, child: _value(_dateLabel(), bold: true)),
@@ -516,7 +689,14 @@ class _RecentRecordRow extends StatelessWidget {
   }
 
   Widget _value(String value, {bool bold = false}) => Text(value, style: TextStyle(color: employeeNavy, fontSize: 13, fontWeight: bold ? FontWeight.w700 : FontWeight.w500));
-  Widget _compactValue(String label, String value) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(label, style: _recordHeaderStyle), const SizedBox(height: 3), _value(value)]);
+  Widget _premiumCompactValue(String label, String value, {required bool last, bool blue = false}) => Container(
+    decoration: BoxDecoration(border: last ? null : const Border(right: BorderSide(color: Color(0xFFE2E8F0)))),
+    child: Column(children: [
+      Text(label, style: GoogleFonts.inter(color: employeeMuted, fontSize: 9, fontWeight: FontWeight.w500)),
+      const SizedBox(height: 4),
+      Text(value, style: GoogleFonts.robotoMono(color: blue ? employeeBlue : employeeNavy, fontSize: 11, fontWeight: FontWeight.w800)),
+    ]),
+  );
 }
 
 class _SessionMetric extends StatelessWidget {

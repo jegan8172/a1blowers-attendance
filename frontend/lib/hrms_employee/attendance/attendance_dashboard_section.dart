@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -212,7 +213,8 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
         _fieldTrackingEnabled =
             permissions['fieldTrackingEnabled'] == true ||
             permissions['field_tracking_enabled'] == true;
-        _workMode = '${permissions['workMode'] ?? permissions['work_mode'] ?? 'Office'}';
+        _workMode =
+            '${permissions['workMode'] ?? permissions['work_mode'] ?? 'Office'}';
         _trackingActive = context.read<LiveTrackingCoordinator>().active;
       });
     } catch (_) {}
@@ -277,24 +279,28 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
         await coordinator.start();
       }
       await _loadTrackingState();
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              _trackingActive
-                  ? 'Live tracking started. You can now Check In.'
-                  : 'Live tracking stopped.',
-            ),
-          ),
+      if (mounted) {
+        _showPremiumToast(
+          title: _trackingActive ? 'GPS Verified' : 'GPS Tracking Disabled',
+          message: _trackingActive
+              ? 'Geo-fence active. Check In is now unlocked.'
+              : 'Live location tracking has been turned off.',
+          success: _trackingActive,
         );
+      }
     } catch (error) {
-      if (error.toString().contains('signed out because this account signed in on another device')) {
+      if (error.toString().contains(
+        'signed out because this account signed in on another device',
+      )) {
         await context.read<AuthService>().logout();
       }
-      if (mounted)
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(_message(error))));
+      if (mounted) {
+        _showPremiumToast(
+          title: 'Tracking unavailable',
+          message: _message(error),
+          success: false,
+        );
+      }
     } finally {
       if (mounted) setState(() => _trackingBusy = false);
     }
@@ -303,6 +309,14 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
   Future<void> _punch() async {
     final token = _token;
     if (token == null || _loading || _punching || _error != null) return;
+    if (_fieldTrackingEnabled && !_trackingActive) {
+      _showPremiumToast(
+        title: 'Live GPS Tracking Required',
+        message: 'Enable live tracking before you Check In.',
+        success: false,
+      );
+      return;
+    }
     final clockOut = _data?['status'] == 'checked_in';
     final confirmed = await showDialog<bool>(
       context: context,
@@ -366,9 +380,29 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
     await _load();
     if (!mounted || token != _token) return;
     setState(() => _punching = false);
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    _showPremiumToast(
+      title: clockOut ? 'Checked Out' : 'Checked In',
+      message: message,
+      success: !message.contains('Refresh attendance'),
+    );
+  }
+
+  void _showPremiumToast({
+    required String title,
+    required String message,
+    required bool success,
+  }) {
+    final overlay = Overlay.of(context, rootOverlay: true);
+    late OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (_) => _PremiumToast(
+        title: title,
+        message: message,
+        success: success,
+        onDismissed: entry.remove,
+      ),
+    );
+    overlay.insert(entry);
   }
 
   Future<String?> _clockOutReason() async {
@@ -658,6 +692,7 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
 
   @override
   Widget build(BuildContext context) {
+    final mobile = MediaQuery.sizeOf(context).width < 600;
     final data = _data;
     if (data == null) {
       return EmployeeCard(
@@ -729,6 +764,24 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
     final punchOutDisplay = _formatPunchTime(
       session?['punch_out'] ?? session?['clock_out'] ?? session?['check_out'],
     );
+
+    if (mobile) {
+      return _premiumMobileDashboard(
+        employee: employee,
+        today: today,
+        checkedIn: checkedIn,
+        checkedOut: checkedOut,
+        punchInDisplay: punchInDisplay,
+        punchOutDisplay: punchOutDisplay,
+        worked: worked,
+        actualMinutes: actualMinutes,
+        targetMinutes: targetMinutes,
+        workingDays: workingDays,
+        progress: progress,
+        overview: overview,
+        actions: actions,
+      );
+    }
 
     final workday = EmployeeCard(
       child: Column(
@@ -866,13 +919,54 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
             style: const TextStyle(color: employeeMuted, fontSize: 12),
           ),
           const SizedBox(height: 13),
-          _count('Working Days', workingDays, employeeBlue),
-          const Divider(color: employeeLine),
-          _count('Present', overview['present_days'], const Color(0xFF11A55B)),
-          const Divider(color: employeeLine),
-          _count('Absent', overview['absent_days'], const Color(0xFFE34646)),
-          const Divider(color: employeeLine),
-          _count('Late', overview['late_days'], const Color(0xFFFF8B17)),
+          if (mobile)
+            GridView.count(
+              crossAxisCount: 4,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 8,
+              childAspectRatio: .83,
+              children: [
+                _monthMetric(
+                  'Work days',
+                  workingDays,
+                  employeeBlue,
+                  const Color(0xFFF1F5F9),
+                ),
+                _monthMetric(
+                  'Present',
+                  overview['present_days'],
+                  const Color(0xFF047857),
+                  const Color(0xFFEAF8F1),
+                ),
+                _monthMetric(
+                  'Absent',
+                  overview['absent_days'],
+                  const Color(0xFFDC2626),
+                  const Color(0xFFFFEFF1),
+                ),
+                _monthMetric(
+                  'Late',
+                  overview['late_days'],
+                  const Color(0xFFB45309),
+                  const Color(0xFFFFF6E8),
+                ),
+              ],
+            )
+          else ...[
+            _count('Working Days', workingDays, employeeBlue),
+            const Divider(color: employeeLine),
+            _count(
+              'Present',
+              overview['present_days'],
+              const Color(0xFF11A55B),
+            ),
+            const Divider(color: employeeLine),
+            _count('Absent', overview['absent_days'], const Color(0xFFE34646)),
+            const Divider(color: employeeLine),
+            _count('Late', overview['late_days'], const Color(0xFFFF8B17)),
+          ],
           if (overview['absent_days'] == null ||
               overview['late_days'] == null) ...[
             const SizedBox(height: 10),
@@ -949,8 +1043,8 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
                     _trackingActive
                         ? 'Live tracking is active. Check In is available.'
                         : (_workMode == 'Hybrid'
-                            ? 'Inside an office, Check In is available normally. Start tracking when working outside.'
-                            : 'Start live tracking to unlock Check In.'),
+                              ? 'Inside an office, Check In is available normally. Start tracking when working outside.'
+                              : 'Start live tracking to unlock Check In.'),
                     style: const TextStyle(
                       color: employeeNavy,
                       fontWeight: FontWeight.w700,
@@ -976,8 +1070,10 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
-            gradient: const LinearGradient(
-              colors: [Color(0xFF0B72F5), Color(0xFF073B9D)],
+            gradient: LinearGradient(
+              colors: mobile
+                  ? const [Color(0xFF0F172A), Color(0xFF1E293B)]
+                  : const [Color(0xFF0B72F5), Color(0xFF073B9D)],
             ),
           ),
           child: Row(
@@ -1138,6 +1234,676 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
     );
   }
 
+  Widget _premiumMobileDashboard({
+    required Map employee,
+    required DateTime today,
+    required bool checkedIn,
+    required bool checkedOut,
+    required String punchInDisplay,
+    required String punchOutDisplay,
+    required int worked,
+    required int actualMinutes,
+    required int targetMinutes,
+    required int workingDays,
+    required double progress,
+    required Map overview,
+    required Map actions,
+  }) {
+    final canPunch =
+        !_loading &&
+        !_punching &&
+        _error == null &&
+        (actions['can_clock_in'] == true || actions['can_clock_out'] == true);
+    final monthName = DateFormat('MMMM').format(today);
+    final workLabel =
+        '${worked ~/ 3600}h ${((worked % 3600) ~/ 60).toString().padLeft(2, '0')}m';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text.rich(
+                    TextSpan(
+                      children: [
+                        const TextSpan(text: 'Hello, '),
+                        TextSpan(
+                          text: '${employee['name'] ?? ''}',
+                          style: const TextStyle(color: employeeBlue),
+                        ),
+                      ],
+                    ),
+                    style: GoogleFonts.inter(
+                      color: employeeNavy,
+                      fontSize: 25,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -.45,
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEFF6FF),
+                          border: Border.all(color: const Color(0xFFBFDBFE)),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '${employee['staff_id'] ?? ''}',
+                          style: const TextStyle(
+                            color: Color(0xFF1E40AF),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          DateFormat('EEE, d MMM yyyy').format(today),
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: employeeMuted,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              margin: const EdgeInsets.only(top: 9),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: checkedIn
+                    ? const Color(0xFFEAF8F1)
+                    : const Color(0xFFEFF6FF),
+                border: Border.all(
+                  color: checkedIn
+                      ? const Color(0xFFBBE8CE)
+                      : const Color(0xFFBFDBFE),
+                ),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: checkedIn ? const Color(0xFF047857) : employeeBlue,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    checkedIn
+                        ? 'On duty'
+                        : checkedOut
+                        ? 'Checked out'
+                        : 'Ready to Check In',
+                    style: TextStyle(
+                      color: checkedIn ? const Color(0xFF047857) : employeeBlue,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        if (_fieldTrackingEnabled) ...[
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFFEFF6FF), Colors.white, Color(0xFFF5F9FF)],
+              ),
+              border: Border.all(color: const Color(0xFFBFDBFE)),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Row(
+              children: [
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 280),
+                  curve: Curves.easeInOutCubic,
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: _trackingActive
+                        ? const Color(0xFF078A68)
+                        : employeeBlue,
+                    shape: BoxShape.circle,
+                  ),
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 220),
+                    transitionBuilder: (child, animation) => RotationTransition(
+                      turns: Tween<double>(begin: .78, end: 1).animate(animation),
+                      child: ScaleTransition(scale: animation, child: child),
+                    ),
+                    child: Icon(
+                      _trackingActive
+                          ? Icons.near_me_rounded
+                          : Icons.near_me_rounded,
+                      key: ValueKey(_trackingActive),
+                      color: Colors.white,
+                      size: 21,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              'Live GPS Tracking',
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.inter(
+                                color: employeeNavy,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 17,
+                                letterSpacing: -.25,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 220),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: _trackingActive
+                                  ? const Color(0xFFD1FAE5)
+                                  : const Color(0xFFDBEAFE),
+                              borderRadius: BorderRadius.circular(5),
+                            ),
+                            child: AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 160),
+                              child: Text(
+                                _trackingActive ? 'Active' : 'Required',
+                                key: ValueKey(_trackingActive),
+                                style: TextStyle(
+                                  color: _trackingActive
+                                      ? const Color(0xFF047857)
+                                      : employeeBlue,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        _trackingActive
+                            ? 'Geo-fencing is active. Check In is unlocked.'
+                            : 'Enable geo-fencing to unlock Check In',
+                        style: GoogleFonts.inter(
+                          color: employeeMuted,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _PremiumPressButton(
+                  label: _trackingBusy
+                      ? 'Saving'
+                      : (_trackingActive ? 'Disable' : 'Enable'),
+                  icon: Icons.arrow_forward_rounded,
+                  dark: true,
+                  backgroundColor: _trackingActive
+                      ? const Color(0xFF0F172A)
+                      : employeeBlue,
+                  onTap: _trackingBusy ? null : _toggleLiveTracking,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
+            ),
+            borderRadius: BorderRadius.circular(17),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x240F172A),
+                blurRadius: 14,
+                offset: Offset(0, 7),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 12,
+                height: 12,
+                decoration: BoxDecoration(
+                  color: checkedIn ? const Color(0xFF34D399) : employeeBlue,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      checkedIn
+                          ? 'Checked In'
+                          : checkedOut
+                          ? 'Shift completed'
+                          : 'Not Checked In',
+                      style: GoogleFonts.inter(
+                        color: Colors.white,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -.25,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      checkedIn
+                          ? 'Shift is active since $punchInDisplay'
+                          : 'Shift starts at ${dataShiftStart(overview)}',
+                      style: GoogleFonts.inter(
+                        color: Color(0xFFBFDBFE),
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _PremiumPressButton(
+                label: _punching
+                    ? 'Saving'
+                    : checkedIn
+                    ? 'Check Out'
+                    : 'Check In',
+                icon: checkedIn
+                    ? Icons.logout_rounded
+                    : Icons.touch_app_rounded,
+                borderColor: const Color(0xFFE0F2FE),
+                onTap: canPunch ? _punch : null,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        EmployeeCard(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.circle, size: 8, color: employeeBlue),
+                      const SizedBox(width: 8),
+                      Text(
+                        "Today's Workday",
+                        style: GoogleFonts.inter(
+                          color: employeeNavy,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -.25,
+                        ),
+                      ),
+                    ],
+                  ),
+                  _pill('Standard 8h Shift'),
+                ],
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: 172,
+                height: 172,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    SizedBox(
+                      width: 172,
+                      height: 172,
+                      child: CircularProgressIndicator(
+                        value: progress,
+                        strokeWidth: 12,
+                        backgroundColor: const Color(0xFFE2E8F0),
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          employeeBlue,
+                        ),
+                      ),
+                    ),
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          workLabel,
+                          style: GoogleFonts.inter(
+                            color: employeeNavy,
+                            fontSize: 29,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -.6,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Logged Active Time',
+                          style: GoogleFonts.inter(
+                            color: employeeMuted,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 22),
+              const Divider(color: employeeLine),
+              const SizedBox(height: 13),
+              Row(
+                children: [
+                  Expanded(
+                    child: _premiumPunchPanel(
+                      'Check In',
+                      punchInDisplay,
+                      Icons.login_rounded,
+                      employeeBlue,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _premiumPunchPanel(
+                      'Check Out',
+                      punchOutDisplay,
+                      Icons.logout_rounded,
+                      employeeMuted,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        EmployeeCard(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '$monthName Overview',
+                        style: GoogleFonts.inter(
+                          color: employeeNavy,
+                          fontSize: 19,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -.35,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        'Monthly work time performance',
+                        style: GoogleFonts.inter(
+                          color: employeeMuted,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                  _monthPill(),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(13),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEFF6FF),
+                  borderRadius: BorderRadius.circular(13),
+                  border: Border.all(color: const Color(0xFFDBEAFE)),
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          _durationLabel(actualMinutes),
+                          style: GoogleFonts.inter(
+                            color: employeeNavy,
+                            fontSize: 30,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -.7,
+                          ),
+                        ),
+                        Text(
+                          targetMinutes > 0
+                              ? 'Target ${_durationLabel(targetMinutes)}'
+                              : 'No target set',
+                          style: GoogleFonts.inter(
+                            color: employeeNavy,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 9),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(99),
+                      child: LinearProgressIndicator(
+                        value: progress,
+                        minHeight: 9,
+                        backgroundColor: const Color(0xFFBFDBFE),
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          employeeBlue,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              GridView.count(
+                crossAxisCount: 4,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                crossAxisSpacing: 8,
+                mainAxisExtent: 60,
+                children: [
+                  _premiumMetric(
+                    'Work Days',
+                    workingDays,
+                    employeeBlue,
+                    const Color(0xFFF1F5F9),
+                  ),
+                  _premiumMetric(
+                    'Present',
+                    overview['present_days'],
+                    const Color(0xFF047857),
+                    const Color(0xFFEAF8F1),
+                  ),
+                  _premiumMetric(
+                    'Absent',
+                    overview['absent_days'],
+                    const Color(0xFFDC2626),
+                    const Color(0xFFFFEFF1),
+                  ),
+                  _premiumMetric(
+                    'Late',
+                    overview['late_days'],
+                    const Color(0xFFB45309),
+                    const Color(0xFFFFF6E8),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  String dataShiftStart(Map overview) =>
+      overview['shift_start']?.toString() ?? 'your scheduled time';
+
+  Widget _pill(String label) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+    decoration: BoxDecoration(
+      color: const Color(0xFFF1F5F9),
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: employeeLine),
+    ),
+    child: Text(
+      label,
+      style: const TextStyle(
+        color: employeeMuted,
+        fontSize: 10,
+        fontWeight: FontWeight.w700,
+      ),
+    ),
+  );
+
+  Widget _monthPill() => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+    decoration: BoxDecoration(
+      color: const Color(0xFFEFF6FF),
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: const Color(0xFFBFDBFE)),
+    ),
+    child: Text(
+      'Monthly',
+      style: GoogleFonts.inter(
+        color: employeeBlue,
+        fontSize: 10,
+        fontWeight: FontWeight.w800,
+      ),
+    ),
+  );
+
+  Widget _premiumPunchPanel(
+    String label,
+    String time,
+    IconData icon,
+    Color color,
+  ) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+    decoration: BoxDecoration(
+      color: const Color(0xFFF8FAFC),
+      borderRadius: BorderRadius.circular(13),
+      border: Border.all(color: const Color(0xFFE2E8F0)),
+    ),
+    child: Row(
+      children: [
+        Container(
+          width: 29,
+          height: 29,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(9),
+          ),
+          child: Icon(icon, color: color, size: 17),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(color: employeeMuted, fontSize: 10),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                time,
+                style: const TextStyle(
+                  color: employeeNavy,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _premiumMetric(
+    String label,
+    dynamic value,
+    Color color,
+    Color background,
+  ) => Container(
+    decoration: BoxDecoration(
+      color: background,
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: color.withValues(alpha: .16)),
+    ),
+    child: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Text(
+          '${value ?? '—'}',
+          style: GoogleFonts.inter(
+            color: color,
+            fontSize: 19,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -.2,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          textAlign: TextAlign.center,
+          style: GoogleFonts.inter(
+            color: employeeNavy,
+            fontSize: 9,
+            height: 1.1,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    ),
+  );
+
   Widget _count(String label, dynamic value, Color color) => Row(
     children: [
       Expanded(child: Text(label)),
@@ -1150,6 +1916,285 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
         ),
       ),
     ],
+  );
+
+  Widget _monthMetric(
+    String label,
+    dynamic value,
+    Color color,
+    Color background,
+  ) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+    decoration: BoxDecoration(
+      color: background,
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: color.withValues(alpha: .16)),
+    ),
+    child: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Text(
+          value?.toString() ?? '—',
+          style: TextStyle(
+            color: color,
+            fontSize: 18,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          label,
+          maxLines: 2,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: employeeMuted,
+            fontSize: 10,
+            height: 1.05,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _PremiumToast extends StatefulWidget {
+  const _PremiumToast({
+    required this.title,
+    required this.message,
+    required this.success,
+    required this.onDismissed,
+  });
+
+  final String title;
+  final String message;
+  final bool success;
+  final VoidCallback onDismissed;
+
+  @override
+  State<_PremiumToast> createState() => _PremiumToastState();
+}
+
+class _PremiumToastState extends State<_PremiumToast>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<Offset> _slide;
+  late final Animation<double> _fade;
+  bool _dismissed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 360),
+      reverseDuration: const Duration(milliseconds: 240),
+    );
+    final curve = CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic);
+    _slide = Tween<Offset>(begin: const Offset(1.12, 0), end: Offset.zero)
+        .animate(curve);
+    _fade = CurvedAnimation(parent: _controller, curve: Curves.easeOut);
+    _controller.forward();
+    _closeLater();
+  }
+
+  Future<void> _closeLater() async {
+    await Future<void>.delayed(const Duration(seconds: 4));
+    if (!mounted || _dismissed) return;
+    await _controller.reverse();
+    if (mounted && !_dismissed) {
+      _dismissed = true;
+      widget.onDismissed();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final foreground = widget.success
+        ? const Color(0xFFECFDF5)
+        : const Color(0xFFFFF7ED);
+    final iconColor = widget.success
+        ? const Color(0xFF5EEAD4)
+        : const Color(0xFFFBBF24);
+    return SafeArea(
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: SlideTransition(
+          position: _slide,
+          child: FadeTransition(
+            opacity: _fade,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(18, 10, 18, 0),
+              child: Material(
+                color: Colors.transparent,
+                child: Container(
+                  width: 390,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF101A31),
+                    borderRadius: BorderRadius.circular(17),
+                    border: Border.all(color: const Color(0xFF263956)),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x4207162F),
+                        blurRadius: 22,
+                        offset: Offset(0, 10),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 34,
+                        height: 34,
+                        decoration: BoxDecoration(
+                          color: widget.success
+                              ? const Color(0xFF0F766E)
+                              : const Color(0xFF9A5B10),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          widget.success
+                              ? Icons.gps_fixed_rounded
+                              : Icons.info_outline_rounded,
+                          color: Colors.white,
+                          size: 18,
+                        ),
+                      ),
+                      const SizedBox(width: 11),
+                      Expanded(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              widget.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: foreground,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              widget.message,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: iconColor.withValues(alpha: .92),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        tooltip: 'Dismiss',
+                        onPressed: () async {
+                          if (_dismissed) return;
+                          _dismissed = true;
+                          await _controller.reverse();
+                          if (mounted) widget.onDismissed();
+                        },
+                        icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 18),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PremiumPressButton extends StatefulWidget {
+  const _PremiumPressButton({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+    this.dark = false,
+    this.backgroundColor,
+    this.borderColor,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback? onTap;
+  final bool dark;
+  final Color? backgroundColor;
+  final Color? borderColor;
+
+  @override
+  State<_PremiumPressButton> createState() => _PremiumPressButtonState();
+}
+
+class _PremiumPressButtonState extends State<_PremiumPressButton> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) => AnimatedScale(
+    duration: const Duration(milliseconds: 110),
+    scale: _pressed ? .95 : 1,
+    child: Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: widget.onTap,
+        onHighlightChanged: (value) => setState(() => _pressed = value),
+        borderRadius: BorderRadius.circular(99),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeInOut,
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+          decoration: BoxDecoration(
+            color: widget.backgroundColor ??
+                (widget.dark ? const Color(0xFF0F172A) : employeeBlue),
+            borderRadius: BorderRadius.circular(99),
+            border: Border.all(
+              color:
+                  widget.borderColor ??
+                  (widget.dark
+                      ? const Color(0xFF1E293B)
+                      : const Color(0xFF60A5FA)),
+            ),
+          ),
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 180),
+            transitionBuilder: (child, animation) => FadeTransition(
+              opacity: animation,
+              child: ScaleTransition(scale: animation, child: child),
+            ),
+            child: Row(
+              key: ValueKey(widget.label),
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  widget.label,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Icon(widget.icon, color: Colors.white, size: 15),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
   );
 }
 

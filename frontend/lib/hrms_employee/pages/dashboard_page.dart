@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 
@@ -43,6 +44,7 @@ class _EmployeeDashboardPageState extends State<EmployeeDashboardPage> {
   Widget build(BuildContext context) {
     final mobile = MediaQuery.sizeOf(context).width < 600;
     return Scaffold(
+        backgroundColor: const Color(0xFFF8FAFC),
         bottomNavigationBar: mobile ? const EmployeeMobileBottomNav(route: '/employee/dashboard') : null,
         body: SafeArea(
             child: Stack(children: [
@@ -261,10 +263,14 @@ class _DashboardTopNav extends StatelessWidget {
 class _Content extends StatelessWidget {
   const _Content();
   @override
-  Widget build(BuildContext context) =>
-      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const AttendanceDashboardSection(),
-        const SizedBox(height: 18),
+  Widget build(BuildContext context) {
+    final mobile = MediaQuery.sizeOf(context).width < 600;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const AttendanceDashboardSection(),
+      const SizedBox(height: 18),
+      if (mobile)
+        const _MobileQuickActions()
+      else ...[
         const _Actions(
             'ATTENDANCE', employeeBlue, Icons.calendar_month_outlined, [
           ('Calendar', Icons.calendar_today_outlined, '/employee/attendance'),
@@ -298,7 +304,207 @@ class _Content extends StatelessWidget {
           ('Live Tracking', Icons.location_on_outlined, '/employee/tracking'),
           ('Route History', Icons.map_outlined, '/employee/tracking')
         ]),
-      ]);
+      ],
+    ]);
+  }
+}
+
+class _MobileQuickActions extends StatefulWidget {
+  const _MobileQuickActions();
+
+  @override
+  State<_MobileQuickActions> createState() => _MobileQuickActionsState();
+}
+
+class _MobileQuickActionsState extends State<_MobileQuickActions> {
+  late final Future<Map<String, dynamic>> _summary = HrmsPayslipApi.summary();
+
+  String _money(dynamic value) {
+    final amount = value is num ? value : num.tryParse('$value');
+    if (amount == null) return 'View details';
+    return 'Net ₹${amount.round()}';
+  }
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<Map<String, dynamic>>(
+        future: _summary,
+        builder: (_, snapshot) {
+          final payroll = snapshot.data?['payroll'];
+          final map = payroll is Map ? Map<String, dynamic>.from(payroll) : const <String, dynamic>{};
+          final netPay = map['net_pay'] ?? map['updated_salary'] ?? map['monthly_salary'];
+          final actions = <_MobileQuickAction>[
+            const _MobileQuickAction('Calendar', 'Attendance', Icons.calendar_month_outlined, '/employee/attendance'),
+            const _MobileQuickAction('Clock log', 'Daily time', Icons.history_rounded, '/employee/clock-log'),
+            const _MobileQuickAction('Apply leave', 'Time away', Icons.note_add_outlined, '/employee/leave'),
+            const _MobileQuickAction('My requests', 'Track status', Icons.assignment_outlined, '/employee/leave', argument: 'requests'),
+            const _MobileQuickAction('Permission', 'Request time', Icons.verified_user_outlined, '/employee/permission'),
+            const _MobileQuickAction('Permission log', 'Request history', Icons.history_rounded, '/employee/permission', argument: 'log'),
+            const _MobileQuickAction('Log hours', 'Extra hours', Icons.more_time_rounded, '/employee/extra-hours'),
+            _MobileQuickAction('Salary', _money(netPay), Icons.currency_rupee_rounded, '/employee/salary', featured: true),
+            const _MobileQuickAction('Live tracking', 'Location status', Icons.near_me_rounded, '/employee/tracking'),
+            const _MobileQuickAction('Route history', 'Field activity', Icons.map_outlined, '/employee/tracking', argument: 'history'),
+          ];
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Quick actions',
+                    style: GoogleFonts.inter(
+                      color: employeeNavy,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -.35,
+                    ),
+                  ),
+                  Text(
+                    '${actions.length} Services',
+                    style: GoogleFonts.inter(
+                      color: employeeBlue,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Your daily attendance and employee tools',
+                style: GoogleFonts.inter(
+                  color: employeeMuted,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 12),
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: actions.length,
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 12,
+                  mainAxisExtent: 122,
+                ),
+                itemBuilder: (_, index) => _MobileQuickActionTile(action: actions[index]),
+              ),
+            ],
+          );
+        },
+      );
+}
+
+class _MobileQuickAction {
+  const _MobileQuickAction(this.label, this.subtitle, this.icon, this.route, {this.argument, this.featured = false});
+
+  final String label;
+  final String subtitle;
+  final IconData icon;
+  final String route;
+  final String? argument;
+  final bool featured;
+}
+
+class _MobileQuickActionTile extends StatefulWidget {
+  const _MobileQuickActionTile({required this.action});
+
+  final _MobileQuickAction action;
+
+  @override
+  State<_MobileQuickActionTile> createState() => _MobileQuickActionTileState();
+}
+
+class _MobileQuickActionTileState extends State<_MobileQuickActionTile> {
+  bool _pressed = false;
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final action = widget.action;
+    return AnimatedScale(
+      duration: const Duration(milliseconds: 110),
+      curve: Curves.easeOut,
+      scale: _pressed ? .97 : (_hovered ? 1.015 : 1),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.easeOutCubic,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: _hovered || _pressed
+              ? const [BoxShadow(color: Color(0x141D4ED8), blurRadius: 14, offset: Offset(0, 6))]
+              : const [],
+        ),
+        child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onHover: (value) => setState(() => _hovered = value),
+          onHighlightChanged: (value) => setState(() => _pressed = value),
+          onTap: () => Navigator.pushNamed(context, action.route, arguments: action.argument),
+          child: Ink(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: action.featured
+                  ? const Color(0xFFEAF2FF)
+                  : (_hovered ? const Color(0xFFF7FAFF) : Colors.white),
+              border: Border.all(color: action.featured || _hovered ? const Color(0xFFB8D1FF) : employeeLine),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: action.featured ? employeeBlue : const Color(0xFFF0F5FF),
+                  shape: BoxShape.circle,
+                  border: action.featured
+                      ? null
+                      : Border.all(color: const Color(0xFFDBEAFE)),
+                  ),
+                  child: Icon(action.icon, color: action.featured ? Colors.white : employeeBlue, size: 21),
+                ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      action.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.inter(
+                        color: _hovered ? employeeBlue : employeeNavy,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                        letterSpacing: -.2,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      action.subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.inter(
+                        color: action.featured ? employeeBlue : employeeMuted,
+                        fontSize: 11,
+                        fontWeight:
+                            action.featured ? FontWeight.w800 : FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+    );
+  }
 }
 
 class _DynamicSalaryAction extends StatefulWidget {

@@ -48,6 +48,22 @@ class EmployeePortal extends StatelessWidget {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
       ),
+      snackBarTheme: const SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+          backgroundColor: Color(0xFF101B35),
+        contentTextStyle: TextStyle(
+          color: Colors.white,
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+        ),
+        actionTextColor: Color(0xFF93C5FD),
+        closeIconColor: Colors.white,
+          elevation: 18,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(14)),
+        ),
+          insetPadding: EdgeInsets.fromLTRB(16, 0, 16, 20),
+      ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: Colors.white,

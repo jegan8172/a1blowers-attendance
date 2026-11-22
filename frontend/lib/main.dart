@@ -63,6 +63,22 @@ class _AttendanceAppState extends State<AttendanceApp> {
       theme: ThemeData(
         useMaterial3: true,
         fontFamily: GoogleFonts.manrope().fontFamily,
+        snackBarTheme: const SnackBarThemeData(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Color(0xFF101B35),
+          contentTextStyle: TextStyle(
+            color: Colors.white,
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+          ),
+          actionTextColor: Color(0xFF93C5FD),
+          closeIconColor: Colors.white,
+          elevation: 18,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(14)),
+          ),
+          insetPadding: EdgeInsets.fromLTRB(16, 0, 16, 20),
+        ),
       ),
       builder: (context, child) => AuthSessionGuard(
         child: FieldWaitingPromptHost(

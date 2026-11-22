@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -515,12 +516,15 @@ class _LeaveFormState extends State<_LeaveForm> {
   }
 
   Future<void> _pickDate(bool isFrom) async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: isFrom ? fromDate : toDate,
-      firstDate: DateTime(2025),
-      lastDate: DateTime(2028),
-    );
+    final initial = isFrom ? fromDate : toDate;
+    final picked = widget.desktop
+        ? await showDatePicker(
+            context: context,
+            initialDate: initial,
+            firstDate: DateTime(2025),
+            lastDate: DateTime(2028),
+          )
+        : await _showCompactLeaveCalendar(initial);
     if (picked != null) {
       setState(() {
         if (isFrom) {
@@ -532,6 +536,12 @@ class _LeaveFormState extends State<_LeaveForm> {
       });
     }
   }
+
+  Future<DateTime?> _showCompactLeaveCalendar(DateTime initial) => showDialog<DateTime>(
+    context: context,
+    barrierColor: const Color(0x660F172A),
+    builder: (_) => _CompactLeaveCalendar(initialDate: initial),
+  );
 
   Future<void> _submit() async {
     final token = context.read<AuthService>().token;
@@ -609,6 +619,8 @@ class _LeaveFormState extends State<_LeaveForm> {
     if (widget.leavePolicies.isEmpty) {
       return const EmployeeCard(child: Text('No leave types are currently available. Please contact your administrator.'));
     }
+
+    if (!widget.desktop) return _premiumMobileForm(context, fromStr, toStr);
 
     return EmployeeCard(
       child: Column(
@@ -779,6 +791,221 @@ class _LeaveFormState extends State<_LeaveForm> {
       ),
     );
   }
+
+  Widget _premiumMobileForm(BuildContext context, String fromStr, String toStr) {
+    final requestedDays = duration == 'Half Day'
+        ? .5
+        : toDate.difference(fromDate).inDays.abs() + 1.0;
+    final mobileFrom = DateFormat('dd-MM-yyyy').format(fromDate);
+    final mobileTo = DateFormat('dd-MM-yyyy').format(toDate);
+    final reasonBorder = OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: Color(0xFFE2E8F0)));
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+      decoration: BoxDecoration(color: Colors.white, border: Border.all(color: const Color(0xFFE2E8F0)), borderRadius: BorderRadius.circular(20), boxShadow: const [BoxShadow(color: Color(0x120F172A), blurRadius: 12, offset: Offset(0, 4))]),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Container(height: 3, decoration: BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFFBFDBFE), employeeBlue, Color(0xFFBFDBFE)]), borderRadius: BorderRadius.circular(99))),
+        const SizedBox(height: 15),
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Container(width: 38, height: 38, decoration: BoxDecoration(color: const Color(0xFFEFF6FF), border: Border.all(color: const Color(0xFFBFDBFE)), borderRadius: BorderRadius.circular(11)), child: const Icon(Icons.edit_calendar_rounded, color: Color(0xFF0F52BA), size: 20)),
+          const SizedBox(width: 10),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Apply for Leave', style: GoogleFonts.inter(color: employeeNavy, fontSize: 19, fontWeight: FontWeight.w800)), const SizedBox(height: 2), Text('Submit a new leave request for\nmanager approval', style: GoogleFonts.inter(color: employeeMuted, fontSize: 10, height: 1.35, fontWeight: FontWeight.w500))])),
+          Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: const Color(0xFFE0EDFF), border: Border.all(color: const Color(0xFFBFDBFE)), borderRadius: BorderRadius.circular(99)), child: Text('${requestedDays.toStringAsFixed(1)} Day${requestedDays == 1 ? '' : 's'}', style: GoogleFonts.inter(color: const Color(0xFF072B66), fontSize: 10, fontWeight: FontWeight.w800))),
+        ]),
+        const SizedBox(height: 15),
+        const Divider(height: 1, color: Color(0xFFE2E8F0)),
+        const SizedBox(height: 15),
+        Text('Leave Type', style: GoogleFonts.inter(color: employeeNavy, fontSize: 12, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 6),
+        _PremiumLeaveTypeMenu(
+          value: type,
+          options: widget.leavePolicies.map((item) => '${item['type']}').toList(),
+          onChanged: (value) => setState(() {
+            type = value;
+            if (!_allowsHalfDay && duration == 'Half Day') duration = 'Full Day';
+          }),
+        ),
+        const SizedBox(height: 15),
+        Text('Duration', style: GoogleFonts.inter(color: employeeNavy, fontSize: 12, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 6),
+        Container(padding: const EdgeInsets.all(4), decoration: BoxDecoration(color: const Color(0xFFF1F5F9), border: Border.all(color: const Color(0xFFE2E8F0)), borderRadius: BorderRadius.circular(16)), child: Row(children: [
+          Expanded(child: _durationButton('Full Day', duration == 'Full Day', () => setState(() => duration = 'Full Day'))),
+          Expanded(child: _durationButton('First Half', duration == 'Half Day' && halfDaySession == 'morning', _allowsHalfDay ? () => setState(() { duration = 'Half Day'; halfDaySession = 'morning'; }) : null)),
+          Expanded(child: _durationButton('Second Half', duration == 'Half Day' && halfDaySession == 'evening', _allowsHalfDay ? () => setState(() { duration = 'Half Day'; halfDaySession = 'evening'; }) : null)),
+        ])),
+        if (type == 'Earned Leave') ...[
+          const SizedBox(height: 13),
+          Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: const Color(0xFFEFF6FF), border: Border.all(color: const Color(0xFFBFDBFE)), borderRadius: BorderRadius.circular(14)), child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [const Icon(Icons.verified_user_rounded, color: Color(0xFF0F52BA), size: 18), const SizedBox(width: 8), Expanded(child: Text('Earned Leave is paid leave. Your company paid-leave rules apply to this request.', style: GoogleFonts.inter(color: const Color(0xFF072B66), fontSize: 10, height: 1.4, fontWeight: FontWeight.w600)))])),
+        ],
+        const SizedBox(height: 15),
+        Row(children: [Expanded(child: InkWell(onTap: () => _pickDate(true), child: _PremiumMobileDateField('From Date', mobileFrom))), const SizedBox(width: 10), Expanded(child: InkWell(onTap: () => _pickDate(false), child: _PremiumMobileDateField('To Date', mobileTo)))]),
+        const SizedBox(height: 15),
+        Text('REASON', style: GoogleFonts.inter(color: employeeMuted, fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: .5)),
+        const SizedBox(height: 6),
+        TextField(controller: _reasonCtrl, minLines: 3, maxLines: 3, decoration: InputDecoration(hintText: 'Briefly describe the reason for leave...', hintStyle: GoogleFonts.inter(color: const Color(0xFF94A3B8), fontSize: 12), filled: true, fillColor: const Color(0xFFF8FAFC), contentPadding: const EdgeInsets.all(13), border: reasonBorder, enabledBorder: reasonBorder, focusedBorder: reasonBorder)),
+        const SizedBox(height: 15),
+        Row(children: [
+          Expanded(child: OutlinedButton(onPressed: () { setState(() { _reasonCtrl.clear(); fromDate = DateTime.now(); toDate = DateTime.now(); duration = 'Full Day'; halfDaySession = 'morning'; }); ScaffoldMessenger.of(context).clearSnackBars(); ScaffoldMessenger.of(context).showSnackBar(employeePremiumSnackBar('Form cleared.', isSuccess: true)); }, style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48), foregroundColor: employeeNavy, backgroundColor: Colors.white, side: const BorderSide(color: Color(0xFFE2E8F0)), shape: const StadiumBorder()), child: Text('Clear', style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w800)))),
+          const SizedBox(width: 10),
+          Expanded(flex: 2, child: FilledButton.icon(onPressed: _submitting ? null : _submit, icon: _submitting ? const SizedBox(width: 15, height: 15, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) : const Icon(Icons.send_rounded, size: 17), label: Text(_submitting ? 'Submitting…' : 'Submit Request'), style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48), backgroundColor: const Color(0xFF2563EB), foregroundColor: Colors.white, elevation: 5, shadowColor: const Color(0x552563EB), shape: const StadiumBorder(), textStyle: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w800)))),
+        ]),
+      ]),
+    );
+  }
+
+  Widget _durationButton(String label, bool selected, VoidCallback? onTap) => TextButton(
+    onPressed: onTap,
+    style: TextButton.styleFrom(backgroundColor: selected ? const Color(0xFF0F52BA) : Colors.transparent, foregroundColor: selected ? Colors.white : employeeMuted, disabledForegroundColor: const Color(0xFF94A3B8), minimumSize: const Size(0, 40), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+    child: Text(label, style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w800)),
+  );
+}
+
+class _PremiumLeaveTypeMenu extends StatelessWidget {
+  const _PremiumLeaveTypeMenu({required this.value, required this.options, required this.onChanged});
+  final String value;
+  final List<String> options;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) => MenuAnchor(
+      alignmentOffset: const Offset(0, 2),
+      style: MenuStyle(
+        minimumSize: WidgetStatePropertyAll(Size(constraints.maxWidth, 0)),
+        maximumSize: WidgetStatePropertyAll(Size(constraints.maxWidth, 190)),
+        padding: const WidgetStatePropertyAll(EdgeInsets.zero),
+        elevation: const WidgetStatePropertyAll(7),
+        surfaceTintColor: const WidgetStatePropertyAll(Colors.white),
+        backgroundColor: const WidgetStatePropertyAll(Colors.white),
+        shape: WidgetStatePropertyAll(RoundedRectangleBorder(borderRadius: BorderRadius.circular(2), side: const BorderSide(color: Color(0xFF94A3B8)))),
+      ),
+      menuChildren: options.map((option) {
+        final selected = option == value;
+        return MenuItemButton(
+          onPressed: () => onChanged(option),
+          style: ButtonStyle(padding: const WidgetStatePropertyAll(EdgeInsets.zero), minimumSize: WidgetStatePropertyAll(Size(constraints.maxWidth, 0))),
+          child: Container(width: constraints.maxWidth, height: 38, padding: const EdgeInsets.symmetric(horizontal: 40), alignment: Alignment.centerLeft, color: selected ? employeeBlue : Colors.white, child: Text(option, style: GoogleFonts.inter(color: selected ? Colors.white : employeeNavy, fontSize: 13, fontWeight: selected ? FontWeight.w700 : FontWeight.w500))),
+        );
+      }).toList(),
+      builder: (context, controller, child) => InkWell(
+        onTap: controller.isOpen ? controller.close : controller.open,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          height: 48,
+          padding: const EdgeInsets.symmetric(horizontal: 13),
+          decoration: BoxDecoration(color: const Color(0xFFF8FAFC), border: Border.all(color: employeeBlue, width: 1.3), borderRadius: BorderRadius.circular(12)),
+          child: Row(children: [const Icon(Icons.event_note_rounded, color: Color(0xFF0F52BA), size: 19), const SizedBox(width: 12), Expanded(child: Text(value, style: GoogleFonts.inter(color: employeeNavy, fontSize: 13, fontWeight: FontWeight.w600))), const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF475569), size: 20)]),
+        ),
+      ),
+    ),
+  );
+}
+
+class _CompactLeaveCalendar extends StatefulWidget {
+  const _CompactLeaveCalendar({required this.initialDate});
+  final DateTime initialDate;
+
+  @override
+  State<_CompactLeaveCalendar> createState() => _CompactLeaveCalendarState();
+}
+
+class _CompactLeaveCalendarState extends State<_CompactLeaveCalendar> {
+  late DateTime _shownMonth;
+
+  @override
+  void initState() {
+    super.initState();
+    _shownMonth = DateTime(widget.initialDate.year, widget.initialDate.month);
+  }
+
+  void _moveMonth(int offset) => setState(() => _shownMonth = DateTime(_shownMonth.year, _shownMonth.month + offset));
+
+  @override
+  Widget build(BuildContext context) {
+    final firstWeekday = DateTime(_shownMonth.year, _shownMonth.month, 1).weekday % 7;
+    final dayCount = DateUtils.getDaysInMonth(_shownMonth.year, _shownMonth.month);
+    final totalCells = ((firstWeekday + dayCount + 6) ~/ 7) * 7;
+    const days = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 34),
+      backgroundColor: Colors.white,
+      surfaceTintColor: Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: SizedBox(
+        width: 310,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Row(children: [
+              Expanded(child: Text(DateFormat('MMMM, yyyy').format(_shownMonth), style: GoogleFonts.inter(color: employeeNavy, fontSize: 12, fontWeight: FontWeight.w800))),
+              IconButton(onPressed: () => _moveMonth(-1), icon: const Icon(Icons.keyboard_arrow_up_rounded, size: 21), color: const Color(0xFF334155), splashRadius: 18),
+              IconButton(onPressed: () => _moveMonth(1), icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 21), color: const Color(0xFF334155), splashRadius: 18),
+            ]),
+            const SizedBox(height: 3),
+            Row(children: days.map((day) => Expanded(child: Center(child: Text(day, style: GoogleFonts.inter(color: const Color(0xFF0F172A), fontSize: 10, fontWeight: FontWeight.w700))))).toList()),
+            const SizedBox(height: 5),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: totalCells,
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 7, mainAxisExtent: 28),
+              itemBuilder: (_, index) {
+                final day = index - firstWeekday + 1;
+                if (day < 1 || day > dayCount) return const SizedBox.shrink();
+                final selected = widget.initialDate.year == _shownMonth.year && widget.initialDate.month == _shownMonth.month && widget.initialDate.day == day;
+                return InkWell(
+                  borderRadius: BorderRadius.circular(5),
+                  onTap: () => Navigator.pop(context, DateTime(_shownMonth.year, _shownMonth.month, day)),
+                  child: Center(
+                    child: Container(
+                      width: 25,
+                      height: 25,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(color: selected ? employeeBlue : Colors.transparent, borderRadius: BorderRadius.circular(4)),
+                      child: Text('$day', style: GoogleFonts.robotoMono(color: selected ? Colors.white : employeeNavy, fontSize: 11, fontWeight: selected ? FontWeight.w700 : FontWeight.w500)),
+                    ),
+                  ),
+                );
+              },
+            ),
+            const Divider(height: 17, color: Color(0xFFE2E8F0)),
+            Row(children: [
+              TextButton(onPressed: () => Navigator.pop(context), child: Text('Clear', style: GoogleFonts.inter(color: employeeBlue, fontSize: 11, fontWeight: FontWeight.w700))),
+              const Spacer(),
+              TextButton(onPressed: () => Navigator.pop(context, DateTime.now()), child: Text('Today', style: GoogleFonts.inter(color: employeeBlue, fontSize: 11, fontWeight: FontWeight.w700))),
+            ]),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+class _PremiumMobileDateField extends StatelessWidget {
+  const _PremiumMobileDateField(this.label, this.value);
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(label, style: GoogleFonts.inter(color: employeeNavy, fontSize: 12, fontWeight: FontWeight.w800)),
+      const SizedBox(height: 7),
+      Container(
+        height: 40,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8FAFC),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(children: [
+          Expanded(child: Text(value, style: GoogleFonts.robotoMono(color: employeeNavy, fontSize: 11, fontWeight: FontWeight.w600))),
+          const Icon(Icons.calendar_today_outlined, size: 15, color: Color(0xFF334155)),
+        ]),
+      ),
+    ],
+  );
 }
 
 class _DateFieldShell extends StatelessWidget {
@@ -875,6 +1102,8 @@ class _DropdownField extends StatelessWidget {
   );
 }
 
+// Retained for the legacy compact balance view used by older routes.
+// ignore: unused_element
 class _MobileLeaveBalance extends StatelessWidget {
   const _MobileLeaveBalance({required this.balances});
   final List<dynamic> balances;
@@ -1009,12 +1238,119 @@ class _MobileLeave extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const MobileEmployeeHeader(),
-        const SizedBox(height: 18),
-        _MobileLeaveBalance(balances: balances),
-        const SizedBox(height: 18),
+        _PremiumLeaveHeading(balances: balances),
+        const SizedBox(height: 16),
+        _PremiumLeaveBalance(
+          balances: balances,
+          onDetails: () => Navigator.pushNamed(context, '/employee/leave', arguments: 'requests'),
+        ),
+        const SizedBox(height: 16),
         _LeaveForm(desktop: false, leavePolicies: _applicableLeavePolicies(balances), onSuccess: onRefresh),
       ],
     );
+  }
+}
+
+class _PremiumLeaveHeading extends StatelessWidget {
+  const _PremiumLeaveHeading({required this.balances});
+  final List<dynamic> balances;
+
+  @override
+  Widget build(BuildContext context) {
+    final remaining = balances.fold<num>(0, (sum, balance) {
+      if (balance is! Map) return sum;
+      final total = balance['total'] as num? ?? 0;
+      final used = balance['used'] as num? ?? 0;
+      return sum + (total - used).clamp(0, total);
+    });
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Hello, Okash', style: GoogleFonts.inter(color: employeeNavy, fontSize: 24, fontWeight: FontWeight.w800, letterSpacing: -.5)),
+        const SizedBox(height: 4),
+        Row(children: [
+          Text('Leave Balance & Requests', style: GoogleFonts.inter(color: employeeMuted, fontSize: 11, fontWeight: FontWeight.w500)),
+          const Padding(padding: EdgeInsets.symmetric(horizontal: 6), child: Text('•', style: TextStyle(color: Color(0xFF94A3B8)))),
+          Text('EMP1008', style: GoogleFonts.robotoMono(color: employeeBlue, fontSize: 11, fontWeight: FontWeight.w700)),
+        ]),
+      ])),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(color: const Color(0xFFE0EDFF), border: Border.all(color: const Color(0xFFBFDBFE)), borderRadius: BorderRadius.circular(99)),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.event_available_rounded, color: Color(0xFF0F52BA), size: 14),
+          const SizedBox(width: 5),
+          Text('${_days(remaining)} Days Left', style: GoogleFonts.inter(color: const Color(0xFF072B66), fontSize: 10, fontWeight: FontWeight.w800)),
+        ]),
+      ),
+    ]);
+  }
+}
+
+class _PremiumLeaveBalance extends StatelessWidget {
+  const _PremiumLeaveBalance({required this.balances, required this.onDetails});
+  final List<dynamic> balances;
+  final VoidCallback onDetails;
+
+  Map<String, dynamic> _balance(String keyword) {
+    return balances.whereType<Map>().map((item) => Map<String, dynamic>.from(item)).firstWhere(
+          (item) => '${item['type']}'.toLowerCase().contains(keyword),
+          orElse: () => <String, dynamic>{'type': keyword == 'earned' ? 'Earned Leave' : 'Sick Leave', 'total': 0, 'used': 0},
+        );
+  }
+
+  num _number(Object? value) => value is num ? value : num.tryParse('$value') ?? 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final sick = _balance('sick');
+    final earned = _balance('earned');
+    return Container(
+      height: 264,
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF0F172A), Color(0xFF1E293B)]),
+        border: Border.all(color: const Color(0xFF3B82F6).withValues(alpha: .40)),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: const [BoxShadow(color: Color(0x260F172A), blurRadius: 18, offset: Offset(0, 8))],
+      ),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Row(children: [
+          Container(width: 36, height: 36, decoration: BoxDecoration(color: const Color(0xFF1E293B), border: Border.all(color: const Color(0x553B82F6)), borderRadius: BorderRadius.circular(11)), child: const Icon(Icons.calendar_today_rounded, color: Color(0xFFBFDBFE), size: 18)),
+          const SizedBox(width: 10),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Leave Balance', style: GoogleFonts.inter(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800)), Text('FY ${DateTime.now().year} Annual Quota', style: GoogleFonts.inter(color: const Color(0xFFBFDBFE), fontSize: 10, fontWeight: FontWeight.w600))])),
+          TextButton.icon(onPressed: onDetails, iconAlignment: IconAlignment.end, icon: const Icon(Icons.chevron_right_rounded, size: 16), label: Text('View Details', style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w800)), style: TextButton.styleFrom(foregroundColor: const Color(0xFFDBEAFE), padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(99), side: const BorderSide(color: Color(0x553B82F6))))),
+        ]),
+        const SizedBox(height: 14),
+        Row(children: [
+          Expanded(child: _PremiumLeavePod(balance: sick, sick: true, number: _number)),
+          const SizedBox(width: 10),
+          Expanded(child: _PremiumLeavePod(balance: earned, number: _number)),
+        ]),
+      ]),
+    );
+  }
+}
+
+class _PremiumLeavePod extends StatelessWidget {
+  const _PremiumLeavePod({required this.balance, required this.number, this.sick = false});
+  final Map<String, dynamic> balance;
+  final num Function(Object?) number;
+  final bool sick;
+  @override
+  Widget build(BuildContext context) {
+    final total = number(balance['total']);
+    final used = number(balance['used']);
+    final left = (total - used).clamp(0, total);
+    final pct = total == 0 ? 0.0 : left / total;
+    final label = balance['type']?.toString() ?? (sick ? 'Sick Leave' : 'Earned Leave');
+    final decoration = sick
+        ? BoxDecoration(color: const Color(0xCC1E293B), border: Border.all(color: const Color(0x333B82F6)), borderRadius: BorderRadius.circular(15))
+        : BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFF0F52BA), Color(0xFF1D4ED8)]), borderRadius: BorderRadius.circular(15), boxShadow: const [BoxShadow(color: Color(0x331D4ED8), blurRadius: 12, offset: Offset(0, 5))]);
+    return Container(height: 160, padding: const EdgeInsets.all(13), decoration: decoration, child: Column(children: [
+      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Icon(sick ? Icons.medical_services_rounded : Icons.event_note_rounded, color: sick ? const Color(0xFFBFDBFE) : Colors.white, size: 17), Text('${(pct * 100).round()}% left', style: GoogleFonts.inter(color: sick ? const Color(0xFFBFDBFE) : Colors.white, fontSize: 9, fontWeight: FontWeight.w700))]),
+      const SizedBox(height: 9), Text(label, textAlign: TextAlign.center, style: GoogleFonts.inter(color: sick ? const Color(0xFFDBEAFE) : const Color(0xFFDBEAFE), fontSize: 11, fontWeight: FontWeight.w700)),
+      const SizedBox(height: 2), Text(_days(left), style: GoogleFonts.robotoMono(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w800)), Text('of ${_days(total)} days', style: GoogleFonts.inter(color: sick ? const Color(0xFFBFDBFE) : const Color(0xFFDBEAFE), fontSize: 10)),
+      const SizedBox(height: 10), ClipRRect(borderRadius: BorderRadius.circular(99), child: LinearProgressIndicator(value: pct, minHeight: 5, backgroundColor: sick ? const Color(0xFF0F172A) : const Color(0xFF1E40AF), valueColor: const AlwaysStoppedAnimation(Colors.white))),
+    ]));
   }
 }

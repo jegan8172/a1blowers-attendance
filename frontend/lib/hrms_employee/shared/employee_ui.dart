@@ -19,6 +19,74 @@ const employeePurple = Color(0xFF772AE4);
 const employeeOrange = Color(0xFFFF7100);
 const employeeGreen = Color(0xFF08A978);
 
+/// Shared modern notification surface for employee actions.  Use this instead
+/// of a bare SnackBar whenever the message represents an attendance, tracking,
+/// request, or account outcome.
+SnackBar employeePremiumSnackBar(
+  String message, {
+  bool isError = false,
+  bool isSuccess = false,
+}) {
+  final accent = isError
+      ? const Color(0xFFFDA4AF)
+      : isSuccess
+          ? const Color(0xFF5EEAD4)
+          : const Color(0xFF7DD3FC);
+  final icon = isError
+      ? Icons.error_outline_rounded
+      : isSuccess
+          ? Icons.check_circle_outline_rounded
+          : Icons.info_outline_rounded;
+  final title = isError
+      ? 'Action needed'
+      : isSuccess
+          ? 'All set'
+          : 'Update';
+  return SnackBar(
+    behavior: SnackBarBehavior.floating,
+    elevation: 0,
+    backgroundColor: Colors.transparent,
+    padding: EdgeInsets.zero,
+    margin: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+    duration: const Duration(seconds: 4),
+    content: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF172554), Color(0xFF0F172A)],
+        ),
+        border: Border.all(color: const Color(0xFF60A5FA).withValues(alpha: .34)),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: const [
+          BoxShadow(color: Color(0x3D020617), blurRadius: 22, offset: Offset(0, 9)),
+        ],
+      ),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Container(
+          width: 30,
+          height: 30,
+          decoration: BoxDecoration(
+            color: accent.withValues(alpha: .16),
+            border: Border.all(color: accent.withValues(alpha: .34)),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(icon, color: accent, size: 17),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 2),
+            Text(message, style: const TextStyle(color: Color(0xFFDCEBFF), fontSize: 11, height: 1.25, fontWeight: FontWeight.w600)),
+          ]),
+        ),
+      ]),
+    ),
+  );
+}
+
 class EmployeeScaffold extends StatelessWidget {
   const EmployeeScaffold({
     super.key,
@@ -41,6 +109,7 @@ class EmployeeScaffold extends StatelessWidget {
   Widget build(BuildContext context) {
     if (MediaQuery.sizeOf(context).width < 600) {
       return Scaffold(
+        backgroundColor: const Color(0xFFF8FAFC),
         bottomNavigationBar: EmployeeMobileBottomNav(route: route),
         body: SafeArea(
           child: Column(
@@ -58,6 +127,7 @@ class EmployeeScaffold extends StatelessWidget {
       );
     }
     return Scaffold(
+      backgroundColor: const Color(0xFFF8FAFC),
       body: Column(
         children: [
           EmployeeTopNavigation(route: route),
@@ -570,8 +640,8 @@ class _EmployeeTopNavigationState extends State<EmployeeTopNavigation> {
   Widget build(BuildContext context) {
     if (widget.mobile) {
       return Container(
-        height: 78,
-        padding: const EdgeInsets.symmetric(horizontal: 18),
+        height: 66,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
         decoration: const BoxDecoration(
           color: Colors.white,
           border: Border(bottom: BorderSide(color: employeeLine)),
@@ -587,8 +657,8 @@ class _EmployeeTopNavigationState extends State<EmployeeTopNavigation> {
           children: [
             Image.asset(
               'assets/images/godigital_logo.png',
-              height: 45,
-              width: 136,
+              height: 30,
+              width: 112,
               fit: BoxFit.contain,
             ),
             const Spacer(),
