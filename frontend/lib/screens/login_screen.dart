@@ -108,7 +108,7 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
           const SizedBox(width: 8),
           const Text(
-            'GoDigital Portal',
+            'A1Blowers Attendance',
             style: TextStyle(
               fontSize: 17,
               fontWeight: FontWeight.w600,
