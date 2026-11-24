@@ -6,7 +6,7 @@ import '../features/leave/leave_page.dart';
 import '../features/extra_hours/extra_hours_page.dart';
 import '../features/salary/salary_page.dart';
 import '../features/tracking/tracking_page.dart';
-import '../../features/chat/chat_page.dart';
+import '../pages/chat_page.dart';
 
 /// Routes per HRMS_PROJECT_BLUEPRINT.md, Section 1 (Approved Employee pages).
 class AppRouter {
@@ -21,6 +21,6 @@ class AppRouter {
     '/employee/extra-hours': ExtraHoursPage.builder,
     '/employee/salary': SalaryPage.builder,
     '/employee/tracking': TrackingPage.builder,
-    '/employee/chat': (_) => const ChatPage(),
+    '/employee/chat': (_) => const EmployeeChatPage(),
   };
 }

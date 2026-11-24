@@ -101,7 +101,7 @@ class PushNotifications {
   void _showForegroundNotification(RemoteMessage message) {
     final context = _navigatorKey?.currentContext;
     if (context == null) return;
-    final title = message.notification?.title ?? 'GoDigital Attendance';
+    final title = message.notification?.title ?? 'A1Blowers Attendance';
     final body = message.notification?.body ?? 'You have a new update.';
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(
       SnackBar(content: Text('$title: $body'), action: SnackBarAction(label: 'Open', onPressed: () => _openConversation(message))),

@@ -12,6 +12,7 @@ import '../../services/hrms_tracking_api.dart';
 import '../../services/attendance_api.dart';
 import 'live_tracking_coordinator.dart';
 import 'android_live_tracking_service.dart';
+import 'employee_ui.dart';
 
 /// Keeps the mandatory field-waiting comment prompt active while an employee
 /// moves between pages. A prompt is only shown for a currently active field
@@ -31,7 +32,130 @@ class FieldWaitingPromptHost extends StatefulWidget {
   State<FieldWaitingPromptHost> createState() => _FieldWaitingPromptHostState();
 }
 
-class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with WidgetsBindingObserver {
+/// A compact anchored selector that avoids the platform's full-screen native
+/// dropdown while retaining keyboard and tap accessibility.
+class _WaitingReasonMenu extends StatelessWidget {
+  const _WaitingReasonMenu({
+    required this.value,
+    required this.options,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  final String value;
+  final List<String> options;
+  final bool enabled;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) => MenuAnchor(
+      alignmentOffset: const Offset(0, 4),
+      style: MenuStyle(
+        minimumSize: WidgetStatePropertyAll(Size(constraints.maxWidth, 0)),
+        maximumSize: const WidgetStatePropertyAll(Size(double.infinity, 270)),
+        padding: const WidgetStatePropertyAll(
+          EdgeInsets.symmetric(vertical: 5),
+        ),
+        elevation: const WidgetStatePropertyAll(10),
+        backgroundColor: const WidgetStatePropertyAll(Colors.white),
+        surfaceTintColor: const WidgetStatePropertyAll(Colors.white),
+        shape: WidgetStatePropertyAll(
+          RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: Color(0xFFBBD6FF)),
+          ),
+        ),
+      ),
+      menuChildren: options.map((option) {
+        final selected = option == value;
+        return MenuItemButton(
+          onPressed: enabled ? () => onChanged(option) : null,
+          style: const ButtonStyle(
+            padding: WidgetStatePropertyAll(EdgeInsets.zero),
+            minimumSize: WidgetStatePropertyAll(Size.fromHeight(0)),
+          ),
+          child: Container(
+            width: constraints.maxWidth,
+            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
+            decoration: BoxDecoration(
+              color: selected ? const Color(0xFFEAF3FF) : Colors.transparent,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  selected
+                      ? Icons.check_circle_rounded
+                      : Icons.radio_button_unchecked_rounded,
+                  size: 17,
+                  color: selected ? employeeBlue : const Color(0xFF94A3B8),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    option,
+                    style: TextStyle(
+                      color: selected ? employeeBlue : employeeNavy,
+                      fontSize: 13,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }).toList(),
+      builder: (context, controller, child) => Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: !enabled
+              ? null
+              : (controller.isOpen ? controller.close : controller.open),
+          borderRadius: BorderRadius.circular(15),
+          child: Ink(
+            height: 54,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFAFCFF),
+              border: Border.all(color: employeeBlue, width: 1.7),
+              borderRadius: BorderRadius.circular(15),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: employeeNavy,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                AnimatedRotation(
+                  turns: controller.isOpen ? .5 : 0,
+                  duration: const Duration(milliseconds: 160),
+                  child: const Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    color: Color(0xFF31557E),
+                    size: 23,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost>
+    with WidgetsBindingObserver {
   // A manual page refresh used to make this prompt appear because it calls
   // _check immediately, while the background check ran only once a minute.
   // Poll the server more frequently so a newly due waiting alert is displayed
@@ -52,13 +176,16 @@ class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with Wi
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<LiveTrackingCoordinator>().restore();
       _check();
-      _coordinator = context.read<LiveTrackingCoordinator>()..addListener(_onCoordinatorChanged);
+      _coordinator = context.read<LiveTrackingCoordinator>()
+        ..addListener(_onCoordinatorChanged);
     });
     WidgetsBinding.instance.addObserver(this);
     widget.routeRevision.addListener(_onRouteChanged);
     _auth = context.read<AuthService>()..addListener(_onAuthChanged);
     _timer = Timer.periodic(_alertCheckInterval, (_) => _check());
-    AndroidLiveTrackingService.pendingWaitingReasonId.addListener(_onNotificationTap);
+    AndroidLiveTrackingService.pendingWaitingReasonId.addListener(
+      _onNotificationTap,
+    );
   }
 
   @override
@@ -70,7 +197,9 @@ class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with Wi
     _timer?.cancel();
     _stopPromptFeedback();
     _soundPlayer.dispose();
-    AndroidLiveTrackingService.pendingWaitingReasonId.removeListener(_onNotificationTap);
+    AndroidLiveTrackingService.pendingWaitingReasonId.removeListener(
+      _onNotificationTap,
+    );
     super.dispose();
   }
 
@@ -84,7 +213,10 @@ class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with Wi
       if (alert == null || int.tryParse('${alert['id']}') != id) return;
       _dialogOpen = true;
       try {
-        await _showDialog(reasonId: id, waitingMinutes: alert['waiting_minutes'] ?? 0);
+        await _showDialog(
+          reasonId: id,
+          waitingMinutes: alert['waiting_minutes'] ?? 0,
+        );
       } finally {
         _dialogOpen = false;
       }
@@ -93,7 +225,8 @@ class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with Wi
 
   void _onAuthChanged() {
     final auth = _auth;
-    if (auth?.isAuthenticated == true && auth?.userType?.toLowerCase() == 'employee') {
+    if (auth?.isAuthenticated == true &&
+        auth?.userType?.toLowerCase() == 'employee') {
       context.read<LiveTrackingCoordinator>().restore();
       _onRouteChanged();
     }
@@ -330,10 +463,14 @@ class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with Wi
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: 8),
-                  const Text('You are still checked in after your scheduled shift end.'),
+                  const Text(
+                    'You are still checked in after your scheduled shift end.',
+                  ),
                   const SizedBox(height: 12),
                   Text('Shift end: ${reminder['shiftEnd'] ?? '-'}'),
-                  Text('Time after shift: ${reminder['elapsedAfterShiftMinutes'] ?? 0} minutes'),
+                  Text(
+                    'Time after shift: ${reminder['elapsedAfterShiftMinutes'] ?? 0} minutes',
+                  ),
                   Text('Reminder sound: $sound'),
                 ],
               ),
@@ -371,7 +508,11 @@ class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with Wi
                 } catch (error) {
                   if (!dialogContext.mounted) return;
                   ScaffoldMessenger.of(dialogContext).showSnackBar(
-                    SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
+                    SnackBar(
+                      content: Text(
+                        error.toString().replaceFirst('Exception: ', ''),
+                      ),
+                    ),
                   );
                 }
               },
@@ -388,8 +529,11 @@ class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with Wi
   void _startClockOutFeedback(String sound, Duration repeat) {
     _stopPromptFeedback();
     Future<void> play() async {
-      try { await _soundPlayer.play(AssetSource('sounds/$sound'), volume: 0.8); } catch (_) {}
+      try {
+        await _soundPlayer.play(AssetSource('sounds/$sound'), volume: 0.8);
+      } catch (_) {}
     }
+
     play();
     _soundTimer = Timer.periodic(repeat, (_) => play());
   }
@@ -423,38 +567,96 @@ class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with Wi
         context: rootContext,
         barrierDismissible: false,
         builder: (dialogContext) => StatefulBuilder(
-          builder: (dialogContext, setDialogState) => AlertDialog(
-            title: const Text('Field waiting reason'),
-            content: Column(
+          builder: (dialogContext, setDialogState) => EmployeeActionDialog(
+            title: 'Field waiting reason',
+            subtitle:
+                'You have been at this location for $waitingMinutes minutes. Please enter the reason for waiting.',
+            icon: Icons.hourglass_top_rounded,
+            maxWidth: 420,
+            padding: const EdgeInsets.fromLTRB(22, 24, 22, 22),
+            iconExtent: 50,
+            titleSize: 22,
+            trailing: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+              decoration: BoxDecoration(
+                color: const Color(0xFFE7F0FF),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Text(
+                '${waitingMinutes.toString().padLeft(2, '0')}:00',
+                style: const TextStyle(
+                  color: employeeBlue,
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            body: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'You have been at this location for $waitingMinutes minutes. '
-                  'Please enter the reason for waiting.',
-                ),
-                const SizedBox(height: 16),
-                DropdownButtonFormField<String>(
-                  value: selectedReason,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Reason type',
-                    border: OutlineInputBorder(),
+                const Text(
+                  'Reason type',
+                  style: TextStyle(
+                    color: employeeBlue,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
                   ),
-                  items: reasons
-                      .map((value) => DropdownMenuItem(value: value, child: Text(value)))
-                      .toList(),
-                  onChanged: submitting ? null : (value) {
-                    if (value != null) setDialogState(() => selectedReason = value);
-                  },
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 6),
+                _WaitingReasonMenu(
+                  value: selectedReason,
+                  options: reasons,
+                  enabled: !submitting,
+                  onChanged: (value) =>
+                      setDialogState(() => selectedReason = value),
+                ),
+                const SizedBox(height: 17),
+                Row(
+                  children: [
+                    const Text(
+                      'Reason for waiting',
+                      style: TextStyle(
+                        color: employeeNavy,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      '${controller.text.length}/500',
+                      style: const TextStyle(
+                        color: employeeMuted,
+                        fontFamily: 'monospace',
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 7),
                 TextField(
                   controller: controller,
+                  minLines: 3,
                   maxLines: 3,
                   maxLength: 500,
-                  decoration: const InputDecoration(
-                    labelText: 'Reason for waiting',
-                    border: OutlineInputBorder(),
+                  onChanged: (_) => setDialogState(() {}),
+                  decoration: InputDecoration(
+                    hintText: 'Reason for waiting',
+                    filled: true,
+                    fillColor: const Color(0xFFFAFCFF),
+                    counterText: '',
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(17),
+                      borderSide: const BorderSide(color: employeeLine),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(17),
+                      borderSide: const BorderSide(
+                        color: employeeBlue,
+                        width: 1.7,
+                      ),
+                    ),
                   ),
                 ),
                 if (errorMessage != null) ...[
@@ -466,15 +668,29 @@ class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with Wi
                 ],
               ],
             ),
-            actions: [
-              ElevatedButton(
+            actions: SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF1559DC),
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size.fromHeight(54),
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  elevation: 3,
+                  shadowColor: const Color(0x4D1559DC),
+                ),
                 onPressed: submitting
                     ? null
                     : () async {
                         final details = controller.text.trim();
                         final reason = selectedReason == 'Other'
                             ? details
-                            : details.isEmpty ? selectedReason : '$selectedReason: $details';
+                            : details.isEmpty
+                            ? selectedReason
+                            : '$selectedReason: $details';
                         if (reason.isEmpty) {
                           setDialogState(
                             () => errorMessage = 'Please enter a reason.',
@@ -487,7 +703,9 @@ class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with Wi
                         });
                         try {
                           if (reason.length > 500) {
-                            throw Exception('Reason must be 500 characters or less.');
+                            throw Exception(
+                              'Reason must be 500 characters or less.',
+                            );
                           }
                           await HrmsTrackingApi.submitWaitingReason(
                             reasonId: reasonId,
@@ -513,9 +731,13 @@ class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with Wi
                           }
                         }
                       },
-                child: Text(submitting ? 'Submitting…' : 'Submit'),
+                icon: const Icon(Icons.send_rounded, size: 17),
+                label: Text(
+                  submitting ? 'Submitting…' : 'Submit',
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
               ),
-            ],
+            ),
           ),
         ),
       );
@@ -524,7 +746,10 @@ class _FieldWaitingPromptHostState extends State<FieldWaitingPromptHost> with Wi
       // The dialog route may still be completing its pop animation. Dispose
       // after the next transition frame so TextField listeners are not torn
       // down while Flutter is rebuilding the dialog.
-      Future<void>.delayed(const Duration(milliseconds: 350), controller.dispose);
+      Future<void>.delayed(
+        const Duration(milliseconds: 350),
+        controller.dispose,
+      );
     }
   }
 

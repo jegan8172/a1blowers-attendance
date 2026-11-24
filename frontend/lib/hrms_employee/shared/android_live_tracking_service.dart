@@ -194,7 +194,7 @@ class AndroidLiveTrackingService {
           await service.setForegroundNotificationInfo(
             title: 'Clock-out reminder',
             content:
-                'Your shift has ended. Open GoDigital Attendance to respond.',
+                'Your shift has ended. Open A1Blowers Attendance to respond.',
           );
         }
       } catch (_) {

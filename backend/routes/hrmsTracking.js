@@ -13,6 +13,7 @@ router.patch('/templates/:id/archive', hrms.requireAdmin, hrms.archiveTrackingTe
 router.patch('/templates/:id/restore', hrms.requireAdmin, hrms.restoreTrackingTemplate);
 router.delete('/templates/:id', hrms.requireAdmin, hrms.deleteTrackingTemplate);
 router.put('/templates/employee/:employeeId', hrms.requireAdmin, hrms.assignTrackingTemplate);
+router.get('/office-locations/active', hrms.activeOfficeLocations);
 router.get('/office-locations', hrms.requireAdmin, hrms.officeLocations);
 router.post('/office-locations', hrms.requireAdmin, hrms.createOfficeLocation);
 router.put('/office-locations/:id', hrms.requireAdmin, hrms.updateOfficeLocation);

@@ -63,71 +63,201 @@ class _TrackingCommentsSectionState extends State<TrackingCommentsSection> {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      color: const Color(0xFFFFFBFF),
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
-        side: const BorderSide(color: Color(0xFFD9E2F2)),
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: const Color(0xFFD9E2F2)),
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x14141E33),
+            blurRadius: 18,
+            offset: Offset(0, 8),
+          ),
+        ],
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Align(
-              alignment: Alignment.centerRight,
-              child: TrackingCommentsHistoryButton(),
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              'Employee Comments',
-              style: TextStyle(
-                color: Color(0xFF061457),
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
+      child: Column(
+        children: [
+          const SizedBox(
+            height: 4,
+            width: double.infinity,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    Color(0xFFBFDBFE),
+                    Color(0xFF2563EB),
+                    Color(0xFFBFDBFE),
+                  ],
+                ),
               ),
             ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: controller,
-              maxLines: 3,
-              decoration: InputDecoration(
-                labelText: 'Write a comment',
-                labelStyle: const TextStyle(color: Color(0xFF64748B)),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.all(Radius.circular(10)),
-                  borderSide: const BorderSide(color: Color(0xFFD9E2F2)),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEAF3FF),
+                        border: Border.all(color: const Color(0xFFBFDBFE)),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: const Icon(
+                        Icons.chat_bubble_outline_rounded,
+                        color: Color(0xFF2563EB),
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Text(
+                        'Employee Comments',
+                        style: TextStyle(
+                          color: Color(0xFF0F172A),
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    const _CompactHistoryButton(),
+                  ],
                 ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.all(Radius.circular(10)),
-                  borderSide: const BorderSide(
-                    color: Color(0xFF075EF7),
-                    width: 2,
+                const SizedBox(height: 13),
+                Wrap(
+                  spacing: 7,
+                  runSpacing: 7,
+                  children: [
+                    _QuickCommentChip(
+                      label: 'Reached site',
+                      onTap: () =>
+                          setState(() => controller.text = 'Reached site'),
+                    ),
+                    _QuickCommentChip(
+                      label: 'In transit',
+                      onTap: () =>
+                          setState(() => controller.text = 'In transit'),
+                    ),
+                    _QuickCommentChip(
+                      label: 'In meeting',
+                      onTap: () =>
+                          setState(() => controller.text = 'In meeting'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: controller,
+                  maxLines: 3,
+                  minLines: 3,
+                  decoration: InputDecoration(
+                    hintText: 'Write a comment...',
+                    hintStyle: const TextStyle(color: Color(0xFF71809A)),
+                    contentPadding: const EdgeInsets.all(14),
+                    filled: true,
+                    fillColor: const Color(0xFFF8FAFD),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: const BorderSide(color: Color(0xFFD9E2F2)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: const BorderSide(
+                        color: Color(0xFF2563EB),
+                        width: 1.7,
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerRight,
-              child: FilledButton(
-                onPressed: saving ? null : _save,
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF075EF7),
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
+                const SizedBox(height: 13),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton.icon(
+                    onPressed: saving ? null : _save,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFF2563EB),
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size(0, 46),
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(24),
+                      ),
+                    ),
+                    icon: const Icon(Icons.send_outlined, size: 17),
+                    label: Text(
+                      saving ? 'Saving…' : 'Submit Comment',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
                   ),
                 ),
-                child: Text(saving ? 'Saving…' : 'Submit Comment'),
-              ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
+}
+
+class _QuickCommentChip extends StatelessWidget {
+  const _QuickCommentChip({required this.label, required this.onTap});
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: const Color(0xFFF1F5F9),
+    borderRadius: BorderRadius.circular(16),
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Ink(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          border: Border.all(color: const Color(0xFFD9E2F2)),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(
+            color: Color(0xFF41516D),
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _CompactHistoryButton extends StatelessWidget {
+  const _CompactHistoryButton();
+
+  @override
+  Widget build(BuildContext context) => OutlinedButton.icon(
+    onPressed: () => showDialog<void>(
+      context: context,
+      builder: (_) => const _TrackingCommentsHistoryDialog(),
+    ),
+    style: OutlinedButton.styleFrom(
+      foregroundColor: const Color(0xFF2563EB),
+      minimumSize: const Size(0, 34),
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      side: const BorderSide(color: Color(0xFFBFDBFE)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+    ),
+    icon: const Icon(Icons.history_rounded, size: 15),
+    label: const Text(
+      'History',
+      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
+    ),
+  );
 }
 
 class TrackingCommentsHistoryButton extends StatelessWidget {
@@ -184,7 +314,9 @@ class _TrackingCommentsHistoryDialogState
               return const Center(child: CircularProgressIndicator());
             }
             if (permanentSnapshot.hasError) {
-              return const Center(child: Text('Unable to load comment history.'));
+              return const Center(
+                child: Text('Unable to load comment history.'),
+              );
             }
             return Column(
               children: [
@@ -206,8 +338,11 @@ class _TrackingCommentsHistoryDialogState
                       FutureBuilder<List<Map<String, dynamic>>>(
                         future: _popupHistory,
                         builder: (context, popupSnapshot) {
-                          if (popupSnapshot.connectionState != ConnectionState.done) {
-                            return const Center(child: CircularProgressIndicator());
+                          if (popupSnapshot.connectionState !=
+                              ConnectionState.done) {
+                            return const Center(
+                              child: CircularProgressIndicator(),
+                            );
                           }
                           if (popupSnapshot.hasError) {
                             return const Center(
@@ -268,7 +403,8 @@ class _CommentHistoryList extends StatelessWidget {
         final timestamp = popupComments
             ? item['reasonSubmittedAt'] ?? item['waitingDetectedAt']
             : item['createdAt'];
-        final location = item['address'] ??
+        final location =
+            item['address'] ??
             ((item['latitude'] != null && item['longitude'] != null)
                 ? 'GPS: ${item['latitude']}, ${item['longitude']}'
                 : 'Location not recorded');
@@ -282,7 +418,9 @@ class _CommentHistoryList extends StatelessWidget {
         return ListTile(
           contentPadding: EdgeInsets.zero,
           leading: Icon(
-            popupComments ? Icons.notifications_active_outlined : Icons.chat_bubble_outline,
+            popupComments
+                ? Icons.notifications_active_outlined
+                : Icons.chat_bubble_outline,
             color: const Color(0xFF075EF7),
           ),
           title: Text(title),

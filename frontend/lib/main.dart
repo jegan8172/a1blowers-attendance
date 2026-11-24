@@ -59,7 +59,7 @@ class _AttendanceAppState extends State<AttendanceApp> {
       navigatorKey: appNavigatorKey,
       navigatorObservers: [employeeRouteSignal],
       debugShowCheckedModeBanner: false,
-      title: 'GoDigital Attendance',
+      title: 'A1Blowers Attendance',
       theme: ThemeData(
         useMaterial3: true,
         fontFamily: GoogleFonts.manrope().fontFamily,

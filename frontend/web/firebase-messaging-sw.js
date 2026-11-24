@@ -8,7 +8,7 @@ if (self.firebaseConfig && !String(self.firebaseConfig.apiKey || '').startsWith(
   const messaging = firebase.messaging();
   messaging.onBackgroundMessage((payload) => {
     const data = payload.data || {};
-    self.registration.showNotification(payload.notification?.title || 'GoDigital Attendance', {
+    self.registration.showNotification(payload.notification?.title || 'A1Blowers Attendance', {
       body: payload.notification?.body || 'You have a new update.',
       data: { conversationId: data.conversationId || '' }
     });

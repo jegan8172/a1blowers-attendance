@@ -8,15 +8,16 @@ class EmployeeChatPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final mobile = MediaQuery.sizeOf(context).width < 600;
     return Scaffold(
-      bottomNavigationBar:
-          mobile ? const EmployeeMobileBottomNav(route: '/employee/chat') : null,
+      bottomNavigationBar: mobile
+          ? const EmployeeMobileBottomNav(route: '/employee/chat')
+          : null,
       body: SafeArea(
         child: Column(
           children: [
-            // Chat already has its own conversation header. Keep the global
-            // employee navigation on larger screens, but remove it on mobile
-            // so the message list has the available height.
-            if (!mobile) const EmployeeTopNavigation(route: '/employee/chat'),
+            // Keep the employee header visible on mobile too. It anchors the
+            // chat surface to the rest of the portal and matches every other
+            // employee page's navigation model.
+            EmployeeTopNavigation(route: '/employee/chat', mobile: mobile),
             const Expanded(child: chat.ChatPage()),
           ],
         ),

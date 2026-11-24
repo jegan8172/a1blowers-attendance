@@ -39,6 +39,7 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
   bool _trackingBusy = false;
   bool _fieldTrackingEnabled = false;
   String _workMode = 'Office';
+  String _workLocation = 'Main Office';
   bool _trackingActive = false;
   int _request = 0;
   int _ticks = 0;
@@ -215,9 +216,51 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
             permissions['field_tracking_enabled'] == true;
         _workMode =
             '${permissions['workMode'] ?? permissions['work_mode'] ?? 'Office'}';
+        _workLocation =
+            '${permissions['workLocation'] ?? permissions['work_location'] ?? (_workMode == 'Home'
+                    ? 'Home location'
+                    : _workMode == 'Field'
+                    ? 'Field assignment'
+                    : 'Main Office')}';
         _trackingActive = context.read<LiveTrackingCoordinator>().active;
       });
     } catch (_) {}
+  }
+
+  Map _dialogWorkTime() {
+    final overview = _data?['month_overview'];
+    if (overview is! Map) return const {};
+    final workTime = overview['work_time'];
+    return workTime is Map ? workTime : const {};
+  }
+
+  String _dialogShiftName() {
+    final value = _data?['shift_name'] ?? _data?['shiftName'];
+    if (value != null && value.toString().trim().isNotEmpty) {
+      return value.toString().trim();
+    }
+    return _workMode == 'Field' ? 'Field Shift' : 'General Shift';
+  }
+
+  String _dialogLocationName() {
+    final value =
+        _data?['work_location'] ??
+        _data?['workLocation'] ??
+        _data?['office_name'] ??
+        _data?['officeName'];
+    if (value != null && value.toString().trim().isNotEmpty) {
+      return value.toString().trim();
+    }
+    return _workLocation;
+  }
+
+  String _dialogShiftStart() {
+    final value = _dialogWorkTime()['shift_start']?.toString().trim() ?? '';
+    final match = RegExp(r'^(\d{1,2}):(\d{2})').firstMatch(value);
+    if (match == null) return 'Scheduled time';
+    final hour = int.tryParse(match.group(1)!) ?? 0;
+    final minute = int.tryParse(match.group(2)!) ?? 0;
+    return DateFormat('hh:mm a').format(DateTime(2026, 1, 1, hour, minute));
   }
 
   Future<String?> _trackingStopReason() async {
@@ -226,36 +269,144 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
     final result = await showDialog<String>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (_, setDialogState) => AlertDialog(
-          title: const Text('Stop live tracking'),
-          content: TextField(
-            controller: controller,
-            minLines: 3,
-            maxLines: 5,
-            maxLength: 1000,
-            decoration: InputDecoration(
-              labelText: 'Reason',
-              errorText: error,
-              border: const OutlineInputBorder(),
-            ),
+        builder: (_, setDialogState) => EmployeeActionDialog(
+          title: 'Stop live tracking',
+          subtitle: 'Provide a brief reason before ending GPS tracking.',
+          icon: Icons.location_off_rounded,
+          accent: const Color(0xFFDC3C4D),
+          showTopAccent: true,
+          topAccent: const Color(0xFFE9262D),
+          maxWidth: 480,
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+          iconExtent: 54,
+          titleSize: 24,
+          body: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 7,
+                runSpacing: 7,
+                children: [
+                  EmployeeQuickReasonChip(
+                    label: 'Reached base',
+                    onTap: () => setDialogState(
+                      () => controller.text = 'Reached office base',
+                    ),
+                  ),
+                  EmployeeQuickReasonChip(
+                    label: 'Visit completed',
+                    onTap: () => setDialogState(
+                      () => controller.text = 'Field visit completed',
+                    ),
+                  ),
+                  EmployeeQuickReasonChip(
+                    label: 'Shift ended',
+                    onTap: () => setDialogState(
+                      () => controller.text = 'Shift ended for the day',
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  const Text(
+                    'Reason',
+                    style: TextStyle(
+                      color: employeeNavy,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '${controller.text.length}/1000',
+                    style: const TextStyle(
+                      color: employeeMuted,
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: controller,
+                minLines: 3,
+                maxLines: 3,
+                maxLength: 1000,
+                onChanged: (_) => setDialogState(() {}),
+                decoration: InputDecoration(
+                  hintText: 'Reason',
+                  errorText: error,
+                  counterText: '',
+                  filled: true,
+                  fillColor: const Color(0xFFF9FBFE),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(17),
+                    borderSide: const BorderSide(color: employeeLine),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(17),
+                    borderSide: const BorderSide(
+                      color: Color(0xFFE9262D),
+                      width: 1.7,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final value = controller.text.trim();
-                if (value.length < 3) {
-                  setDialogState(() => error = 'Enter at least 3 characters.');
-                  return;
-                }
-                Navigator.pop(dialogContext, value);
-              },
-              child: const Text('Stop tracking'),
-            ),
-          ],
+          actions: Row(
+            children: [
+              Expanded(
+                flex: 4,
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(56),
+                    foregroundColor: employeeNavy,
+                    side: const BorderSide(color: employeeLine),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(28),
+                    ),
+                  ),
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 6,
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFFE9262D),
+                    minimumSize: const Size.fromHeight(56),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(28),
+                    ),
+                  ),
+                  onPressed: () {
+                    final value = controller.text.trim();
+                    if (value.length < 3) {
+                      setDialogState(
+                        () => error = 'Enter at least 3 characters.',
+                      );
+                      return;
+                    }
+                    Navigator.pop(dialogContext, value);
+                  },
+                  icon: const Icon(Icons.stop_circle_outlined, size: 18),
+                  label: const Text(
+                    'Stop tracking',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -318,25 +469,117 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
       return;
     }
     final clockOut = _data?['status'] == 'checked_in';
+    final shiftName = _dialogShiftName();
+    final locationName = _dialogLocationName();
+    final shiftStart = _dialogShiftStart();
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(clockOut ? 'Clock out?' : 'Clock in?'),
-        content: Text(
-          clockOut
-              ? 'Confirm that you want to end your work session.'
-              : 'Confirm that you want to start your work session.',
+      builder: (context) => EmployeeActionDialog(
+        title: clockOut ? 'Clock out?' : 'Clock in?',
+        subtitle: clockOut
+            ? 'Confirm that you want to end your work session.'
+            : 'Confirm that you want to start your work session.',
+        icon: clockOut ? Icons.logout_rounded : Icons.login_rounded,
+        dark: !clockOut,
+        showTopAccent: !clockOut,
+        topAccent: employeeBlue,
+        maxWidth: 480,
+        iconExtent: 56,
+        titleSize: 26,
+        padding: const EdgeInsets.fromLTRB(26, 26, 26, 26),
+        body: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+            decoration: BoxDecoration(
+              color: clockOut
+                  ? const Color(0xFFF6F8FC)
+                  : const Color(0xFF1B2941),
+              border: Border.all(
+                color: clockOut ? employeeLine : const Color(0xFF295080),
+              ),
+              borderRadius: BorderRadius.circular(17),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.verified_outlined,
+                  size: 18,
+                  color: clockOut ? employeeBlue : const Color(0xFF9BC5FF),
+                ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Text(
+                    '$shiftName • $locationName',
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: clockOut ? employeeMuted : const Color(0xFFE5F0FF),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  shiftStart,
+                  style: TextStyle(
+                    color: clockOut ? employeeNavy : Colors.white,
+                    fontSize: 12,
+                    fontFamily: 'monospace',
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(clockOut ? 'Check Out' : 'Check In'),
-          ),
-        ],
+        actions: Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: clockOut ? employeeNavy : Colors.white,
+                  minimumSize: const Size.fromHeight(56),
+                  side: BorderSide(
+                    color: clockOut ? employeeLine : const Color(0xFF53739D),
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(28),
+                  ),
+                ),
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text(
+                  'Cancel',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: clockOut ? employeeNavy : employeeBlue,
+                  minimumSize: const Size.fromHeight(56),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(28),
+                  ),
+                ),
+                onPressed: () => Navigator.of(context).pop(true),
+                icon: Icon(
+                  clockOut
+                      ? Icons.task_alt_rounded
+                      : Icons.check_circle_rounded,
+                  size: 18,
+                ),
+                label: Text(
+                  clockOut ? 'Check Out' : 'Check In',
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
     if (confirmed != true || !mounted) return;
@@ -714,12 +957,12 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
     final workTime = overview['work_time'] as Map? ?? const {};
     final actualMinutes = (workTime['actual_minutes'] as num?)?.toInt() ?? 0;
     final targetMinutes = (workTime['target_minutes'] as num?)?.toInt() ?? 0;
+    final monthlyProgress = targetMinutes == 0
+        ? 0.0
+        : (actualMinutes / targetMinutes).clamp(0.0, 1.0);
     final workingDays = (workTime['working_days'] as num?)?.toInt() ?? 0;
     final overtimeMinutes =
         (workTime['overtime_minutes'] as num?)?.toInt() ?? 0;
-    final progress = targetMinutes == 0
-        ? 0.0
-        : (actualMinutes / targetMinutes).clamp(0.0, 1.0);
     final actions = data['actions'] as Map;
     final checkedIn = data['status'] == 'checked_in';
     final onBreak = data['active_break'] != null;
@@ -755,6 +998,12 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
     final reclockRequest = data['reclock_in_request'] as Map?;
     final seconds = (session?['worked_seconds'] as num?)?.toInt() ?? 0;
     final worked = seconds + (checkedIn ? _elapsed.elapsed.inSeconds : 0);
+    // The workday ring represents today's current shift, not the month's
+    // accumulated target. The mobile card explicitly states an 8-hour shift.
+    final workdayProgress = (worked / const Duration(hours: 8).inSeconds).clamp(
+      0.0,
+      1.0,
+    );
     final today = DateTime.parse(data['date'] as String);
     final overnight = session != null && session['work_date'] != data['date'];
 
@@ -777,7 +1026,7 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
         actualMinutes: actualMinutes,
         targetMinutes: targetMinutes,
         workingDays: workingDays,
-        progress: progress,
+        progress: workdayProgress,
         overview: overview,
         actions: actions,
       );
@@ -898,7 +1147,7 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
           TweenAnimationBuilder<double>(
             duration: const Duration(milliseconds: 650),
             curve: Curves.easeOutCubic,
-            tween: Tween(begin: 0, end: progress),
+            tween: Tween(begin: 0, end: monthlyProgress),
             builder: (context, value, child) => ClipRRect(
               borderRadius: BorderRadius.circular(4),
               child: LinearProgressIndicator(
@@ -1393,7 +1642,10 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
                   child: AnimatedSwitcher(
                     duration: const Duration(milliseconds: 220),
                     transitionBuilder: (child, animation) => RotationTransition(
-                      turns: Tween<double>(begin: .78, end: 1).animate(animation),
+                      turns: Tween<double>(
+                        begin: .78,
+                        end: 1,
+                      ).animate(animation),
                       child: ScaleTransition(scale: animation, child: child),
                     ),
                     child: Icon(
@@ -1989,9 +2241,14 @@ class _PremiumToastState extends State<_PremiumToast>
       duration: const Duration(milliseconds: 360),
       reverseDuration: const Duration(milliseconds: 240),
     );
-    final curve = CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic);
-    _slide = Tween<Offset>(begin: const Offset(1.12, 0), end: Offset.zero)
-        .animate(curve);
+    final curve = CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeOutCubic,
+    );
+    _slide = Tween<Offset>(
+      begin: const Offset(1.12, 0),
+      end: Offset.zero,
+    ).animate(curve);
     _fade = CurvedAnimation(parent: _controller, curve: Curves.easeOut);
     _controller.forward();
     _closeLater();
@@ -2034,7 +2291,10 @@ class _PremiumToastState extends State<_PremiumToast>
                 color: Colors.transparent,
                 child: Container(
                   width: 390,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 13,
+                  ),
                   decoration: BoxDecoration(
                     color: const Color(0xFF101A31),
                     borderRadius: BorderRadius.circular(17),
@@ -2105,7 +2365,11 @@ class _PremiumToastState extends State<_PremiumToast>
                           await _controller.reverse();
                           if (mounted) widget.onDismissed();
                         },
-                        icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 18),
+                        icon: const Icon(
+                          Icons.close_rounded,
+                          color: Colors.white70,
+                          size: 18,
+                        ),
                       ),
                     ],
                   ),
@@ -2158,7 +2422,8 @@ class _PremiumPressButtonState extends State<_PremiumPressButton> {
           curve: Curves.easeInOut,
           padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
           decoration: BoxDecoration(
-            color: widget.backgroundColor ??
+            color:
+                widget.backgroundColor ??
                 (widget.dark ? const Color(0xFF0F172A) : employeeBlue),
             borderRadius: BorderRadius.circular(99),
             border: Border.all(

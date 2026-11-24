@@ -34,6 +34,19 @@ async function officeLocations(req, res) {
   catch (e) { return fail(res, 500, e.message); }
 }
 
+// Employee-safe map data: only active offices and only the fields needed to
+// render their markers. Administration fields remain behind the admin route.
+async function activeOfficeLocations(req, res) {
+  try {
+    const [items] = await db.query(
+      'SELECT id, name, address, latitude, longitude, radius_meters FROM hrms_office_locations WHERE is_active=1 ORDER BY name',
+    );
+    return ok(res, { items });
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+}
+
 function officeValues(body) {
   const name = String(body.name || '').trim(), address = String(body.address || '').trim();
   const latitude = Number(body.latitude), longitude = Number(body.longitude), radiusMeters = Number(body.radiusMeters ?? body.radius_meters);
@@ -1576,7 +1589,7 @@ async function getTrackingPermissions(req, res) {
         [employeeUserId]
       ),
       db.query(
-        `SELECT home_tracking_enabled FROM hrms_tracking_settings
+        `SELECT home_tracking_enabled, office_name FROM hrms_tracking_settings
          WHERE id = 1 LIMIT 1`
       ),
     ]);
@@ -1584,9 +1597,15 @@ async function getTrackingPermissions(req, res) {
     const profile = profiles[0];
     const settings = settingsRows[0];
     const workMode = String((profile && profile.work_mode) || 'Office');
+    const workLocation = workMode === 'Home'
+      ? 'Home location'
+      : workMode === 'Field'
+        ? 'Field assignment'
+        : String((settings && settings.office_name) || 'Office');
     return ok(res, {
       fieldTrackingEnabled: ['Field', 'Hybrid'].includes(workMode),
       workMode,
+      workLocation,
       homeLocationEnabled: Number(settings && settings.home_tracking_enabled) === 1,
     });
   } catch (error) {
@@ -1666,47 +1685,68 @@ async function getFieldSessionTimeline(req, res) {
     const employeeUserId = req.user && req.user.id;
     if (!employeeUserId) return fail(res, 401, 'Unauthorized');
 
+    const date = policy.todayIstDate();
     const [sessions] = await db.query(
-      `SELECT * FROM hrms_field_tracking_sessions
+      `SELECT *,
+              DATE(started_at) = ? AS started_today,
+              DATE(stopped_at) = ? AS stopped_today
+       FROM hrms_field_tracking_sessions
        WHERE employee_user_id = ?
-         AND (is_active = 1 OR DATE(started_at) = ?)
-       ORDER BY is_active DESC, started_at DESC
-       LIMIT 1`,
-      [employeeUserId, policy.todayIstDate()]
+         AND (is_active = 1 OR DATE(started_at) = ? OR DATE(stopped_at) = ?)
+       ORDER BY started_at ASC`,
+      [date, date, employeeUserId, date, date]
     );
     if (!sessions.length) {
       return ok(res, { hasSession: false, isActive: false, events: [], points: [], durationSeconds: 0, distanceKm: 0, averageSpeedKmph: 0 });
     }
 
-    const session = sessions[0];
-    const end = session.is_active ? new Date() : session.stopped_at;
     const [pings] = await db.query(
       `SELECT id, latitude, longitude, accuracy_meters, address, recorded_at
        FROM hrms_location_pings
-       WHERE employee_user_id = ? AND recorded_at >= ? AND recorded_at <= ?
+       WHERE employee_user_id = ? AND DATE(recorded_at) = ?
        ORDER BY recorded_at ASC`,
-      [employeeUserId, session.started_at, end]
+      [employeeUserId, date]
     );
 
     let meters = 0;
     for (let index = 1; index < pings.length; index += 1) {
       meters += distanceMeters(Number(pings[index - 1].latitude), Number(pings[index - 1].longitude), Number(pings[index].latitude), Number(pings[index].longitude));
     }
-    const durationSeconds = Math.max(0, Math.floor((new Date(end).getTime() - new Date(session.started_at).getTime()) / 1000));
+    const now = new Date();
+    const dayStart = new Date(`${date}T00:00:00`);
+    const durationSeconds = sessions.reduce((total, item) => {
+      const startedAt = new Date(item.started_at);
+      const endedAt = Number(item.is_active) === 1 ? now : new Date(item.stopped_at);
+      if (Number.isNaN(startedAt.getTime()) || Number.isNaN(endedAt.getTime())) return total;
+      const clippedStart = startedAt > dayStart ? startedAt : dayStart;
+      return total + Math.max(0, Math.floor((endedAt.getTime() - clippedStart.getTime()) / 1000));
+    }, 0);
     const distanceKm = Math.round((meters / 1000) * 100) / 100;
     const averageSpeedKmph = durationSeconds > 0 ? Math.round(((meters / 1000) / (durationSeconds / 3600)) * 10) / 10 : 0;
-    const events = [{
-      type: 'start', recordedAt: session.started_at, latitude: session.start_latitude, longitude: session.start_longitude, address: null, text: 'Started live Field tracking'
-    }];
+    const events = [];
+    for (const item of sessions) {
+      if (Number(item.started_today) === 1) {
+        events.push({
+          type: 'start', recordedAt: item.started_at, latitude: item.start_latitude, longitude: item.start_longitude, address: null, text: 'Started live Field tracking'
+        });
+      }
+    }
     for (const ping of pings) events.push({
       type: 'location', recordedAt: ping.recorded_at, latitude: ping.latitude, longitude: ping.longitude, address: ping.address, accuracy: ping.accuracy_meters, text: 'Live location updated'
     });
-    if (!session.is_active && session.stopped_at) events.push({
-      type: 'stop', recordedAt: session.stopped_at, latitude: session.stop_latitude, longitude: session.stop_longitude, address: null, reason: session.stop_reason, text: 'Stopped live Field tracking'
-    });
+    for (const item of sessions) {
+      if (item.stopped_at && Number(item.stopped_today) === 1) {
+        events.push({
+          type: 'stop', recordedAt: item.stopped_at, latitude: item.stop_latitude, longitude: item.stop_longitude, address: null, reason: item.stop_reason, text: 'Stopped live Field tracking'
+        });
+      }
+    }
+    events.sort((a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime());
+    const activeSession = sessions.find((item) => Number(item.is_active) === 1);
+    const latestSession = activeSession || sessions[sessions.length - 1];
     return ok(res, {
-      hasSession: true, sessionId: session.id, isActive: Number(session.is_active) === 1,
-      startedAt: session.started_at, stoppedAt: session.stopped_at, stopReason: session.stop_reason,
+      hasSession: true, sessionId: latestSession.id, isActive: Boolean(activeSession),
+      startedAt: latestSession.started_at, stoppedAt: latestSession.stopped_at, stopReason: latestSession.stop_reason,
       events, points: pings, durationSeconds, distanceKm, averageSpeedKmph,
     });
   } catch (error) {
@@ -2123,6 +2163,7 @@ reviewFieldWaitingReason,
   deleteTrackingTemplate,
   assignTrackingTemplate,
   officeLocations,
+  activeOfficeLocations,
   createOfficeLocation,
   updateOfficeLocation,
   archiveOfficeLocation,

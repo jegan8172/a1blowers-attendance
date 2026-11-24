@@ -1,15 +1,114 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:provider/provider.dart';
 
+import '../../services/auth_service.dart';
 import '../../services/hrms_tracking_api.dart';
 import '../../services/tracking_comments_section.dart';
 import '../shared/employee_ui.dart';
 import '../shared/live_tracking_coordinator.dart';
 import 'home_location_dialog.dart';
+
+/// A compact blue GPS puck for the employee's live position. It deliberately
+/// has no pin tail, so the marker reads as a real-time location rather than a
+/// saved destination.
+Future<BitmapDescriptor> _employeeGpsPuckIcon() async {
+  const size = 84;
+  const center = Offset(size / 2, size / 2);
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+
+  canvas.drawCircle(center, 31, Paint()..color = const Color(0x243B82F6));
+  canvas.drawCircle(center, 22, Paint()..color = const Color(0x554A90FF));
+  canvas.drawCircle(center, 12, Paint()..color = Colors.white);
+  canvas.drawCircle(center, 9, Paint()..color = const Color(0xFF1769E0));
+  canvas.drawCircle(center, 4, Paint()..color = Colors.white);
+
+  final image = await recorder.endRecording().toImage(size, size);
+  final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+  return BitmapDescriptor.bytes(
+    Uint8List.fromList(bytes!.buffer.asUint8List()),
+  );
+}
+
+/// A compact, numbered A1 office beacon. The number makes nearby offices
+/// distinguishable at city zoom; tapping a pin reveals the office name.
+Future<BitmapDescriptor> _a1OfficeMarkerIcon(int officeNumber) async {
+  const width = 62;
+  const height = 76;
+  const headCenter = Offset(28, 27);
+  final logoData = await rootBundle.load('assets/images/godigital_logo.png');
+  final logoCodec = await ui.instantiateImageCodec(
+    logoData.buffer.asUint8List(),
+    targetWidth: 96,
+  );
+  final logo = (await logoCodec.getNextFrame()).image;
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+
+  final shadow = Path()
+    ..addOval(const Rect.fromLTWH(6, 5, 44, 44))
+    ..moveTo(15, 39)
+    ..lineTo(28, 70)
+    ..lineTo(41, 39)
+    ..close();
+  canvas.drawPath(shadow, Paint()..color = const Color(0x33091A36));
+
+  final pin = Path()
+    ..addOval(const Rect.fromLTWH(5, 3, 46, 46))
+    ..moveTo(15, 38)
+    ..lineTo(28, 68)
+    ..lineTo(41, 38)
+    ..close();
+  canvas.drawPath(pin, Paint()..color = const Color(0xFF1463D7));
+  canvas.drawCircle(headCenter, 18, Paint()..color = Colors.white);
+  canvas.drawCircle(
+    headCenter,
+    19,
+    Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5
+      ..color = const Color(0xFF9DC5FF),
+  );
+
+  // Use the precise A1 Blowers artwork from the navbar rather than a typed
+  // approximation. Keep it within the white centre so it remains crisp.
+  const logoTarget = Rect.fromLTWH(9, 19, 38, 15.2);
+  canvas.drawImageRect(
+    logo,
+    Rect.fromLTWH(0, 0, logo.width.toDouble(), logo.height.toDouble()),
+    logoTarget,
+    Paint()..filterQuality = FilterQuality.high,
+  );
+
+  const badgeCenter = Offset(48, 12);
+  canvas.drawCircle(badgeCenter, 11, Paint()..color = const Color(0xFF0F2347));
+  final badge = TextPainter(
+    text: TextSpan(
+      text: '$officeNumber',
+      style: const TextStyle(
+        color: Colors.white,
+        fontSize: 10,
+        fontWeight: FontWeight.w800,
+      ),
+    ),
+    textDirection: TextDirection.ltr,
+  )..layout();
+  badge.paint(canvas, badgeCenter - Offset(badge.width / 2, badge.height / 2));
+
+  final image = await recorder.endRecording().toImage(width, height);
+  final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+  logo.dispose();
+  return BitmapDescriptor.bytes(
+    Uint8List.fromList(bytes!.buffer.asUint8List()),
+  );
+}
 
 class EmployeeTrackingPage extends StatelessWidget {
   const EmployeeTrackingPage({super.key});
@@ -32,6 +131,18 @@ class EmployeeTrackingPage extends StatelessWidget {
 
 enum _WorkMode { office, home, field }
 
+class _OfficeMarkerData {
+  const _OfficeMarkerData({
+    required this.id,
+    required this.name,
+    required this.position,
+  });
+
+  final int? id;
+  final String name;
+  final LatLng position;
+}
+
 class _TrackingView extends StatefulWidget {
   const _TrackingView({required this.mobile, required this.routeHistory});
   final bool mobile;
@@ -50,6 +161,7 @@ class _TrackingViewState extends State<_TrackingView>
   List<LatLng> _routePoints = const [];
   Map<String, dynamic>? _homeLocation;
   Map<String, dynamic>? _officeSettings;
+  List<Map<String, dynamic>> _officeLocations = const [];
   bool _homeLoading = true;
   bool _officeLoading = true;
   bool _homeDialogOpen = false;
@@ -62,6 +174,9 @@ class _TrackingViewState extends State<_TrackingView>
   bool _fallbackPingInFlight = false;
   int _gpsUpdateIntervalMinutes = 15;
   DateTime? _lastSavedPingAt;
+  final ValueNotifier<GoogleMapController?> _mapController = ValueNotifier(
+    null,
+  );
 
   String distance = '—';
   String duration = '—';
@@ -85,6 +200,7 @@ class _TrackingViewState extends State<_TrackingView>
       _loadTrackingPermissions();
       _loadHomeLocation();
       _loadOfficeSettings();
+      _loadOfficeLocations();
     });
   }
 
@@ -93,6 +209,7 @@ class _TrackingViewState extends State<_TrackingView>
     WidgetsBinding.instance.removeObserver(this);
     employeeRouteSignal.revision.removeListener(_reloadSavedSession);
     _stopTimelineRefresh();
+    _mapController.dispose();
     super.dispose();
   }
 
@@ -173,6 +290,17 @@ class _TrackingViewState extends State<_TrackingView>
     } catch (_) {
       if (!mounted) return;
       setState(() => _officeLoading = false);
+    }
+  }
+
+  Future<void> _loadOfficeLocations() async {
+    try {
+      final offices = await HrmsTrackingApi.activeOfficeLocations();
+      if (!mounted) return;
+      setState(() => _officeLocations = offices);
+    } catch (_) {
+      // The primary office marker remains available if this optional map list
+      // cannot load (for example while an older server is being deployed).
     }
   }
 
@@ -371,43 +499,144 @@ class _TrackingViewState extends State<_TrackingView>
     final reason = await showDialog<String>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (_, setDialogState) => AlertDialog(
-          title: const Text('Stop live tracking'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
+        builder: (_, setDialogState) => EmployeeActionDialog(
+          title: 'Stop live tracking',
+          subtitle: 'Provide a brief reason before ending GPS tracking.',
+          icon: Icons.location_off_rounded,
+          accent: const Color(0xFFDC3C4D),
+          showTopAccent: true,
+          topAccent: const Color(0xFFE9262D),
+          maxWidth: 480,
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+          iconExtent: 54,
+          titleSize: 24,
+          body: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Enter the reason for stopping live tracking.'),
-              const SizedBox(height: 12),
+              Wrap(
+                spacing: 7,
+                runSpacing: 7,
+                children: [
+                  EmployeeQuickReasonChip(
+                    label: 'Reached base',
+                    onTap: () => setDialogState(
+                      () => controller.text = 'Reached office base',
+                    ),
+                  ),
+                  EmployeeQuickReasonChip(
+                    label: 'Visit completed',
+                    onTap: () => setDialogState(
+                      () => controller.text = 'Field visit completed',
+                    ),
+                  ),
+                  EmployeeQuickReasonChip(
+                    label: 'Shift ended',
+                    onTap: () => setDialogState(
+                      () => controller.text = 'Shift ended for the day',
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  const Text(
+                    'Reason',
+                    style: TextStyle(
+                      color: employeeNavy,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '${controller.text.length}/1000',
+                    style: const TextStyle(
+                      color: employeeMuted,
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
               TextField(
                 controller: controller,
                 minLines: 3,
-                maxLines: 5,
+                maxLines: 3,
                 maxLength: 1000,
+                onChanged: (_) => setDialogState(() {}),
                 decoration: InputDecoration(
-                  labelText: 'Reason',
+                  hintText: 'Reason',
                   errorText: error,
-                  border: const OutlineInputBorder(),
+                  counterText: '',
+                  filled: true,
+                  fillColor: const Color(0xFFF9FBFE),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(17),
+                    borderSide: const BorderSide(color: employeeLine),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(17),
+                    borderSide: const BorderSide(
+                      color: Color(0xFFE9262D),
+                      width: 1.7,
+                    ),
+                  ),
                 ),
               ),
             ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final value = controller.text.trim();
-                if (value.length < 3) {
-                  setDialogState(() => error = 'Enter at least 3 characters.');
-                  return;
-                }
-                Navigator.pop(dialogContext, value);
-              },
-              child: const Text('Stop tracking'),
-            ),
-          ],
+          actions: Row(
+            children: [
+              Expanded(
+                flex: 4,
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(56),
+                    foregroundColor: employeeNavy,
+                    side: const BorderSide(color: employeeLine),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(28),
+                    ),
+                  ),
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 6,
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFFE9262D),
+                    minimumSize: const Size.fromHeight(56),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(28),
+                    ),
+                  ),
+                  onPressed: () {
+                    final value = controller.text.trim();
+                    if (value.length < 3) {
+                      setDialogState(
+                        () => error = 'Enter at least 3 characters.',
+                      );
+                      return;
+                    }
+                    Navigator.pop(dialogContext, value);
+                  },
+                  icon: const Icon(Icons.stop_circle_outlined, size: 18),
+                  label: const Text(
+                    'Stop tracking',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -557,6 +786,7 @@ class _TrackingViewState extends State<_TrackingView>
       routePoints: _routePoints,
       homeLocation: _homeLocation,
       officeSettings: _officeSettings,
+      officeLocations: _officeLocations,
     );
 
     final homeAction = Align(
@@ -591,60 +821,69 @@ class _TrackingViewState extends State<_TrackingView>
     final comments = const TrackingCommentsSection();
 
     if (widget.mobile) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const MobileEmployeeHeader(),
-          const SizedBox(height: 14),
-          const EmployeePageTitle(title: 'Live Tracking'),
-          const SizedBox(height: 18),
-          modes,
-          const SizedBox(height: 14),
-          status,
-          if (mode == _WorkMode.home) ...[
-            const SizedBox(height: 12),
-            homeAction,
-          ],
-          const SizedBox(height: 20),
-          Row(
+      final premiumStatus = _PremiumTrackingStatusCard(
+        mode: modeLabel,
+        address: address,
+        locationName: _trackingLocationName,
+        active: trackingActive,
+        onRefresh: mode == _WorkMode.office
+            ? _loadOfficeSettings
+            : mode == _WorkMode.home
+            ? _loadHomeLocation
+            : refreshLocation,
+      );
+      final premiumMap = _PremiumLiveMapCard(
+        map: _RouteMap(
+          mode: mode,
+          position: _lastPosition,
+          routePoints: _routePoints,
+          homeLocation: _homeLocation,
+          officeSettings: _officeSettings,
+          officeLocations: _officeLocations,
+          aspectRatio: 1.7,
+          mapController: _mapController,
+        ),
+        active: trackingActive,
+        busy: _trackingActionInProgress,
+        distance: distance,
+        duration: duration,
+        avgSpeed: avgSpeed,
+        onToggle: toggleTracking,
+        mapController: _mapController,
+        recenterTarget: _trackingMapCenter,
+        recenterZoom:
+            mode == _WorkMode.field &&
+                (_routePoints.isNotEmpty || _lastPosition != null)
+            ? 16
+            : 15,
+      );
+      return Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 480),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Expanded(
-                child: Text(
-                  'Live Location',
-                  style: TextStyle(
-                    color: employeeNavy,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(updated, style: const TextStyle(color: employeeMuted)),
-                ],
-              ),
+              const _TrackingHero(),
+              const SizedBox(height: 16),
+              modes,
+              const SizedBox(height: 18),
+              premiumStatus,
+              if (mode == _WorkMode.home) ...[
+                const SizedBox(height: 12),
+                homeAction,
+              ],
+              const SizedBox(height: 18),
+              premiumMap,
+              if (_fieldTrackingEnabled) ...[
+                const SizedBox(height: 18),
+                comments,
+              ],
+              const SizedBox(height: 18),
+              _PremiumActivityCard(activities: activities),
             ],
           ),
-          const SizedBox(height: 12),
-          map,
-          const SizedBox(height: 14),
-          metrics,
-          if (_fieldTrackingEnabled) ...[const SizedBox(height: 18), comments],
-          const SizedBox(height: 22),
-          const Text(
-            'Today’s Activity',
-            style: TextStyle(
-              color: employeeNavy,
-              fontSize: 20,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 12),
-          timeline,
-          const SizedBox(height: 18),
-          if (_fieldTrackingEnabled) live,
-        ],
+        ),
       );
     }
 
@@ -718,6 +957,768 @@ class _TrackingViewState extends State<_TrackingView>
       ],
     );
   }
+
+  String get _trackingLocationName {
+    if (mode == _WorkMode.office) {
+      final name = '${_officeSettings?['office_name'] ?? ''}'.trim();
+      return name.isEmpty ? 'Main Office' : name;
+    }
+    if (mode == _WorkMode.home) return 'Home location';
+    return trackingActive ? 'Current field location' : 'Field operations';
+  }
+
+  LatLng get _trackingMapCenter {
+    if (mode == _WorkMode.field) {
+      if (_routePoints.isNotEmpty) return _routePoints.last;
+      if (_lastPosition != null) {
+        return LatLng(_lastPosition!.latitude, _lastPosition!.longitude);
+      }
+    }
+    if (mode == _WorkMode.home) {
+      final latitude = double.tryParse('${_homeLocation?['latitude']}');
+      final longitude = double.tryParse('${_homeLocation?['longitude']}');
+      if (latitude != null && longitude != null) {
+        return LatLng(latitude, longitude);
+      }
+    }
+    final latitude = double.tryParse('${_officeSettings?['office_latitude']}');
+    final longitude = double.tryParse(
+      '${_officeSettings?['office_longitude']}',
+    );
+    return latitude != null && longitude != null
+        ? LatLng(latitude, longitude)
+        : const LatLng(20.5937, 78.9629);
+  }
+}
+
+class _TrackingHero extends StatelessWidget {
+  const _TrackingHero();
+
+  @override
+  Widget build(BuildContext context) => Consumer<AuthService>(
+    builder: (_, auth, __) {
+      final name =
+          '${auth.user?['fullName'] ?? auth.user?['name'] ?? 'Employee'}'
+              .trim();
+      final employeeId =
+          '${auth.user?['staffId'] ?? auth.user?['employeeCode'] ?? auth.user?['employee_code'] ?? ''}'
+              .trim();
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        'Hello, ${name.isEmpty ? 'Employee' : name}',
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: employeeMuted,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                    if (employeeId.isNotEmpty) ...[
+                      const SizedBox(width: 6),
+                      const Text('•', style: TextStyle(color: employeeMuted)),
+                      const SizedBox(width: 6),
+                      Text(
+                        employeeId,
+                        style: const TextStyle(
+                          color: employeeBlue,
+                          fontFamily: 'monospace',
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 3),
+                const Text(
+                  'Live Tracking',
+                  style: TextStyle(
+                    color: employeeNavy,
+                    fontSize: 28,
+                    height: 1.08,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Container(
+            margin: const EdgeInsets.only(top: 3),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+            decoration: BoxDecoration(
+              color: const Color(0xFFEAF3FF),
+              border: Border.all(color: const Color(0xFFBFDBFE)),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.satellite_alt_rounded,
+                  size: 14,
+                  color: employeeBlue,
+                ),
+                SizedBox(width: 5),
+                Text(
+                  'GPS Ready',
+                  style: TextStyle(
+                    color: Color(0xFF0F4AA6),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    },
+  );
+}
+
+class _PremiumTrackingStatusCard extends StatelessWidget {
+  const _PremiumTrackingStatusCard({
+    required this.mode,
+    required this.address,
+    required this.locationName,
+    required this.active,
+    required this.onRefresh,
+  });
+
+  final String mode;
+  final String address;
+  final String locationName;
+  final bool active;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    clipBehavior: Clip.antiAlias,
+    decoration: BoxDecoration(
+      color: Colors.white,
+      border: Border.all(color: employeeLine),
+      borderRadius: BorderRadius.circular(22),
+      boxShadow: const [
+        BoxShadow(
+          color: Color(0x14141E33),
+          blurRadius: 18,
+          offset: Offset(0, 8),
+        ),
+      ],
+    ),
+    child: Column(
+      children: [
+        const SizedBox(
+          height: 4,
+          width: double.infinity,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  Color(0xFFBFDBFE),
+                  Color(0xFF93C5FD),
+                  Color(0xFFBFDBFE),
+                ],
+              ),
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  const Text(
+                    'Current Status',
+                    style: TextStyle(
+                      color: employeeNavy,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  _StatusPill(label: mode),
+                  const Spacer(),
+                  Text(
+                    active ? 'Live now' : 'Ready',
+                    style: const TextStyle(
+                      color: employeeMuted,
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(13),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFD),
+                  border: Border.all(color: employeeLine),
+                  borderRadius: BorderRadius.circular(17),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: const BoxDecoration(
+                        color: employeeBlue,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.location_on_rounded,
+                        size: 21,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(width: 11),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  locationName,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: employeeNavy,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              const _GpsPill(),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            address.replaceAll('\n', ', '),
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: employeeMuted,
+                              fontSize: 12,
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      tooltip: 'Refresh GPS location',
+                      onPressed: onRefresh,
+                      style: IconButton.styleFrom(
+                        foregroundColor: employeeBlue,
+                        backgroundColor: Colors.white,
+                        side: const BorderSide(color: employeeLine),
+                        minimumSize: const Size(39, 39),
+                        padding: EdgeInsets.zero,
+                      ),
+                      icon: const Icon(Icons.refresh_rounded, size: 20),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({required this.label});
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    decoration: BoxDecoration(
+      color: const Color(0xFFEAF3FF),
+      border: Border.all(color: const Color(0xFFBFDBFE)),
+      borderRadius: BorderRadius.circular(20),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const CircleAvatar(radius: 3, backgroundColor: employeeBlue),
+        const SizedBox(width: 5),
+        Text(
+          label,
+          style: const TextStyle(
+            color: Color(0xFF0F4AA6),
+            fontSize: 10,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _GpsPill extends StatelessWidget {
+  const _GpsPill();
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+    decoration: BoxDecoration(
+      color: const Color(0xFFEAF3FF),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: const Text(
+      '± GPS',
+      style: TextStyle(
+        color: employeeBlue,
+        fontFamily: 'monospace',
+        fontSize: 9,
+        fontWeight: FontWeight.w800,
+      ),
+    ),
+  );
+}
+
+class _PremiumLiveMapCard extends StatelessWidget {
+  const _PremiumLiveMapCard({
+    required this.map,
+    required this.active,
+    required this.busy,
+    required this.distance,
+    required this.duration,
+    required this.avgSpeed,
+    required this.onToggle,
+    required this.mapController,
+    required this.recenterTarget,
+    required this.recenterZoom,
+  });
+
+  final Widget map;
+  final bool active;
+  final bool busy;
+  final String distance;
+  final String duration;
+  final String avgSpeed;
+  final VoidCallback onToggle;
+  final ValueNotifier<GoogleMapController?> mapController;
+  final LatLng recenterTarget;
+  final double recenterZoom;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      gradient: const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFF101B32), Color(0xFF16243A)],
+      ),
+      border: Border.all(color: const Color(0xFF1E477F)),
+      borderRadius: BorderRadius.circular(23),
+      boxShadow: const [
+        BoxShadow(
+          color: Color(0x23111C32),
+          blurRadius: 20,
+          offset: Offset(0, 10),
+        ),
+      ],
+    ),
+    child: Column(
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.map_outlined, color: Color(0xFFBFDBFE), size: 21),
+            const SizedBox(width: 9),
+            const Expanded(
+              child: Text(
+                'Live Location',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+              decoration: BoxDecoration(
+                color: active
+                    ? const Color(0xFF047857)
+                    : const Color(0xFF1E2C45),
+                border: Border.all(color: const Color(0xFF315B93)),
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: Text(
+                active ? 'Tracking live' : 'Not tracking yet',
+                style: const TextStyle(
+                  color: Color(0xFFDCEBFF),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(17),
+          child: Stack(
+            children: [
+              map,
+              Positioned(
+                top: 10,
+                right: 10,
+                child: _MapCameraControls(
+                  controller: mapController,
+                  recenterTarget: recenterTarget,
+                  recenterZoom: recenterZoom,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+        Row(
+          children: [
+            Expanded(
+              child: _DarkMetric(
+                icon: Icons.route_rounded,
+                label: 'Distance',
+                value: distance == '—' ? '0.00 km' : distance,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _DarkMetric(
+                icon: Icons.schedule_rounded,
+                label: 'Duration',
+                value: duration == '—' ? '0 min' : duration,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _DarkMetric(
+                icon: Icons.speed_rounded,
+                label: 'Avg Speed',
+                value: avgSpeed == '—' ? '0.0 km/h' : avgSpeed,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 13),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1D2A41),
+            border: Border.all(color: const Color(0xFF315B93)),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 5,
+                backgroundColor: active
+                    ? const Color(0xFF34D399)
+                    : const Color(0xFF71839D),
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Text(
+                  active ? 'Live tracking is active' : 'Live tracking is off',
+                  style: const TextStyle(
+                    color: Color(0xFFDCEBFF),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              FilledButton.icon(
+                onPressed: busy ? null : onToggle,
+                style: FilledButton.styleFrom(
+                  backgroundColor: active
+                      ? const Color(0xFFE9262D)
+                      : employeeBlue,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(0, 42),
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(22),
+                  ),
+                ),
+                icon: Icon(
+                  active
+                      ? Icons.stop_circle_outlined
+                      : Icons.play_circle_outline_rounded,
+                  size: 17,
+                ),
+                label: Text(
+                  busy
+                      ? (active ? 'Stopping…' : 'Starting…')
+                      : (active ? 'Stop' : 'Start Tracking'),
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _MapCameraControls extends StatelessWidget {
+  const _MapCameraControls({
+    required this.controller,
+    required this.recenterTarget,
+    required this.recenterZoom,
+  });
+
+  final ValueNotifier<GoogleMapController?> controller;
+  final LatLng recenterTarget;
+  final double recenterZoom;
+
+  @override
+  Widget build(BuildContext context) =>
+      ValueListenableBuilder<GoogleMapController?>(
+        valueListenable: controller,
+        builder: (_, map, __) => Column(
+          children: [
+            _MapControlButton(
+              icon: Icons.gps_fixed_rounded,
+              tooltip: 'Center map on current location',
+              onPressed: map == null
+                  ? null
+                  : () => map.animateCamera(
+                      CameraUpdate.newCameraPosition(
+                        CameraPosition(
+                          target: recenterTarget,
+                          zoom: recenterZoom,
+                        ),
+                      ),
+                    ),
+            ),
+            const SizedBox(height: 7),
+            _MapControlButton(
+              icon: Icons.add_rounded,
+              tooltip: 'Zoom in',
+              onPressed: map == null
+                  ? null
+                  : () => map.animateCamera(CameraUpdate.zoomIn()),
+            ),
+            const SizedBox(height: 7),
+            _MapControlButton(
+              icon: Icons.remove_rounded,
+              tooltip: 'Zoom out',
+              onPressed: map == null
+                  ? null
+                  : () => map.animateCamera(CameraUpdate.zoomOut()),
+            ),
+          ],
+        ),
+      );
+}
+
+class _MapControlButton extends StatelessWidget {
+  const _MapControlButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: tooltip,
+    child: Material(
+      color: Colors.white,
+      elevation: 2,
+      shape: const CircleBorder(),
+      child: InkWell(
+        onTap: onPressed,
+        customBorder: const CircleBorder(),
+        child: SizedBox(
+          width: 39,
+          height: 39,
+          child: Icon(
+            icon,
+            color: onPressed == null ? const Color(0xFF9BAAC0) : employeeNavy,
+            size: 21,
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _DarkMetric extends StatelessWidget {
+  const _DarkMetric({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    height: 91,
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
+    decoration: BoxDecoration(
+      color: const Color(0xFF1E2C45),
+      border: Border.all(color: const Color(0xFF315B93)),
+      borderRadius: BorderRadius.circular(16),
+    ),
+    child: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(icon, color: const Color(0xFFBFDBFE), size: 18),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: const TextStyle(
+            color: Color(0xFFBFDBFE),
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: Colors.white,
+            fontFamily: 'monospace',
+            fontSize: 13,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _PremiumActivityCard extends StatelessWidget {
+  const _PremiumActivityCard({required this.activities});
+  final List<dynamic> activities;
+
+  @override
+  Widget build(BuildContext context) => EmployeeCard(
+    padding: const EdgeInsets.all(16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Today’s Activity',
+                style: TextStyle(
+                  color: employeeNavy,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF1F5F9),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Text(
+                '${activities.length == 1 && activities.first['activity_time'] == '--:--' ? 0 : activities.length} Events',
+                style: const TextStyle(
+                  color: employeeMuted,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        if (activities.length == 1 &&
+            activities.first['activity_time'] == '--:--')
+          const Row(
+            children: [
+              CircleAvatar(
+                radius: 15,
+                backgroundColor: Color(0xFFF1F5F9),
+                child: Icon(
+                  Icons.check_rounded,
+                  color: employeeMuted,
+                  size: 17,
+                ),
+              ),
+              SizedBox(width: 12),
+              Text(
+                '--:--   No live tracking activity yet',
+                style: TextStyle(color: employeeMuted, fontSize: 12),
+              ),
+            ],
+          )
+        else
+          ...activities.map(
+            (item) => Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Row(
+                children: [
+                  const CircleAvatar(
+                    radius: 14,
+                    backgroundColor: Color(0xFFDDF7ED),
+                    child: Icon(
+                      Icons.check_rounded,
+                      color: employeeGreen,
+                      size: 16,
+                    ),
+                  ),
+                  const SizedBox(width: 11),
+                  Expanded(
+                    child: Text(
+                      '${item['activity_time'] ?? '--:--'}  •  ${item['activity_text'] ?? ''}',
+                      style: const TextStyle(
+                        color: employeeNavy,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    ),
+  );
 }
 
 class _RouteHistoryView extends StatelessWidget {
@@ -848,37 +1849,52 @@ class _ModeTabs extends StatelessWidget {
   final ValueChanged<_WorkMode> onChanged;
 
   @override
-  Widget build(BuildContext context) => Row(
-    children: [
-      _ModeTab(
-        icon: Icons.business_outlined,
-        label: 'Office',
-        active: selected == _WorkMode.office,
-        onTap: () => onChanged(_WorkMode.office),
-      ),
-      if (homeEnabled) ...[
-        const SizedBox(width: 8),
-        _ModeTab(
-          icon: Icons.home_outlined,
-          label: 'Home',
-          active: selected == _WorkMode.home,
-          onTap: () => onChanged(_WorkMode.home),
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(5),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      border: Border.all(color: employeeLine),
+      borderRadius: BorderRadius.circular(20),
+      boxShadow: const [
+        BoxShadow(
+          color: Color(0x0B0F52BA),
+          blurRadius: 12,
+          offset: Offset(0, 4),
         ),
       ],
-      if (fieldEnabled) ...[
-        const SizedBox(width: 8),
+    ),
+    child: Row(
+      children: [
         _ModeTab(
-          icon: Icons.person_outline_rounded,
-          label: 'Field',
-          active: selected == _WorkMode.field,
-          onTap: () => onChanged(_WorkMode.field),
+          icon: Icons.apartment_rounded,
+          label: 'Office',
+          active: selected == _WorkMode.office,
+          onTap: () => onChanged(_WorkMode.office),
         ),
+        if (homeEnabled) ...[
+          const SizedBox(width: 8),
+          _ModeTab(
+            icon: Icons.home_outlined,
+            label: 'Home',
+            active: selected == _WorkMode.home,
+            onTap: () => onChanged(_WorkMode.home),
+          ),
+        ],
+        if (fieldEnabled) ...[
+          const SizedBox(width: 8),
+          _ModeTab(
+            icon: Icons.person_outline_rounded,
+            label: 'Field',
+            active: selected == _WorkMode.field,
+            onTap: () => onChanged(_WorkMode.field),
+          ),
+        ],
       ],
-    ],
+    ),
   );
 }
 
-class _ModeTab extends StatelessWidget {
+class _ModeTab extends StatefulWidget {
   const _ModeTab({
     required this.icon,
     required this.label,
@@ -891,37 +1907,78 @@ class _ModeTab extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
+  State<_ModeTab> createState() => _ModeTabState();
+}
+
+class _ModeTabState extends State<_ModeTab> {
+  bool _hovered = false;
+  bool _pressed = false;
+
+  @override
   Widget build(BuildContext context) => Expanded(
-    child: Material(
-      color: active ? employeeGreen : Colors.white,
-      borderRadius: BorderRadius.circular(11),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(11),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 16),
+    child: MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() {
+        _hovered = false;
+        _pressed = false;
+      }),
+      child: AnimatedScale(
+        duration: const Duration(milliseconds: 130),
+        curve: Curves.easeOutCubic,
+        scale: _pressed ? .975 : (_hovered && !widget.active ? 1.015 : 1),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.symmetric(vertical: 13),
           decoration: BoxDecoration(
-            border: Border.all(color: active ? employeeGreen : employeeLine),
-            borderRadius: BorderRadius.circular(11),
+            border: Border.all(
+              color: widget.active
+                  ? const Color(0xFF1959C5)
+                  : (_hovered ? const Color(0xFFBFDBFE) : Colors.transparent),
+            ),
+            borderRadius: BorderRadius.circular(15),
+            color: widget.active ? const Color(0xFF1959C5) : Colors.transparent,
+            boxShadow: widget.active
+                ? const [
+                    BoxShadow(
+                      color: Color(0x331D4ED8),
+                      blurRadius: 9,
+                      offset: Offset(0, 3),
+                    ),
+                  ]
+                : null,
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                icon,
-                color: active ? Colors.white : employeeMuted,
-                size: 25,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: widget.onTap,
+              onHighlightChanged: (value) => setState(() => _pressed = value),
+              borderRadius: BorderRadius.circular(15),
+              hoverColor: Colors.transparent,
+              highlightColor: Colors.transparent,
+              splashColor: Colors.transparent,
+              overlayColor: const WidgetStatePropertyAll(Colors.transparent),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    widget.icon,
+                    color: widget.active ? Colors.white : employeeMuted,
+                    size: 21,
+                  ),
+                  const SizedBox(width: 7),
+                  Text(
+                    widget.label,
+                    style: TextStyle(
+                      color: widget.active ? Colors.white : employeeNavy,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 7),
-              Text(
-                label,
-                style: TextStyle(
-                  color: active ? Colors.white : employeeNavy,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -1019,14 +2076,41 @@ class _RouteMap extends StatelessWidget {
     required this.position,
     this.homeLocation,
     this.officeSettings,
+    this.officeLocations = const [],
     this.routePoints = const [],
+    this.aspectRatio = 1.95,
+    this.mapController,
   });
 
   final _WorkMode mode;
   final Position? position;
   final Map<String, dynamic>? homeLocation;
   final Map<String, dynamic>? officeSettings;
+  final List<Map<String, dynamic>> officeLocations;
   final List<LatLng> routePoints;
+  final double aspectRatio;
+  final ValueNotifier<GoogleMapController?>? mapController;
+  static final Map<int, Future<BitmapDescriptor>> _officeMarkerCache = {};
+  static final Future<BitmapDescriptor> _liveGpsPuck = _employeeGpsPuckIcon();
+
+  static Future<BitmapDescriptor> _officeMarkerFor(int number) =>
+      _officeMarkerCache.putIfAbsent(number, () => _a1OfficeMarkerIcon(number));
+
+  static const _paleMapStyle = '''
+[
+  {"elementType":"geometry","stylers":[{"color":"#EDF5FF"}]},
+  {"elementType":"labels.text.fill","stylers":[{"color":"#27436D"}]},
+  {"elementType":"labels.text.stroke","stylers":[{"color":"#EDF5FF"}]},
+  {"featureType":"administrative","elementType":"geometry.stroke","stylers":[{"color":"#C8D7EA"}]},
+  {"featureType":"poi","elementType":"geometry","stylers":[{"color":"#E4EFFD"}]},
+  {"featureType":"poi.park","elementType":"geometry","stylers":[{"color":"#D9EAFD"}]},
+  {"featureType":"road","elementType":"geometry","stylers":[{"color":"#C9D7E7"}]},
+  {"featureType":"road.arterial","elementType":"geometry","stylers":[{"color":"#B8CBE0"}]},
+  {"featureType":"road.highway","elementType":"geometry","stylers":[{"color":"#7AA7EE"}]},
+  {"featureType":"road.highway","elementType":"geometry.stroke","stylers":[{"color":"#2D67D8"}]},
+  {"featureType":"water","elementType":"geometry","stylers":[{"color":"#C9E1FF"}]}
+]
+''';
 
   @override
   Widget build(BuildContext context) {
@@ -1047,6 +2131,27 @@ class _RouteMap extends StatelessWidget {
         ? LatLng(officeLat, officeLng)
         : const LatLng(20.5937, 78.9629);
     final officeName = '${officeSettings?['office_name'] ?? 'Office'}';
+    final configuredOffices = officeLocations
+        .map((office) {
+          final latitude = double.tryParse('${office['latitude']}');
+          final longitude = double.tryParse('${office['longitude']}');
+          if (latitude == null || longitude == null) return null;
+          return _OfficeMarkerData(
+            id: int.tryParse('${office['id']}'),
+            name: '${office['name'] ?? 'A1 Blowers Office'}',
+            position: LatLng(latitude, longitude),
+          );
+        })
+        .whereType<_OfficeMarkerData>()
+        .toList();
+    final offices = configuredOffices.isEmpty
+        ? [_OfficeMarkerData(id: null, name: officeName, position: officePoint)]
+        : configuredOffices;
+    final markersFuture = Future.wait<BitmapDescriptor>([
+      for (var index = 0; index < offices.length; index++)
+        _officeMarkerFor(index + 1),
+      _liveGpsPuck,
+    ]);
 
     final center = mode == _WorkMode.field && livePoint != null
         ? livePoint
@@ -1063,55 +2168,83 @@ class _RouteMap extends StatelessWidget {
     return ClipRRect(
       borderRadius: BorderRadius.circular(14),
       child: AspectRatio(
-        aspectRatio: 1.95,
-        child: GoogleMap(
-          key: ValueKey(
-            'tracking-map-${mode.name}-${officePoint.latitude}-${officePoint.longitude}-${homePoint?.latitude}-${homePoint?.longitude}',
-          ),
-          initialCameraPosition: CameraPosition(
-            target: center,
-            zoom: mode == _WorkMode.field && livePoint != null ? 16 : 15,
-          ),
-          mapToolbarEnabled: false,
-          markers: {
-            Marker(
-              markerId: const MarkerId('office'),
-              position: officePoint,
-              infoWindow: InfoWindow(title: officeName),
-              icon: BitmapDescriptor.defaultMarkerWithHue(
-                BitmapDescriptor.hueAzure,
-              ),
+        aspectRatio: aspectRatio,
+        child: FutureBuilder<List<BitmapDescriptor>>(
+          future: markersFuture,
+          builder: (context, snapshot) => GoogleMap(
+            key: ValueKey(
+              'tracking-map-${mode.name}-${officePoint.latitude}-${officePoint.longitude}-${homePoint?.latitude}-${homePoint?.longitude}',
             ),
-            if (mode == _WorkMode.home && homePoint != null)
-              Marker(
-                markerId: const MarkerId('registered-home'),
-                position: homePoint,
-                infoWindow: InfoWindow(
-                  title: 'Registered Home',
-                  snippet: '${homeLocation?['approval_status'] ?? ''}',
-                ),
-                icon: BitmapDescriptor.defaultMarkerWithHue(
-                  BitmapDescriptor.hueGreen,
-                ),
-              ),
-            if (mode == _WorkMode.field && livePoint != null)
-              Marker(
-                markerId: const MarkerId('live-location'),
-                position: livePoint,
-                infoWindow: const InfoWindow(title: 'Your Live Location'),
-                icon: BitmapDescriptor.defaultMarkerWithHue(markerColor),
-              ),
-          },
-          polylines: mode == _WorkMode.field && routePoints.length > 1
-              ? {
-                  Polyline(
-                    polylineId: const PolylineId('saved-field-route'),
-                    points: routePoints,
-                    color: employeeBlue,
-                    width: 5,
+            initialCameraPosition: CameraPosition(
+              target: center,
+              // Four nearby offices remain visible together at city level;
+              // individual A1-numbered beacons identify each location.
+              zoom: mode == _WorkMode.field && livePoint != null
+                  ? 16
+                  : mode == _WorkMode.office && offices.length > 1
+                  ? 12.5
+                  : 15,
+            ),
+            onMapCreated: (controller) => mapController?.value = controller,
+            style: _paleMapStyle,
+            mapToolbarEnabled: false,
+            zoomControlsEnabled: false,
+            compassEnabled: false,
+            myLocationButtonEnabled: false,
+            gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
+              Factory<OneSequenceGestureRecognizer>(EagerGestureRecognizer.new),
+            },
+            markers: {
+              if (mode == _WorkMode.office)
+                for (var index = 0; index < offices.length; index++)
+                  Marker(
+                    markerId: MarkerId('office-${offices[index].id ?? index}'),
+                    position: offices[index].position,
+                    infoWindow: InfoWindow(
+                      title: offices[index].name,
+                      snippet: 'A1 Blowers office • ${index + 1}',
+                    ),
+                    icon:
+                        snapshot.data?[index] ??
+                        BitmapDescriptor.defaultMarkerWithHue(
+                          BitmapDescriptor.hueAzure,
+                        ),
+                    anchor: const Offset(.5, .91),
                   ),
-                }
-              : const {},
+              if (mode == _WorkMode.home && homePoint != null)
+                Marker(
+                  markerId: const MarkerId('registered-home'),
+                  position: homePoint,
+                  infoWindow: InfoWindow(
+                    title: 'Registered Home',
+                    snippet: '${homeLocation?['approval_status'] ?? ''}',
+                  ),
+                  icon: BitmapDescriptor.defaultMarkerWithHue(
+                    BitmapDescriptor.hueGreen,
+                  ),
+                ),
+              if (mode == _WorkMode.field && livePoint != null)
+                Marker(
+                  markerId: const MarkerId('live-location'),
+                  position: livePoint,
+                  infoWindow: const InfoWindow(title: 'Your Live Location'),
+                  icon:
+                      snapshot.data?[offices.length] ??
+                      BitmapDescriptor.defaultMarkerWithHue(markerColor),
+                  anchor: const Offset(.5, .5),
+                ),
+            },
+            polylines: mode == _WorkMode.field && routePoints.length > 1
+                ? {
+                    Polyline(
+                      polylineId: const PolylineId('saved-field-route'),
+                      points: routePoints,
+                      color: employeeBlue,
+                      width: 5,
+                    ),
+                  }
+                : const {},
+          ),
         ),
       ),
     );

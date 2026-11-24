@@ -13,6 +13,9 @@ service-account*.json
 secrets/
 frontend/android/app/google-services.json
 frontend/ios/Runner/GoogleService-Info.plist
+frontend/android/key.properties
+frontend/android/*.jks
+frontend/android/*.keystore
 *.log
 .idea/
 .vscode/
