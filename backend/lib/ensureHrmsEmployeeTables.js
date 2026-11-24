@@ -39,10 +39,15 @@ async function ensureHrmsEmployeeTables(db) {
     if (error.code !== 'ER_DUP_FIELDNAME') throw error;
   }
   try {
-    await db.query("ALTER TABLE hrms_employee_profiles ADD COLUMN employee_type ENUM('Employee', 'Labour') NOT NULL DEFAULT 'Employee' AFTER work_mode");
+    await db.query("ALTER TABLE hrms_employee_profiles ADD COLUMN employee_type ENUM('Employee', 'Labour', 'Administrator') NOT NULL DEFAULT 'Employee' AFTER work_mode");
   } catch (error) {
     if (error.code !== 'ER_DUP_FIELDNAME') throw error;
   }
+  // Existing databases already have this column, but older deployments did
+  // not allow Administrator even though the API and employee form do.
+  await db.query(
+    "ALTER TABLE hrms_employee_profiles MODIFY COLUMN employee_type ENUM('Employee', 'Labour', 'Administrator') NOT NULL DEFAULT 'Employee'"
+  );
   try {
     await db.query('ALTER TABLE hrms_employee_profiles ADD COLUMN overtime_eligible TINYINT(1) NOT NULL DEFAULT 0 AFTER employee_type');
   } catch (error) {
