@@ -18,6 +18,26 @@ function fail(res, status, message) {
   return res.status(status).json({ success: false, message: message });
 }
 
+// MySQL's `error.sql` can contain values interpolated by the driver, including
+// employee contact details or password hashes. Keep enough structure in Cloud
+// Run logs to diagnose a malformed query without recording those values.
+function redactSqlForLog(sql) {
+  if (!sql) return null;
+  return String(sql)
+    .replace(/'(?:[^'\\]|\\.)*'/g, "'?'")
+    .replace(/\b\d+(?:\.\d+)?\b/g, '?');
+}
+
+function logEmployeeCreateFailure(error) {
+  console.error('POST /api/hrms/employees failed', {
+    code: error && error.code,
+    errno: error && error.errno,
+    sqlState: error && error.sqlState,
+    sqlMessage: error && error.sqlMessage,
+    sql: redactSqlForLog(error && error.sql),
+  });
+}
+
 function requireAdmin(req, res, next) {
   const userType = String((req.user && req.user.userType) || '').toLowerCase();
   if (userType !== 'admin') {
@@ -408,6 +428,7 @@ async function create(req, res) {
   } catch (error) {
     const message = duplicateMessage(error);
     if (message) return fail(res, 409, message);
+    logEmployeeCreateFailure(error);
     return fail(res, 500, error.message);
   }
 }
