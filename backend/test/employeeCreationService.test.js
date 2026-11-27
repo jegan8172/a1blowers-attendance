@@ -75,6 +75,7 @@ test('stores the submitted phone in the shared employee profile', async () => {
   const insert = pool.calls.find((call) => call.sql && call.sql.includes('INSERT INTO hrms_employee_profiles'));
   assert.match(insert.sql, /email, phone, department/);
   assert.equal(insert.params[4], '+91 98765 43210');
+  assert.equal((insert.sql.match(/\?/g) || []).length, insert.params.length);
 });
 
 test('a second Create click is rejected and does not add another employee', async () => {
