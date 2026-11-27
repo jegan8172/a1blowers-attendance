@@ -427,7 +427,7 @@ class _AttendanceDashboardSectionState extends State<AttendanceDashboardSection>
         if (reason == null) return;
         await coordinator.stop(reason);
       } else {
-        await coordinator.start();
+        if (!await coordinator.start(context)) return;
       }
       await _loadTrackingState();
       if (mounted) {

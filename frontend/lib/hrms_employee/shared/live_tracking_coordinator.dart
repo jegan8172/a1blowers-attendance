@@ -172,8 +172,41 @@ class LiveTrackingCoordinator extends ChangeNotifier
     _pingTimer = null;
   }
 
-  Future<void> start() async {
-    if (_busy || _active) return;
+  /// Explains background location immediately before the employee starts a
+  /// tracking session. This is intentionally shown before Android can display
+  /// its runtime permission prompt, as required for informed consent.
+  Future<bool> _confirmBackgroundLocationDisclosure(BuildContext context) async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return true;
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Background location for live work tracking'),
+            content: const Text(
+              'When you start a live attendance or field-work tracking session, '
+              'A1 Blowers Attendance collects your location—even when the app '
+              'is closed or not in use—to record your work route and verify '
+              'attendance. Tracking is visible through a notification and stops '
+              'when you end the session.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Not now'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('Continue'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  Future<bool> start(BuildContext context) async {
+    if (_busy || _active) return false;
+    if (!await _confirmBackgroundLocationDisclosure(context)) return false;
     _busy = true;
     notifyListeners();
     try {
@@ -205,6 +238,7 @@ class LiveTrackingCoordinator extends ChangeNotifier
       } else {
         _armTimer();
       }
+      return true;
     } finally {
       _busy = false;
       notifyListeners();

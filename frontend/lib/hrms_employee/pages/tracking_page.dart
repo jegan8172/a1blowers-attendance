@@ -652,7 +652,9 @@ class _TrackingViewState extends State<_TrackingView>
     setState(() => _trackingActionInProgress = true);
     try {
       if (!trackingActive) {
-        await context.read<LiveTrackingCoordinator>().start();
+        if (!await context.read<LiveTrackingCoordinator>().start(context)) {
+          return;
+        }
 
         if (!mounted) return;
 
